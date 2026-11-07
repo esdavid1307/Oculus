@@ -10,7 +10,7 @@ const STALL_MS = 500;
 
 const root = document.documentElement;
 const message = document.getElementById('gaze-message')!;
-const dot = document.getElementById('calibration-dot')!;
+const dot = document.getElementById('dot')!;
 
 function placeDot(x: number, y: number) {
   dot.style.left = `${x}px`;
@@ -28,15 +28,15 @@ export async function startCameraGaze(send: (event: GazeEvent) => void) {
   // Frames can stop without an error, for example on sleep, and a silent gap would count as part of a hold.
   setInterval(() => {
     const t = Date.now();
-    if (t - lastSampleAt > STALL_MS) send({ type: 'gaze', t, region: null });
+    if (t - lastSampleAt > STALL_MS) onSample({ t, estimate: null });
   }, STALL_CHECK_MS);
 
   // No click starts this, so the user gets a moment to get in frame before the dots begin.
-  // shortcut: this can start during a run and hides the Stop Gesture for 27 seconds, refuse it once runs exist (#11).
   const runCalibration = async () => {
-    // Null, so the time spent calibrating can't count towards a hold.
+    // Null, so calibrating can't count towards a hold, and it stops the agent as a Look Away.
     onSample = ({ t }) => send({ type: 'gaze', t, region: null });
     root.dataset.calibrating = '';
+    dot.hidden = true;
     message.textContent = 'Centre your face in the preview, then follow the dot with your eyes. Afterwards, blink 4 times quickly to recalibrate.';
     message.hidden = false;
     tracker.showPreview();
@@ -47,7 +47,10 @@ export async function startCameraGaze(send: (event: GazeEvent) => void) {
     await calibrate(tracker, { width: window.innerWidth, height: window.innerHeight }, placeDot);
     dot.hidden = true;
     delete root.dataset.calibrating;
-    onSample = createGazeSource(send, runCalibration);
+    onSample = createGazeSource(send, runCalibration, (position) => {
+      dot.hidden = !position;
+      if (position) placeDot(position.x, position.y);
+    });
   };
   await runCalibration();
 }

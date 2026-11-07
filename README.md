@@ -185,12 +185,12 @@ npm test
 npm run typecheck
 ```
 
-Hold the mouse on the top-right target to perform the Wake Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
+Hold the mouse on the centre box to perform the Start Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
 
 Timings live in `~/Library/Application Support/oculus-agent/config.json`. Both are optional:
 
 ```json
-{ "wakeHoldMs": 2000, "targetTimeoutMs": 5000 }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000 }
 ```
 
 ## Hackathon Demo

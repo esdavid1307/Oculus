@@ -1,5 +1,5 @@
 import type { GazeEvent } from '../shared/gaze';
-import { CORNER_TARGET_SIZE, type OverlayState } from '../shared/session';
+import type { OverlayState } from '../shared/session';
 
 declare global {
   interface Window {
@@ -24,8 +24,6 @@ function chime() {
 }
 
 const root = document.documentElement;
-const wakeLabel = document.getElementById('wake-label')!;
-root.style.setProperty('--target-size', `${CORNER_TARGET_SIZE}px`);
 
 let lastPhase: OverlayState['phase'] = 'idle';
 
@@ -34,7 +32,6 @@ window.overlay.onState(({ phase, wakeProgress }) => {
   if (phase === lastPhase) return;
   if (phase === 'waiting-for-target') chime();
   root.dataset.phase = phase;
-  wakeLabel.textContent = phase === 'idle' ? 'Wake' : 'Listening';
   lastPhase = phase;
 });
 

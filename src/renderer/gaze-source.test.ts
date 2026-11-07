@@ -5,7 +5,8 @@ import { createGazeSource, GAZE_REGION_RADIUS } from './gaze-source';
 const setup = () => {
   const events: GazeEvent[] = [];
   const onRecalibrate = vi.fn();
-  return { events, onRecalibrate, source: createGazeSource((event) => events.push(event), onRecalibrate) };
+  const onDot = vi.fn();
+  return { events, onRecalibrate, onDot, source: createGazeSource((event) => events.push(event), onRecalibrate, onDot) };
 };
 
 describe('gaze source', () => {
@@ -14,6 +15,15 @@ describe('gaze source', () => {
     source({ t: 0, estimate: { x: 100, y: 200 } });
     source({ t: 100, estimate: { x: 300, y: 400 } });
     expect(events.at(-1)).toEqual({ type: 'gaze', t: 100, region: { x: 200, y: 300, radius: GAZE_REGION_RADIUS } });
+  });
+
+  it('moves the Gaze Dot with the smoothed gaze and hides it when tracking is lost', () => {
+    const { onDot, source } = setup();
+    source({ t: 0, estimate: { x: 100, y: 200 } });
+    source({ t: 100, estimate: { x: 300, y: 400 } });
+    expect(onDot).toHaveBeenLastCalledWith({ x: 200, y: 300 });
+    source({ t: 133, estimate: null });
+    expect(onDot).toHaveBeenLastCalledWith(null);
   });
 
   it('reports null when tracking is lost, and does not smooth across the gap', () => {

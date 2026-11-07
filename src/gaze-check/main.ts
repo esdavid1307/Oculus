@@ -1,7 +1,6 @@
-import { CORNER_TARGET_SIZE } from '../shared/session';
 import { blinkCounter, holdTimer } from './free-look';
 import { createTracker } from './iris-tracker';
-import { KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
+import { CORNER_TARGET_SIZE, KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
 import { calibrate, SETTLE_MS, wait, type Tracker } from './tracker';
 
 // Longer than the 2 second hold, so a slow start can still make it.
