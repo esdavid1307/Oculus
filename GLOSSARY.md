@@ -40,6 +40,9 @@ _Avoid_: Trigger, activation, Wake Gesture
 The run of quick, deliberate blinks that restarts calibration.
 _Avoid_: Reset, blink command
 
+**Stop Gesture**:
+Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts.
+_Avoid_: Cancel, abort
+
 **Look Away**:
-Gaze staying off the screen long enough to stop the agent. Losing the user's face counts. It replaced the corner Stop Gesture.
-_Avoid_: Cancel, abort, Stop Gesture
+Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture.
