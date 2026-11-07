@@ -1,4 +1,5 @@
-import { CORNER_TARGET_SIZE } from '../shared/session';
+// The corner targets the check measures. The app itself wakes on the centre box.
+export const CORNER_TARGET_SIZE = 240;
 
 type Position = { x: number; y: number };
 

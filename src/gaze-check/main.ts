@@ -1,10 +1,8 @@
-import { CORNER_TARGET_SIZE } from '../shared/session';
 import { blinkCounter, holdTimer } from './free-look';
 import { createTracker } from './iris-tracker';
-import { KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
-import type { Tracker } from './tracker';
+import { CORNER_TARGET_SIZE, KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
+import { calibrate, SETTLE_MS, wait, type Tracker } from './tracker';
 
-const SETTLE_MS = 800;
 // Longer than the 2 second hold, so a slow start can still make it.
 const TRIAL_MS = 3000;
 
@@ -26,8 +24,6 @@ const params = new URLSearchParams(location.search);
 const showHeat = params.get('view') === 'free';
 const useFreeLook = showHeat || params.get('view') === 'dot';
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 let recording: Sample[] | null = null;
 let onGaze: ((sample: Sample) => void) | null = null;
 
@@ -39,18 +35,6 @@ function placeDot(x: number, y: number) {
 async function showDot(x: number, y: number) {
   placeDot(x, y);
   await wait(SETTLE_MS);
-}
-
-// Dwell, not clicks: the real user can't click, and a click pulls the eyes to the cursor.
-async function calibrate(tracker: Tracker, { width, height }: Screen) {
-  const outer = [0.03, 0.5, 0.97].flatMap((x) => [0.03, 0.5, 0.97].map((y) => [x, y]));
-  const inner = [0.25, 0.75].flatMap((x) => [0.25, 0.75].map((y) => [x, y]));
-  for (const [fx, fy] of [...outer, ...inner]) {
-    const [x, y] = [fx * width, fy * height];
-    await showDot(x, y);
-    await tracker.calibrateAt(x, y);
-  }
-  tracker.finishCalibration();
 }
 
 // All but the centre differ from the calibration points, so this measures more than memorised positions.
@@ -160,7 +144,7 @@ async function freeLook(tracker: Tracker, screen: Screen) {
     tracker.hidePreview();
     heat.hidden = true;
     dot.hidden = false;
-    await calibrate(tracker, screen);
+    await calibrate(tracker, screen, placeDot);
     tracker.showPreview();
     // The old map came from the old calibration, so it can't be compared with the new one.
     context.globalCompositeOperation = 'source-over';
@@ -193,7 +177,7 @@ async function run(tracker: Tracker) {
     panel.hidden = showHeat;
     return;
   }
-  await calibrate(tracker, screen);
+  await calibrate(tracker, screen, placeDot);
   const trials: Trial[] = [];
   for (const target of testTargets(screen)) trials.push(await runTrial(target));
   dot.hidden = true;
