@@ -32,8 +32,16 @@ _Avoid_: Adaptation, personalization, training
 The on-screen marker showing the user the centre of their Gaze Region.
 _Avoid_: Cursor, pointer
 
+**Centre Box**:
+The large box in the middle of the screen, shown only while the agent is asleep, that the user looks at to wake it.
+_Avoid_: Start Box, Wake target, corner target
+
+**Gaze Snap**:
+The Gaze Dot attaching to the one element the user is looking at, such as a key or a browser tab, and staying there through small jitter until they Move Off. It works only while the agent is awake, never on elements larger than a quarter of the screen, and Look Away always breaks it.
+_Avoid_: Sticky cursor, magnet, lock-on
+
 **Start Gesture**:
-The deliberate look at the centre box that wakes the agent. It replaced the corner Wake Gesture.
+The deliberate look at the Centre Box that wakes the agent. It replaced the corner Wake Gesture.
 _Avoid_: Trigger, activation, Wake Gesture
 
 **Recalibrate Gesture**:
@@ -45,4 +53,9 @@ Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face
 _Avoid_: Cancel, abort
 
 **Look Away**:
-Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture.
+Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture. Only ever means off the screen.
+_Avoid_: Look away (for leaving a key)
+
+**Move Off**:
+Gaze leaving a key or target while staying on the screen, which restarts that dwell.
+_Avoid_: Look away

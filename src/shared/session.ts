@@ -18,7 +18,7 @@ function parseTimings(raw: unknown) {
 }
 
 // The box is 50vmin, as drawn in overlay.css. The centre must be inside, so a large radius can't start a hold.
-function onStartBox(region: GazeRegion | null, { width, height }: Screen) {
+function onCentreBox(region: GazeRegion | null, { width, height }: Screen) {
   if (region === null) return false;
   const half = Math.min(width, height) / 4;
   return Math.abs(region.x - width / 2) <= half && Math.abs(region.y - height / 2) <= half;
@@ -43,7 +43,7 @@ export function createSession({ screen, timings }: { screen: Screen; timings?: u
         awaySince = null;
       }
     } else if (input.type === 'gaze') {
-      if (onStartBox(input.region, screen)) {
+      if (onCentreBox(input.region, screen)) {
         holdStart ??= input.t;
         wakeProgress = Math.min((input.t - holdStart) / wakeHoldMs, 1);
       } else {
