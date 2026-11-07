@@ -9,8 +9,6 @@ A standalone webcam gaze test for #5. It measures WebGazer or a MediaPipe iris t
 
 Repeat a few times, ideally with more than one person and in the demo room's lighting, because one run says little.
 
-To see what a tracker does, add `view=free` to the address, such as `?tracker=mediapipe&view=free`. After calibration, your camera preview returns to the top left corner and a live dot shows the tracker's estimate, smoothed over 300 ms like a cursor. The heat map draws the raw samples. Look at the centre box for 3 seconds to start the heat map. Blink 4 times within 3 seconds to recalibrate, which clears the map (MediaPipe only, because WebGazer has no blink signal). Press Esc, or look off screen for 5 seconds, to freeze the map. Losing your face counts as off screen. This mode skips the test points and gives no report. Use `view=cursor` instead for the same flow with only the dot, which is what a real user would see.
-
 The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. Corner targets use a Gaze Region radius of 0, so they are a worst case.
 
 Both trackers use the same calibration points, test targets and scoring. WebGazer gets 3 calibration samples per point, because it keeps only its last 50. The MediaPipe tracker uses every frame of the dwell.
@@ -26,6 +24,25 @@ Key counts leave no room for showing the typed text, so treat them as an upper l
 The report ends with each target's mean offset. If every target is off by about the same amount, the error is a shift. If the offset changes steadily across the screen, the mapping is curved, which is the case for adding quadratic terms.
 
 Samples per second counts camera frames for the MediaPipe tracker. For WebGazer it follows its own prediction loop, so don't compare the two.
+
+## Watching gaze live
+
+Add `view=free` to the address, such as `?tracker=mediapipe&view=free`, to see what a tracker does. This mode skips the test points and gives no report.
+
+1. Press Start and follow the dot through calibration, which takes about 25 seconds.
+2. Do the Start Gesture: look at the centre box for 3 seconds. It comes after calibration because there's no gaze position before that.
+3. Look around. The Gaze Dot shows the tracker's estimate, smoothed over 300 ms. The heat map draws the raw samples and is for testing only. Your camera preview returns to the top left corner so you can check you're in frame.
+4. Do the Recalibrate Gesture at any point after calibration: blink 4 times within 3 seconds. This calibrates again from scratch and clears the map.
+5. Press Esc, or Look Away for 5 seconds, to end. The map stays on the page. Losing your face counts as looking away.
+
+Use `view=dot` for the same flow without the heat map, which is closer to what a real user would see.
+
+Known limits:
+
+- The Recalibrate Gesture needs MediaPipe, because WebGazer has no blink signal.
+- WebGazer's camera preview doesn't come back after calibration.
+- `view=dot` still shows the camera preview.
+- Look Away only counts after the Start Gesture. If you leave at the start box, the camera stays on until you press Esc.
 
 ## MediaPipe test
 

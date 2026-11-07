@@ -18,12 +18,12 @@ const startBox = document.getElementById('start-box')!;
 
 const HEAT_RADIUS = 60;
 const START_HOLD_MS = 3000;
-const OFF_SCREEN_STOP_MS = 5000;
+const LOOK_AWAY_MS = 5000;
 
 const params = new URLSearchParams(location.search);
-// The heat map is for testing. A real user only gets the dot, as their cursor.
+// The heat map is for testing. A real user only gets the Gaze Dot.
 const showHeat = params.get('view') === 'free';
-const useFreeLook = showHeat || params.get('view') === 'cursor';
+const useFreeLook = showHeat || params.get('view') === 'dot';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -106,28 +106,28 @@ function lookAtStartBox() {
       const { t, eyesClosed } = sample;
       // Also here, because a bad calibration can make the box impossible to reach.
       if (blinked(t, !!eyesClosed)) resolve('recalibrate');
-      const { estimate: cursor } = smooth(sample);
-      dot.hidden = !cursor;
-      if (cursor) placeDot(cursor.x, cursor.y);
-      const inside = !!cursor && cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
+      const { estimate: smoothed } = smooth(sample);
+      dot.hidden = !smoothed;
+      if (smoothed) placeDot(smoothed.x, smoothed.y);
+      const inside = !!smoothed && smoothed.x >= left && smoothed.x <= right && smoothed.y >= top && smoothed.y <= bottom;
       if (held(t, inside)) resolve('started');
     };
   });
 }
 
-// The dot is smoothed like a cursor. The heat map draws raw samples, to show exactly what the tracker outputs.
+// The dot is smoothed. The heat map draws raw samples, to show exactly what the tracker outputs.
 function paintHeat(context: CanvasRenderingContext2D, { width, height }: Screen) {
-  const away = holdTimer(OFF_SCREEN_STOP_MS);
+  const away = holdTimer(LOOK_AWAY_MS);
   const blinked = blinkCounter();
   const smooth = smoother();
   return new Promise<'recalibrate'>((resolve) => {
     onGaze = (sample) => {
       const { t, estimate, eyesClosed } = sample;
       if (blinked(t, !!eyesClosed)) resolve('recalibrate');
-      const { estimate: cursor } = smooth(sample);
-      dot.hidden = !cursor;
-      if (cursor) placeDot(cursor.x, cursor.y);
-      const onScreen = !!cursor && cursor.x >= 0 && cursor.x <= width && cursor.y >= 0 && cursor.y <= height;
+      const { estimate: smoothed } = smooth(sample);
+      dot.hidden = !smoothed;
+      if (smoothed) placeDot(smoothed.x, smoothed.y);
+      const onScreen = !!smoothed && smoothed.x >= 0 && smoothed.x <= width && smoothed.y >= 0 && smoothed.y <= height;
       if (away(t, !onScreen)) {
         onGaze = null;
         // Leaving fullscreen is what ends the session, the same as pressing Esc.
@@ -187,7 +187,7 @@ async function run(tracker: Tracker) {
   if (useFreeLook) {
     await freeLook(tracker, screen);
     tracker.stop();
-    status.textContent = 'Stopped. Reload to run again.';
+    status.textContent = 'Ended. Reload to run again.';
     start.hidden = true;
     panel.hidden = showHeat;
     return;
@@ -221,7 +221,7 @@ const useIris = params.get('tracker') === 'mediapipe';
   .then((tracker) => {
     start.addEventListener('click', () => run(tracker));
     status.textContent = useFreeLook
-      ? 'Centre your face in the box, then press Start. Follow the dot with your eyes for about 25 seconds, keeping your head still. Then look at the box for 3 seconds to start. Blink 4 times quickly to recalibrate. Press Esc or look off screen for 5 seconds to stop.'
+      ? `Centre your face in the box, then press Start. Follow the dot with your eyes for about 25 seconds, keeping your head still. Then look at the box for 3 seconds to start.${useIris ? ' Blink 4 times quickly to recalibrate.' : ''} Press Esc or look off screen for 5 seconds to end.`
       : 'Centre your face in the box, sit as you will for the demo, then press Start. Follow the dot with your eyes, keeping your head still. It takes about 90 seconds.';
     start.hidden = false;
   })

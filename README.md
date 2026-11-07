@@ -153,7 +153,7 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 ### Phase 1 — Eye Tracking
 - [ ] Set up browser-based webcam tracking.
 - [ ] Implement gaze calibration.
-- [ ] Display a real-time estimated gaze cursor.
+- [ ] Display a real-time estimated Gaze Dot.
 - [ ] Implement smoothing and dwell-based selection.
 
 ### Phase 2 — Communication Interface
