@@ -1,6 +1,6 @@
 # Gaze event format
 
-Status: proposed in #4. Needs sign-off from all five roles.
+Status: approved on 2026-11-06 by Edwin Shaiju David on behalf of all five roles (#4).
 
 Every gaze source (the dev-only mouse input and real tracking) sends the session core the same event. The types live in `src/shared/gaze.ts`.
 
