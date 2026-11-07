@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { app, BrowserWindow, globalShortcut, screen } from 'electron';
+import { app, BrowserWindow, clipboard, globalShortcut, screen } from 'electron';
 import { createSession, type AgentAction, type SessionInput } from '../shared/session';
 
 const TICK_MS = 100;
@@ -24,7 +24,10 @@ function readTimingsFile(): unknown {
 function perform(action: AgentAction) {
   const script = ['on run argv', 'tell application "System Events" to keystroke (item 1 of argv)', 'end run'];
   execFile('osascript', [...script.flatMap((line) => ['-e', line]), action.text], (error) => {
-    if (error) console.error('Could not type the Gaze Keyboard text:', error.message);
+    if (!error) return;
+    // The keyboard has already closed, so the clipboard is the only copy of the text left.
+    clipboard.writeText(action.text);
+    console.error('Could not type the Gaze Keyboard text, so it is on the clipboard:', error.message);
   });
 }
 

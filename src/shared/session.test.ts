@@ -119,6 +119,18 @@ describe('timings', () => {
   );
 });
 
+describe('Wake Gesture past the screen edge', () => {
+  it.each([
+    ['right', { x: 1700, y: 100, radius: 60 }],
+    ['top', { x: 1500, y: -100, radius: 60 }],
+  ])('still counts when gaze goes past the %s edge', (_edge, region) => {
+    const session = createSession({ screen });
+    session(gaze(0, region));
+    session(gaze(2000, region));
+    expect(session(gaze(2100, region)).phase).toBe('waiting-for-target');
+  });
+});
+
 describe('Gaze Keyboard', () => {
   const { keys, text } = layoutKeyboard(screen);
   const onTypedText = { x: text.x + text.width / 2, y: text.y + text.height / 2, radius: 60 };
@@ -248,6 +260,20 @@ describe('Gaze Keyboard', () => {
     const nearStop = { x: del.x + 120, y: del.y + del.height - 1, radius: 60 };
     session(gaze(0, nearStop));
     expect(session(gaze(2000, nearStop))).toMatchObject({ dwell: null });
+  });
+
+  it('never presses a key when the Gaze Region overlaps the wake target', () => {
+    const { session } = typing();
+    const nearWake = { ...onKey('g'), y: rectOf('g').y + 10 };
+    session(gaze(0, nearWake));
+    expect(session(gaze(2000, nearWake))).toMatchObject({ dwell: null });
+  });
+
+  it('keeps keys near a corner usable with a large Gaze Region', () => {
+    const { session } = typing();
+    const wide = { ...onKey('delete'), radius: 150 };
+    session(gaze(0, wide));
+    expect(session(gaze(250, wide))).toMatchObject({ dwell: { key: 'delete', progress: 0.25 } });
   });
 
   it('uses the configured key dwell', () => {

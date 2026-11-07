@@ -15,6 +15,9 @@ export type SessionInput = GazeEvent | { type: 'tick'; t: number } | { type: 'op
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction = { type: 'type-text'; text: string };
 
+// shortcut: matches the mouse radius, retune once real gaze is wired in.
+const MAX_CORNER_GUARD_RADIUS = 60;
+
 const DEFAULT_TIMINGS = { wakeHoldMs: 2000, targetTimeoutMs: 5000, keyDwellMs: 1000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
@@ -49,8 +52,11 @@ export function createSession({
   let dwell: (KeyDwell & { start: number; pressed: boolean }) | null = null;
 
   // Gaze on a corner target belongs to that target, so it never presses a key.
+  // The radius is capped so a large Gaze Region can't switch off the keys near a corner.
   function keyAt(region: GazeRegion | null) {
-    if (region === null || overlaps(region, corners.wake) || overlaps(region, corners.stop)) return null;
+    if (region === null) return null;
+    const guard = { ...region, radius: Math.min(region.radius, MAX_CORNER_GUARD_RADIUS) };
+    if (overlaps(guard, corners.wake) || overlaps(guard, corners.stop)) return null;
     return keys.find(({ rect }) => contains(rect, region.x, region.y))?.id ?? null;
   }
 
