@@ -51,6 +51,11 @@ body {
   background: #0f172a;
 }
 
+/* The scan picks the key, so a dot following the eyes would only distract. */
+[data-phase='typing'] #dot {
+  visibility: hidden;
+}
+
 [data-calibrating] .target {
   visibility: hidden;
 }

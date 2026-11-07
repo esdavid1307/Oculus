@@ -12,7 +12,7 @@ export type SessionInput = GazeEvent | { type: 'tick' | 'open-keyboard' | 'selec
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction = { type: 'type-text'; text: string };
 
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 1000 };
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 

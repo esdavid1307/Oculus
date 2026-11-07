@@ -158,8 +158,9 @@ describe('Gaze Keyboard', () => {
     let t = 0;
     // Waits for the scan to reach a key, then presses it with a Select Blink.
     const press = (id: string) => {
+      const start = t;
       while (state.phase === 'typing' && state.highlight !== id) {
-        if (t > 60_000) throw new Error(`the scan never reached ${id}`);
+        if (t - start > 60_000) throw new Error(`the scan never reached ${id}`);
         state = session(tick((t += 100)));
       }
       return (state = session(select(t)));
@@ -180,20 +181,20 @@ describe('Gaze Keyboard', () => {
     expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde' });
   });
 
-  it('moves the highlight to the next key every second, and wraps round', () => {
+  it('moves the highlight to the next key every 2 seconds, and wraps round', () => {
     const { session } = typing();
-    expect(session(tick(999))).toMatchObject({ highlight: 'abcde' });
-    expect(session(tick(1000))).toMatchObject({ highlight: 'fghij' });
-    expect(session(tick(7500))).toMatchObject({ highlight: 'done' });
-    expect(session(tick(8000))).toMatchObject({ highlight: 'abcde' });
+    expect(session(tick(1999))).toMatchObject({ highlight: 'abcde' });
+    expect(session(tick(2000))).toMatchObject({ highlight: 'fghij' });
+    expect(session(tick(15000))).toMatchObject({ highlight: 'done' });
+    expect(session(tick(16000))).toMatchObject({ highlight: 'abcde' });
   });
 
   it('presses the highlighted key on a Select Blink, then scans again from the first key', () => {
     const { session } = typing();
-    expect(session(select(1500))).toMatchObject({ group: 'fghij', highlight: 'f' });
-    expect(session(tick(2499))).toMatchObject({ highlight: 'f' });
-    expect(session(tick(2500))).toMatchObject({ highlight: 'g' });
-    expect(session(select(3600))).toMatchObject({ text: 'h', group: null, highlight: 'abcde' });
+    expect(session(select(3000))).toMatchObject({ group: 'fghij', highlight: 'f' });
+    expect(session(tick(4999))).toMatchObject({ highlight: 'f' });
+    expect(session(tick(5000))).toMatchObject({ highlight: 'g' });
+    expect(session(select(7200))).toMatchObject({ text: 'h', group: null, highlight: 'abcde' });
   });
 
   it('presses nothing by looking at a key', () => {
