@@ -1,21 +1,18 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
-import { contains, type Rect, type Screen } from './geometry';
+import type { Screen } from './geometry';
 import { GROUPS, layoutKeyboard, type KeyId } from './keyboard';
-import { createGazeSnap } from './snap';
-
-export type KeyDwell = { key: KeyId; progress: number };
 
 export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; dwell: KeyDwell | null; snapped: KeyId | null };
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId };
 
-export type SessionInput = GazeEvent | { type: 'tick'; t: number } | { type: 'open-keyboard'; t: number };
+// A select comes from a Select Blink, which real tracking detects outside the GazeEvent format.
+export type SessionInput = GazeEvent | { type: 'tick' | 'open-keyboard' | 'select'; t: number };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction = { type: 'type-text'; text: string };
 
-// The Gaze Snap release distance is in px, but lives here with the timings so the same file configures it.
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, keyDwellMs: 1000, snapReleasePx: 120, snapReleaseMs: 300 };
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 1000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 
@@ -28,9 +25,7 @@ function parseTimings(raw: unknown): Timings {
   return {
     wakeHoldMs: timing('wakeHoldMs'),
     lookAwayMs: timing('lookAwayMs'),
-    keyDwellMs: timing('keyDwellMs'),
-    snapReleasePx: timing('snapReleasePx'),
-    snapReleaseMs: timing('snapReleaseMs'),
+    scanStepMs: timing('scanStepMs'),
   };
 }
 
@@ -50,38 +45,30 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
 }) {
-  const { wakeHoldMs, lookAwayMs, keyDwellMs, snapReleasePx, snapReleaseMs } = parseTimings(timings);
-  const newSnap = () => createGazeSnap(screen, { releasePx: snapReleasePx, releaseMs: snapReleaseMs });
+  const { wakeHoldMs, lookAwayMs, scanStepMs } = parseTimings(timings);
   let phase: OverlayState['phase'] = 'idle';
   let holdStart: number | null = null;
   let wakeProgress = 0;
   let awaySince: number | null = null;
   let text = '';
   let group: string | null = null;
-  // The dwell follows a key's place on screen, so a key that appears under the gaze after a press waits for a Move Off.
-  let dwell: { rect: Rect; key: KeyId | null; start: number; pressed: boolean; progress: number } | null = null;
-  // Gaze Snap only runs on the Gaze Keyboard, the only overlay elements so far, so it is off while idle.
-  let snap = newSnap();
-  let snapped: KeyId | null = null;
+  // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
+  let scanStart = 0;
+  let highlight: KeyId = '';
 
-  // While snapped, the snapped key takes the dwell. Keys too large to snap still dwell under the gaze.
-  function snapKeyAt(region: GazeRegion | null, t: number) {
+  function scan(t: number) {
     const { keys } = layoutKeyboard(screen, group);
-    const rect = snap(t, region, keys.map((key) => key.rect));
-    const key = keys.find((key) => (rect ? key.rect === rect : region !== null && contains(key.rect, region.x, region.y)));
-    snapped = rect && key ? key.id : null;
-    return key;
+    highlight = keys[Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % keys.length].id;
   }
 
-  function openKeyboard() {
+  function openKeyboard(t: number) {
     phase = 'typing';
     holdStart = null;
     wakeProgress = 0;
     text = '';
     group = null;
-    dwell = null;
-    snap = newSnap();
-    snapped = null;
+    scanStart = t;
+    scan(t);
   }
 
   function press(key: KeyId) {
@@ -98,43 +85,28 @@ export function createSession({
     }
   }
 
-  // A key presses once per look. Typing the same letter twice takes a Move Off and back.
-  function dwellOn(region: GazeRegion | null, t: number) {
-    const key = snapKeyAt(region, t);
-    if (key === undefined) {
-      dwell = null;
-      return;
-    }
-    if (dwell?.rect.x !== key.rect.x || dwell.rect.y !== key.rect.y) {
-      dwell = { rect: key.rect, key: key.id, start: t, pressed: false, progress: 0 };
-    }
-    if (dwell.pressed) return;
-    dwell.progress = Math.min((t - dwell.start) / keyDwellMs, 1);
-    if (dwell.progress === 1) {
-      dwell.pressed = true;
-      const before = group;
-      press(key.id);
-      // The key under the gaze changed, so nothing on screen is filling.
-      if (group !== before) dwell.key = null;
-    }
-  }
-
   function state(): OverlayState {
     if (phase !== 'typing') return { phase, wakeProgress };
-    const shown = dwell?.key ? { key: dwell.key, progress: dwell.progress } : null;
-    return { phase, wakeProgress, text, group, dwell: shown, snapped };
+    return { phase, wakeProgress, text, group, highlight };
   }
 
   return (input: SessionInput): OverlayState => {
     if (input.type === 'open-keyboard') {
-      if (phase !== 'typing') openKeyboard();
+      if (phase !== 'typing') openKeyboard(input.t);
     } else if (phase !== 'idle') {
       if (input.type === 'gaze') awaySince = offScreen(input.region, screen) ? (awaySince ?? input.t) : null;
       // The Stop Gesture closes the Gaze Keyboard without typing the text.
       if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
         phase = 'idle';
         awaySince = null;
-      } else if (phase === 'typing' && input.type === 'gaze') dwellOn(input.region, input.t);
+      } else if (phase === 'typing') {
+        scan(input.t);
+        if (input.type === 'select') {
+          press(highlight);
+          scanStart = input.t;
+          scan(input.t);
+        }
+      }
     } else if (input.type === 'gaze') {
       if (onCentreBox(input.region, screen)) {
         holdStart ??= input.t;

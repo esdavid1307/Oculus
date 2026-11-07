@@ -144,8 +144,7 @@ describe('timings', () => {
 });
 
 describe('Gaze Keyboard', () => {
-  const { text } = layoutKeyboard(screen, null);
-  const onTypedText = { x: text.x + text.width / 2, y: text.y + text.height / 2, radius: 120 };
+  const select = (t: number) => ({ type: 'select', t }) as const;
   const onKey = (id: string, group: string | null = null) => {
     const { x, y, width, height } = layoutKeyboard(screen, group).keys.find((key) => key.id === id)!.rect;
     return { x: x + width / 2, y: y + height / 2, radius: 120 };
@@ -155,73 +154,60 @@ describe('Gaze Keyboard', () => {
   const typing = (timings?: unknown) => {
     const actions: AgentAction[] = [];
     const session = createSession({ screen, timings, act: (action) => actions.push(action) });
-    session({ type: 'open-keyboard', t: 0 });
+    let state = session({ type: 'open-keyboard', t: 0 });
     let t = 0;
-    let group: string | null = null;
-    // Holds on a key for a full dwell, then Moves Off along the typed text far enough to let go of the Gaze Snap.
-    const hold = (id: string) => {
-      const key = onKey(id, group);
-      session(gaze((t += 100), key));
-      const state = session(gaze((t += 1000), key));
-      const away = { ...onTypedText, x: key.x < screen.width / 2 ? screen.width - 1 : 0 };
-      session(gaze((t += 100), away));
-      session(gaze((t += 300), away));
-      if (state.phase === 'typing') group = state.group;
-      return state;
+    // Waits for the scan to reach a key, then presses it with a Select Blink.
+    const press = (id: string) => {
+      while (state.phase === 'typing' && state.highlight !== id) {
+        if (t > 60_000) throw new Error(`the scan never reached ${id}`);
+        state = session(tick((t += 100)));
+      }
+      return (state = session(select(t)));
     };
     // Letters go through their group first. Other keys are on the group screen.
     const type = (...ids: string[]) => {
-      let state = session(gaze((t += 100), onTypedText));
       for (const id of ids) {
-        if (id.length === 1) hold(groupOf(id));
-        state = hold(id);
+        if (id.length === 1) press(groupOf(id));
+        press(id);
       }
       return state;
     };
-    return { session, actions, hold, type, at: () => t };
+    return { session, actions, press, type, at: () => t };
   };
 
-  it('opens on the group screen with no text', () => {
+  it('opens on the group screen with no text, highlighting the first key', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, dwell: null, snapped: null });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde' });
   });
 
-  it('opens a group after a 1 second dwell, then types a letter from it', () => {
+  it('moves the highlight to the next key every second, and wraps round', () => {
     const { session } = typing();
-    session(gaze(0, onKey('fghij')));
-    expect(session(gaze(999, onKey('fghij')))).toMatchObject({ group: null });
-    expect(session(gaze(1000, onKey('fghij')))).toMatchObject({ group: 'fghij', text: '' });
-    session(gaze(1100, onKey('h', 'fghij')));
-    session(gaze(2100, onKey('h', 'fghij')));
-    expect(session(gaze(3100, onKey('h', 'fghij')))).toMatchObject({ text: 'h', group: null });
+    expect(session(tick(999))).toMatchObject({ highlight: 'abcde' });
+    expect(session(tick(1000))).toMatchObject({ highlight: 'fghij' });
+    expect(session(tick(7500))).toMatchObject({ highlight: 'done' });
+    expect(session(tick(8000))).toMatchObject({ highlight: 'abcde' });
   });
 
-  it('needs a Move Off before the key that appears under the gaze can press', () => {
+  it('presses the highlighted key on a Select Blink, then scans again from the first key', () => {
     const { session } = typing();
-    // 'abcde' and then 'a' share the first cell.
-    session(gaze(0, onKey('abcde')));
-    session(gaze(1000, onKey('abcde')));
-    expect(session(gaze(1001, onKey('a', 'abcde')))).toMatchObject({ dwell: null });
-    expect(session(gaze(5000, onKey('a', 'abcde')))).toMatchObject({ group: 'abcde', text: '', dwell: null });
+    expect(session(select(1500))).toMatchObject({ group: 'fghij', highlight: 'f' });
+    expect(session(tick(2499))).toMatchObject({ highlight: 'f' });
+    expect(session(tick(2500))).toMatchObject({ highlight: 'g' });
+    expect(session(select(3600))).toMatchObject({ text: 'h', group: null, highlight: 'abcde' });
   });
 
-  it('shows dwell progress on the key being looked at', () => {
+  it('presses nothing by looking at a key', () => {
     const { session } = typing();
-    session(gaze(0, onKey('abcde')));
-    expect(session(gaze(250, onKey('abcde')))).toMatchObject({ dwell: { key: 'abcde', progress: 0.25 } });
-    session(gaze(300, onKey('fghij')));
-    expect(session(gaze(600, onKey('fghij')))).toMatchObject({ dwell: { key: 'fghij', progress: 0 } });
-    expect(session(gaze(700, null))).toMatchObject({ dwell: null });
+    session(gaze(0, onKey('klmno')));
+    expect(session(gaze(5000, onKey('klmno')))).toMatchObject({ group: null, text: '' });
   });
 
-  it('restarts the dwell when tracking is lost', () => {
-    const { session } = typing();
-    session(gaze(0, onKey('abcde')));
-    session(gaze(500, null));
-    expect(session(gaze(1000, onKey('abcde')))).toMatchObject({ group: null });
+  it('ignores a Select Blink while not typing', () => {
+    const session = createSession({ screen });
+    expect(session(select(0))).toEqual({ phase: 'idle', wakeProgress: 0 });
   });
 
-  it('types a double letter with a Move Off between', () => {
+  it('types a double letter', () => {
     expect(typedText(typing().type('h', 'e', 'l', 'l', 'o'))).toBe('hello');
   });
 
@@ -230,9 +216,9 @@ describe('Gaze Keyboard', () => {
   });
 
   it('returns to the groups with Back, without typing', () => {
-    const { hold } = typing();
-    hold('klmno');
-    expect(hold('back')).toMatchObject({ group: null, text: '' });
+    const { press } = typing();
+    press('klmno');
+    expect(press('back')).toMatchObject({ group: null, text: '' });
   });
 
   it('removes the last character with Delete', () => {
@@ -289,63 +275,9 @@ describe('Gaze Keyboard', () => {
     expect(session(gaze(5000, inBox))).toMatchObject({ phase: 'typing', wakeProgress: 0 });
   });
 
-  it('uses the configured key dwell', () => {
-    const { session } = typing({ keyDwellMs: 400 });
-    session(gaze(0, onKey('abcde')));
-    expect(session(gaze(400, onKey('abcde')))).toMatchObject({ group: 'abcde' });
-  });
-
-  describe('Gaze Snap', () => {
-    // 77 px past the right edge of 'abcde', inside 'fghij'.
-    const jitter = { ...onKey('abcde'), x: 600 };
-
-    it('keeps the dwell on a snapped key through jitter onto its neighbour', () => {
-      const { session } = typing();
-      session(gaze(0, onKey('abcde')));
-      expect(session(gaze(500, jitter))).toMatchObject({ snapped: 'abcde', dwell: { key: 'abcde', progress: 0.5 } });
-      session(gaze(600, onKey('abcde')));
-      session(gaze(900, jitter));
-      expect(session(gaze(1000, jitter))).toMatchObject({ group: 'abcde' });
-    });
-
-    it('stays snapped through a short glance at another key', () => {
-      const { session } = typing();
-      session(gaze(0, onKey('abcde')));
-      session(gaze(200, onKey('fghij')));
-      expect(session(gaze(450, onKey('fghij')))).toMatchObject({ snapped: 'abcde', dwell: { key: 'abcde', progress: 0.45 } });
-      session(gaze(500, onKey('abcde')));
-      expect(session(gaze(1000, onKey('abcde')))).toMatchObject({ group: 'abcde' });
-    });
-
-    it('restarts the dwell on the new key after a Move Off', () => {
-      const { session } = typing();
-      session(gaze(0, onKey('abcde')));
-      session(gaze(400, onKey('fghij')));
-      expect(session(gaze(699, onKey('fghij')))).toMatchObject({ snapped: 'abcde' });
-      expect(session(gaze(700, onKey('fghij')))).toMatchObject({ snapped: 'fghij', dwell: { key: 'fghij', progress: 0 } });
-      expect(session(gaze(1700, onKey('fghij')))).toMatchObject({ group: 'fghij' });
-    });
-
-    it('uses the configured release distance and time', () => {
-      const { session } = typing({ snapReleasePx: 50, snapReleaseMs: 100 });
-      session(gaze(0, onKey('abcde')));
-      session(gaze(100, jitter));
-      expect(session(gaze(200, jitter))).toMatchObject({ snapped: 'fghij' });
-    });
-
-    it('breaks at once when tracking is lost', () => {
-      const { session } = typing();
-      session(gaze(0, onKey('abcde')));
-      expect(session(gaze(500, null))).toMatchObject({ snapped: null, dwell: null });
-      expect(session(gaze(600, jitter))).toMatchObject({ snapped: 'fghij' });
-    });
-
-    it('does not delay the Stop Gesture', () => {
-      const { session } = typing();
-      session(gaze(0, onKey('abcde')));
-      expect(session(gaze(100, offScreen))).toMatchObject({ snapped: null });
-      expect(session(gaze(5100, offScreen)).phase).toBe('idle');
-    });
+  it('uses the configured scan step', () => {
+    const { session } = typing({ scanStepMs: 400 });
+    expect(session(tick(400))).toMatchObject({ highlight: 'fghij' });
   });
 });
 

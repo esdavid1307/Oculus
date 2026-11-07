@@ -17,7 +17,7 @@ One of a few Intents the agent offers for the user to choose between; choosing o
 _Avoid_: Prediction, guess
 
 **Gaze Keyboard**:
-The on-screen keyboard that pops up so the user can fill in text by gaze.
+The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
 _Avoid_: Virtual keyboard, typing mode
 
 **Gaze Region**:
@@ -39,6 +39,10 @@ _Avoid_: Start Box, Wake target, corner target
 **Gaze Snap**:
 The Gaze Dot attaching to the one element the user is looking at, such as a key or a browser tab, and staying there through small jitter until they Move Off. It works only while the agent is awake and not running an Intent, never on elements larger than a quarter of the screen, and Look Away always breaks it.
 _Avoid_: Sticky cursor, magnet, lock-on
+
+**Select Blink**:
+Both eyes closed for half a second, which presses the highlighted key. Natural blinks are too short to count.
+_Avoid_: Click, wink
 
 **Start Gesture**:
 The deliberate look at the Centre Box that wakes the agent. It replaced the corner Wake Gesture.
