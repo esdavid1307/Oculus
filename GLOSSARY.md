@@ -35,3 +35,19 @@ _Avoid_: Trigger, activation
 **Stop Gesture**:
 The deliberate look at the bottom-left corner that halts the agent.
 _Avoid_: Cancel, abort
+
+**Gaze Dot**:
+The on-screen marker showing the user the centre of their Gaze Region.
+_Avoid_: Cursor, pointer
+
+**Start Gesture**:
+The deliberate look at the centre box after calibration that begins gaze control.
+_Avoid_: Wake Gesture, which asks the agent for something
+
+**Recalibrate Gesture**:
+The run of quick, deliberate blinks that restarts calibration.
+_Avoid_: Reset, blink command
+
+**Look Away**:
+Gaze staying off the screen long enough to end gaze control. Losing the user's face counts.
+_Avoid_: Stop, which belongs to the Stop Gesture
