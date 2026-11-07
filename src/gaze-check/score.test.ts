@@ -5,8 +5,8 @@ const screen = { width: 1600, height: 1000 };
 const wake = { kind: 'wake', x: 1480, y: 120 } as const;
 
 // One sample every 100 ms, the first at t = 0.
-const samples = (points: (Sample['point'])[]): Sample[] => points.map((point, i) => ({ t: i * 100, point }));
-const repeat = (point: Sample['point'], count: number) => Array<Sample['point']>(count).fill(point);
+const samples = (estimates: (Sample['estimate'])[]): Sample[] => estimates.map((estimate, i) => ({ t: i * 100, estimate }));
+const repeat = (estimate: Sample['estimate'], count: number) => Array<Sample['estimate']>(count).fill(estimate);
 
 describe('corner targets', () => {
   it('counts a trial as a hit when the gaze holds the target for 2 seconds', () => {
@@ -26,16 +26,16 @@ describe('corner targets', () => {
     expect(scoreGazeCheck([trial], screen).corners.wake.hits).toBe(1);
   });
 
-  it('reports the smallest target that holds 95% of the gaze, measured from the corner', () => {
+  it('sizes a target centred on the gaze dot so 95% of the gaze lands inside it', () => {
     const near = repeat({ x: 1400, y: 150 }, 19);
     const trial: Trial = { target: wake, samples: samples([...near, { x: 1300, y: 150 }]) };
-    expect(scoreGazeCheck([trial], screen).corners.wake.targetSize).toBe(200);
+    expect(scoreGazeCheck([trial], screen).corners.wake.targetSize).toBe(160);
   });
 
   it('scores the stop target from the bottom-left corner', () => {
     const stop = { kind: 'stop', x: 120, y: 880 } as const;
     const trial: Trial = { target: stop, samples: samples(repeat({ x: 100, y: 850 }, 21)) };
-    expect(scoreGazeCheck([trial], screen).corners.stop).toMatchObject({ hits: 1, targetSize: 150 });
+    expect(scoreGazeCheck([trial], screen).corners.stop).toMatchObject({ hits: 1, targetSize: 60 });
   });
 });
 
@@ -59,16 +59,16 @@ describe('Gaze Keyboard keys', () => {
   });
 
   it('reports jitter as the typical distance from the mean gaze of each trial', () => {
-    const shaky = Array.from({ length: 40 }, (_, i) => ({ t: i * 1000, point: { x: i % 2 ? 790 : 810, y: 500 } }));
+    const shaky = Array.from({ length: 40 }, (_, i) => ({ t: i * 1000, estimate: { x: i % 2 ? 790 : 810, y: 500 } }));
     expect(scoreGazeCheck([{ target: key, samples: shaky }], screen).keys.jitter).toBe(10);
   });
 });
 
 describe('tracking quality', () => {
   it('reports samples per second and the share of samples lost', () => {
-    const point = { x: 800, y: 500 };
-    const trial: Trial = { target: { kind: 'key', ...point }, samples: samples([...repeat(point, 10), null]) };
-    expect(scoreGazeCheck([trial], screen)).toMatchObject({ samplesPerSecond: 11, lostShare: 1 / 11 });
+    const estimate = { x: 800, y: 500 };
+    const trial: Trial = { target: { kind: 'key', ...estimate }, samples: samples([...repeat(estimate, 10), null]) };
+    expect(scoreGazeCheck([trial], screen)).toMatchObject({ samplesPerSecond: 10, lostShare: 1 / 11 });
   });
 });
 
@@ -78,21 +78,31 @@ describe('suggested verdict', () => {
     samples: samples(repeat({ x, y }, 21)),
   });
   const corners = [hold('wake', 1480, 120), hold('stop', 120, 880)];
-  const keyTrial = (offset: number): Trial => ({
-    target: { kind: 'key', x: 800, y: 500 },
-    samples: samples(repeat({ x: 800 + offset, y: 500 }, 20)),
-  });
+  const key = { kind: 'key', x: 800, y: 500 } as const;
+  const keyTrial = (offset: number): Trial => ({ target: key, samples: samples(repeat({ x: 800 + offset, y: 500 }, 20)) });
+  // Each swing lasts longer than the smoothing window, so smoothing leaves most of it intact.
+  const shakyTrial: Trial = {
+    target: key,
+    samples: Array.from({ length: 80 }, (_, i) => ({
+      t: i * 100,
+      estimate: { x: Math.floor(i / 20) % 2 ? 950 : 650, y: 500 },
+    })),
+  };
 
-  it('stays on WebGazer when both corners hold and a full keyboard fits', () => {
+  it('stays on WebGazer when the gaze is steady', () => {
     expect(scoreGazeCheck([...corners, keyTrial(100)], screen).verdict).toBe('stay on WebGazer');
   });
 
-  it('suggests MediaPipe when a full keyboard no longer fits', () => {
-    expect(scoreGazeCheck([...corners, keyTrial(150)], screen).verdict).toBe('try MediaPipe');
+  it('keeps WebGazer for a steady offset, which calibration can fix and MediaPipe need not', () => {
+    const report = scoreGazeCheck([...corners, keyTrial(150)], screen);
+    expect(report.keys.keysThatFit).toBe(13);
+    expect(report.verdict).toBe('stay on WebGazer');
   });
 
-  it('suggests MediaPipe when a corner hold fails', () => {
-    expect(scoreGazeCheck([corners[0], keyTrial(100)], screen).verdict).toBe('try MediaPipe');
+  it('suggests MediaPipe when jitter alone stops a full keyboard fitting', () => {
+    const report = scoreGazeCheck([...corners, shakyTrial], screen);
+    expect(report.keys.steadyKeySize).toBeGreaterThan(200);
+    expect(report.verdict).toBe('try MediaPipe');
   });
 
   it('suggests MediaPipe when tracking is slower than the gaze event format allows', () => {
@@ -100,13 +110,12 @@ describe('suggested verdict', () => {
     expect(scoreGazeCheck([...corners, keyTrial(100)].map(slow), screen).verdict).toBe('try MediaPipe');
   });
 
-  it('suggests MediaPipe when no key was ever tracked', () => {
-    const lost: Trial = { target: { kind: 'key', x: 800, y: 500 }, samples: samples(repeat(null, 20)) };
-    expect(scoreGazeCheck([...corners, lost], screen).verdict).toBe('try MediaPipe');
+  it('draws no conclusion when no key was ever tracked', () => {
+    const lost: Trial = { target: key, samples: samples(repeat(null, 20)) };
+    expect(scoreGazeCheck([...corners, lost], screen).verdict).toBe('no gaze data');
   });
 
-  it('suggests MediaPipe when a trial received no samples at all', () => {
-    const empty: Trial = { target: { kind: 'key', x: 800, y: 500 }, samples: [] };
-    expect(scoreGazeCheck([...corners, empty], screen).verdict).toBe('try MediaPipe');
+  it('draws no conclusion when a trial received no samples at all', () => {
+    expect(scoreGazeCheck([{ target: key, samples: [] }], screen).verdict).toBe('no gaze data');
   });
 });
