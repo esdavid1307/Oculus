@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@mediapipe/tasks-vision": "1.1.1",
     "@types/node": "^26.6.6",
     "electron": "^45.2.3",
     "electron-vite": "^6.0.0",

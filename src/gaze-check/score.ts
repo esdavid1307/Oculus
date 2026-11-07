@@ -92,6 +92,17 @@ function scoreKeys(trials: Trial[], screen: Screen) {
   };
 }
 
+// Where each target's gaze landed on average, which shows whether the error is a shift or a curve.
+function scoreTargets(trials: Trial[]) {
+  const targets = [...new Map(trials.map(({ target }) => [`${target.kind} ${target.x} ${target.y}`, target])).values()];
+  return targets.map((target) => {
+    const estimates = trials.filter((trial) => trial.target.x === target.x && trial.target.y === target.y).flatMap(estimatesOf);
+    if (estimates.length === 0) return { ...target, offset: null };
+    const { x, y } = meanOf(estimates);
+    return { ...target, offset: { x: x - target.x, y: y - target.y } };
+  });
+}
+
 export function scoreGazeCheck(rawTrials: Trial[], screen: Screen) {
   const trials = rawTrials.map((trial) => ({ ...trial, samples: smooth(trial.samples) }));
   const ofKind = (kind: Target['kind']) => trials.filter((trial) => trial.target.kind === kind);
@@ -103,15 +114,20 @@ export function scoreGazeCheck(rawTrials: Trial[], screen: Screen) {
   const durationMs = trials.reduce((sum, { samples }) => sum + (samples.length ? samples.at(-1)!.t - samples[0].t : 0), 0);
   const samplesPerSecond = durationMs > 0 ? (gaps * 1000) / durationMs : 0;
 
-  // The spec moves to MediaPipe only for jitter. A steady offset is a calibration problem.
+  // Only jitter and rate rule a tracker out. A steady offset is a calibration problem.
   const tooJittery = keys.steadyKeySize > 0 && keysThatFit(keys.steadyKeySize, screen) < KEYS_NEEDED;
   const tooSlow = samplesPerSecond < MIN_SAMPLES_PER_SECOND;
 
   return {
     corners: { wake: scoreCorner(ofKind('wake')), stop: scoreCorner(ofKind('stop')) },
     keys,
+    targets: scoreTargets(trials),
     samplesPerSecond,
     lostShare: samples.length > 0 ? lostCount / samples.length : 0,
-    verdict: !tracked ? 'no gaze data' : tooJittery || tooSlow ? 'try MediaPipe' : 'stay on WebGazer',
+    verdict: !tracked
+      ? 'no gaze data'
+      : tooJittery || tooSlow
+        ? 'too jittery or slow for a full keyboard'
+        : 'steady enough for a full keyboard',
   };
 }

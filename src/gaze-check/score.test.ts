@@ -72,6 +72,35 @@ describe('tracking quality', () => {
   });
 });
 
+describe('offset per target', () => {
+  const target = { kind: 'key', x: 800, y: 500 } as const;
+
+  it('averages the gaze offset across every trial of the same target', () => {
+    const trials: Trial[] = [
+      { target, samples: samples(repeat({ x: 830, y: 480 }, 5)) },
+      { target, samples: samples(repeat({ x: 850, y: 460 }, 5)) },
+    ];
+    expect(scoreGazeCheck(trials, screen).targets).toEqual([{ ...target, offset: { x: 40, y: -30 } }]);
+  });
+
+  it('keeps targets apart and ignores lost samples', () => {
+    const other = { kind: 'wake', x: 1480, y: 120 } as const;
+    const trials: Trial[] = [
+      { target, samples: samples([{ x: 810, y: 500 }, null]) },
+      { target: other, samples: samples(repeat({ x: 1480, y: 140 }, 3)) },
+    ];
+    expect(scoreGazeCheck(trials, screen).targets).toEqual([
+      { ...target, offset: { x: 10, y: 0 } },
+      { ...other, offset: { x: 0, y: 20 } },
+    ]);
+  });
+
+  it('has no offset for a target that was never tracked', () => {
+    const trial: Trial = { target, samples: samples(repeat(null, 3)) };
+    expect(scoreGazeCheck([trial], screen).targets).toEqual([{ ...target, offset: null }]);
+  });
+});
+
 describe('suggested verdict', () => {
   const hold = (kind: 'wake' | 'stop', x: number, y: number): Trial => ({
     target: { kind, x, y },
@@ -89,25 +118,25 @@ describe('suggested verdict', () => {
     })),
   };
 
-  it('stays on WebGazer when the gaze is steady', () => {
-    expect(scoreGazeCheck([...corners, keyTrial(100)], screen).verdict).toBe('stay on WebGazer');
+  it('passes when the gaze is steady', () => {
+    expect(scoreGazeCheck([...corners, keyTrial(100)], screen).verdict).toBe('steady enough for a full keyboard');
   });
 
-  it('keeps WebGazer for a steady offset, which calibration can fix and MediaPipe need not', () => {
+  it('passes a steady offset, which calibration can fix', () => {
     const report = scoreGazeCheck([...corners, keyTrial(150)], screen);
     expect(report.keys.keysThatFit).toBe(13);
-    expect(report.verdict).toBe('stay on WebGazer');
+    expect(report.verdict).toBe('steady enough for a full keyboard');
   });
 
-  it('suggests MediaPipe when jitter alone stops a full keyboard fitting', () => {
+  it('fails when jitter alone stops a full keyboard fitting', () => {
     const report = scoreGazeCheck([...corners, shakyTrial], screen);
     expect(report.keys.steadyKeySize).toBeGreaterThan(200);
-    expect(report.verdict).toBe('try MediaPipe');
+    expect(report.verdict).toBe('too jittery or slow for a full keyboard');
   });
 
-  it('suggests MediaPipe when tracking is slower than the gaze event format allows', () => {
+  it('fails when tracking is slower than the gaze event format allows', () => {
     const slow = (trial: Trial): Trial => ({ ...trial, samples: trial.samples.map((s) => ({ ...s, t: s.t * 2 })) });
-    expect(scoreGazeCheck([...corners, keyTrial(100)].map(slow), screen).verdict).toBe('try MediaPipe');
+    expect(scoreGazeCheck([...corners, keyTrial(100)].map(slow), screen).verdict).toBe('too jittery or slow for a full keyboard');
   });
 
   it('draws no conclusion when no key was ever tracked', () => {
