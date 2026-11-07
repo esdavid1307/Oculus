@@ -37,7 +37,7 @@ The large box in the middle of the screen, shown only while the agent is asleep,
 _Avoid_: Start Box, Wake target, corner target
 
 **Gaze Snap**:
-The Gaze Dot attaching to the one element the user is looking at, such as a key or a browser tab, and staying there through small jitter until they Move Off. It works only while the agent is awake, never on elements larger than a quarter of the screen, and Look Away always breaks it.
+The Gaze Dot attaching to the one element the user is looking at, such as a key or a browser tab, and staying there through small jitter until they Move Off. It works only while the agent is awake and not running an Intent, never on elements larger than a quarter of the screen, and Look Away always breaks it.
 _Avoid_: Sticky cursor, magnet, lock-on
 
 **Start Gesture**:

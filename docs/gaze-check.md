@@ -32,7 +32,7 @@ Samples per second counts camera frames.
 Add `?view=free` to the address to see what the tracker does. This mode skips the test points and gives no report.
 
 1. Press Start and follow the dot through calibration, which takes about 25 seconds.
-2. Do the Start Gesture: look at the centre box for 3 seconds. It comes after calibration because there's no gaze position before that.
+2. Do the Start Gesture: look at the Centre Box for 3 seconds. It comes after calibration because there's no gaze position before that.
 3. Look around. The Gaze Dot shows the tracker's estimate, smoothed over 300 ms. The heat map draws the raw samples and is for testing only. Your camera preview returns to the top left corner so you can check you're in frame.
 4. Do the Recalibrate Gesture at any point after calibration: blink 4 times within 3 seconds. This calibrates again from scratch and clears the map.
 5. Press Esc, or Look Away for 5 seconds, to end. The map stays on the page. Losing your face counts as looking away.
@@ -50,9 +50,9 @@ Run `npm run dev:gaze`. `npm run dev` stays on the dev-only mouse input, and a p
 
 1. The overlay shows your camera preview for 5 seconds so you can get in frame.
 2. Follow the dot through calibration, which takes about 22 seconds. Calibration covers the corners.
-3. Do the Start Gesture: look at the centre box for 3 seconds. The ring fills, a chime plays, and the box goes away.
+3. Do the Start Gesture: look at the Centre Box for 3 seconds. The ring fills, a chime plays, and the box goes away.
 4. The Gaze Dot shows where the tracker thinks you're looking.
-5. Look Away for 5 seconds to stop the agent. Losing your face counts. The centre box returns, so you can start again with your eyes alone.
+5. Look Away for 5 seconds to stop the agent. Losing your face counts. The Centre Box returns, so you can start again with your eyes alone.
 6. Do the Recalibrate Gesture at any time after calibration: blink 4 times within 3 seconds. Recalibrating also stops the agent.
 
 The Recalibrate Gesture stays inside the gaze source, so blinks never reach the session core and the `GazeEvent` format doesn't change. It's the only eyes-only way out of a bad calibration, because it doesn't depend on where the tracker thinks you're looking.
@@ -61,7 +61,7 @@ The Gaze Region radius is a fixed 120 px, around the 66 to 154 px median error o
 
 Known limits:
 
-- If no face is in frame during calibration, the Gaze Dot never appears and the centre box can't be reached until the user recalibrates.
+- If no face is in frame during calibration, the Gaze Dot never appears and the Centre Box can't be reached until the user recalibrates.
 - The Gaze Dot is on the overlay, so it will appear in the agent's screenshots.
 - The mouse input can't Look Away, because the cursor stays on screen. Restart `npm run dev` to get back to idle.
 
