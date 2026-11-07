@@ -5,6 +5,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "gaze-check": "vite --config src/gaze-check/vite.config.ts",
     "build": "electron-vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -15,6 +16,7 @@
     "electron-vite": "^6.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "webgazer": "^3.5.3"
   }
 }
