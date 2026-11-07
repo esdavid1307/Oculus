@@ -187,10 +187,12 @@ npm run typecheck
 
 Hold the mouse on the centre box to perform the Start Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
 
-Timings live in `~/Library/Application Support/oculus-agent/config.json`. Both are optional:
+Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first, then type by holding the mouse on a letter group and then on a letter. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility). If typing fails, the text is left on the clipboard.
+
+Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000 }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "keyDwellMs": 1000 }
 ```
 
 ## Hackathon Demo

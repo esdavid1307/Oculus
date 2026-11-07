@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
-import { cornerTargets, type Rect } from './geometry';
-import { layoutKeyboard } from './keyboard';
+import type { Rect } from './geometry';
+import { GROUPS, layoutKeyboard } from './keyboard';
 import { createSession, type AgentAction, type OverlayState } from './session';
 
 const screen = { width: 1600, height: 1000 };
@@ -143,93 +143,92 @@ describe('timings', () => {
   );
 });
 
-describe('Wake Gesture past the screen edge', () => {
-  it.each([
-    ['right', { x: 1700, y: 100, radius: 60 }],
-    ['top', { x: 1500, y: -100, radius: 60 }],
-  ])('still counts when gaze goes past the %s edge', (_edge, region) => {
-    const session = createSession({ screen });
-    session(gaze(0, region));
-    session(gaze(2000, region));
-    expect(session(gaze(2100, region)).phase).toBe('waiting-for-target');
-  });
-});
-
 describe('Gaze Keyboard', () => {
-  const { keys, text } = layoutKeyboard(screen);
-  const onTypedText = { x: text.x + text.width / 2, y: text.y + text.height / 2, radius: 60 };
-  const rectOf = (id: string) => keys.find((key) => key.id === id)!.rect;
-  const onKey = (id: string) => {
-    const { x, y, width, height } = rectOf(id);
-    return { x: x + width / 2, y: y + height / 2, radius: 60 };
+  const { text } = layoutKeyboard(screen, null);
+  const onTypedText = { x: text.x + text.width / 2, y: text.y + text.height / 2, radius: 120 };
+  const onKey = (id: string, group: string | null = null) => {
+    const { x, y, width, height } = layoutKeyboard(screen, group).keys.find((key) => key.id === id)!.rect;
+    return { x: x + width / 2, y: y + height / 2, radius: 120 };
   };
+  const groupOf = (letter: string) => GROUPS.find((group) => group.includes(letter))!;
 
   const typing = (timings?: unknown) => {
     const actions: AgentAction[] = [];
     const session = createSession({ screen, timings, act: (action) => actions.push(action) });
     session({ type: 'open-keyboard', t: 0 });
     let t = 0;
-    // Looks away, then holds on each key for a full dwell.
+    let group: string | null = null;
+    // Holds on a key for a full dwell, then Moves Off to the typed text.
+    const hold = (id: string) => {
+      session(gaze((t += 100), onKey(id, group)));
+      const state = session(gaze((t += 1000), onKey(id, group)));
+      session(gaze((t += 100), onTypedText));
+      if (state.phase === 'typing') group = state.group;
+      return state;
+    };
+    // Letters go through their group first. Other keys are on the group screen.
     const type = (...ids: string[]) => {
-      let state = session(gaze((t += 100), null));
+      let state = session(gaze((t += 100), onTypedText));
       for (const id of ids) {
-        session(gaze((t += 100), onKey(id)));
-        state = session(gaze((t += 1000), onKey(id)));
-        session(gaze((t += 100), onTypedText));
+        if (id.length === 1) hold(groupOf(id));
+        state = hold(id);
       }
       return state;
     };
-    return { session, actions, type, at: () => t };
+    return { session, actions, hold, type, at: () => t };
   };
 
-  it('opens with no text', () => {
+  it('opens on the group screen with no text', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', dwell: null });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, dwell: null });
   });
 
-  it('types a letter after a 1 second dwell on its key', () => {
+  it('opens a group after a 1 second dwell, then types a letter from it', () => {
     const { session } = typing();
-    session(gaze(0, onKey('h')));
-    expect(typedText(session(gaze(999, onKey('h'))))).toBe('');
-    expect(typedText(session(gaze(1000, onKey('h'))))).toBe('h');
+    session(gaze(0, onKey('fghij')));
+    expect(session(gaze(999, onKey('fghij')))).toMatchObject({ group: null });
+    expect(session(gaze(1000, onKey('fghij')))).toMatchObject({ group: 'fghij', text: '' });
+    session(gaze(1100, onKey('h', 'fghij')));
+    session(gaze(2100, onKey('h', 'fghij')));
+    expect(session(gaze(3100, onKey('h', 'fghij')))).toMatchObject({ text: 'h', group: null });
+  });
+
+  it('needs a Move Off before the key that appears under the gaze can press', () => {
+    const { session } = typing();
+    // 'abcde' and then 'a' share the first cell.
+    session(gaze(0, onKey('abcde')));
+    session(gaze(1000, onKey('abcde')));
+    expect(session(gaze(1001, onKey('a', 'abcde')))).toMatchObject({ dwell: null });
+    expect(session(gaze(5000, onKey('a', 'abcde')))).toMatchObject({ group: 'abcde', text: '', dwell: null });
   });
 
   it('shows dwell progress on the key being looked at', () => {
     const { session } = typing();
-    session(gaze(0, onKey('a')));
-    expect(session(gaze(250, onKey('a')))).toMatchObject({ dwell: { key: 'a', progress: 0.25 } });
-    expect(session(gaze(300, onKey('b')))).toMatchObject({ dwell: { key: 'b', progress: 0 } });
+    session(gaze(0, onKey('abcde')));
+    expect(session(gaze(250, onKey('abcde')))).toMatchObject({ dwell: { key: 'abcde', progress: 0.25 } });
+    expect(session(gaze(300, onKey('fghij')))).toMatchObject({ dwell: { key: 'fghij', progress: 0 } });
     expect(session(gaze(400, onTypedText))).toMatchObject({ dwell: null });
-  });
-
-  it('restarts the dwell when the gaze moves to another key', () => {
-    const { session } = typing();
-    session(gaze(0, onKey('a')));
-    session(gaze(900, onKey('a')));
-    session(gaze(950, onKey('b')));
-    expect(typedText(session(gaze(1900, onKey('b'))))).toBe('');
-    expect(typedText(session(gaze(1950, onKey('b'))))).toBe('b');
   });
 
   it('restarts the dwell when tracking is lost', () => {
     const { session } = typing();
-    session(gaze(0, onKey('a')));
+    session(gaze(0, onKey('abcde')));
     session(gaze(500, null));
-    expect(typedText(session(gaze(1000, onKey('a'))))).toBe('');
+    expect(session(gaze(1000, onKey('abcde')))).toMatchObject({ group: null });
   });
 
-  it('presses a key once per look, and again after looking away', () => {
-    const { session } = typing();
-    session(gaze(0, onKey('l')));
-    session(gaze(1000, onKey('l')));
-    expect(session(gaze(3000, onKey('l')))).toMatchObject({ text: 'l', dwell: { key: 'l', progress: 1 } });
-    session(gaze(3100, onTypedText));
-    session(gaze(3200, onKey('l')));
-    expect(typedText(session(gaze(4200, onKey('l'))))).toBe('ll');
+  it('types a double letter with a Move Off between', () => {
+    expect(typedText(typing().type('h', 'e', 'l', 'l', 'o'))).toBe('hello');
   });
 
   it('types words with Space', () => {
     expect(typedText(typing().type('h', 'i', 'space', 'y', 'o', 'u'))).toBe('hi you');
+  });
+
+  it('returns to the groups with Back, without typing', () => {
+    const { hold } = typing();
+    hold('klmno');
+    expect(hold('back')).toMatchObject({ group: null, text: '' });
   });
 
   it('removes the last character with Delete', () => {
@@ -258,7 +257,7 @@ describe('Gaze Keyboard', () => {
   it('starts with no text when opened again', () => {
     const { session, type } = typing();
     type('a', 'done');
-    expect(session({ type: 'open-keyboard', t: 99_000 })).toMatchObject({ text: '' });
+    expect(session({ type: 'open-keyboard', t: 99_000 })).toMatchObject({ text: '', group: null });
   });
 
   it('keeps the text when asked to open while already typing', () => {
@@ -267,43 +266,29 @@ describe('Gaze Keyboard', () => {
     expect(typedText(session({ type: 'open-keyboard', t: at() + 1 }))).toBe('a');
   });
 
-  it('does not time out while typing', () => {
+  it('stays open while the user looks around the screen', () => {
     const { session } = typing();
     expect(session(tick(60_000)).phase).toBe('typing');
   });
 
-  it('ignores the Wake Gesture while typing', () => {
-    const { session } = typing();
-    session(gaze(0, onWakeTarget));
-    expect(session(gaze(5000, onWakeTarget))).toEqual({ phase: 'typing', wakeProgress: 0, text: '', dwell: null });
+  it('closes without typing on the Stop Gesture', () => {
+    const { session, type, actions, at } = typing();
+    type('h', 'i');
+    session(gaze(at() + 100, offScreen));
+    expect(session(gaze(at() + 5100, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([]);
   });
 
-  it('never presses a key when the Gaze Region overlaps a corner target', () => {
+  it('ignores the Start Gesture while typing', () => {
     const { session } = typing();
-    const del = rectOf('delete');
-    const nearStop = { x: del.x + 120, y: del.y + del.height - 1, radius: 60 };
-    session(gaze(0, nearStop));
-    expect(session(gaze(2000, nearStop))).toMatchObject({ dwell: null });
-  });
-
-  it('never presses a key when the Gaze Region overlaps the wake target', () => {
-    const { session } = typing();
-    const nearWake = { ...onKey('g'), y: rectOf('g').y + 10 };
-    session(gaze(0, nearWake));
-    expect(session(gaze(2000, nearWake))).toMatchObject({ dwell: null });
-  });
-
-  it('keeps keys near a corner usable with a large Gaze Region', () => {
-    const { session } = typing();
-    const wide = { ...onKey('delete'), radius: 150 };
-    session(gaze(0, wide));
-    expect(session(gaze(250, wide))).toMatchObject({ dwell: { key: 'delete', progress: 0.25 } });
+    session(gaze(0, inBox));
+    expect(session(gaze(5000, inBox))).toMatchObject({ phase: 'typing', wakeProgress: 0 });
   });
 
   it('uses the configured key dwell', () => {
     const { session } = typing({ keyDwellMs: 400 });
-    session(gaze(0, onKey('a')));
-    expect(typedText(session(gaze(400, onKey('a'))))).toBe('a');
+    session(gaze(0, onKey('abcde')));
+    expect(session(gaze(400, onKey('abcde')))).toMatchObject({ group: 'abcde' });
   });
 });
 
@@ -313,17 +298,24 @@ describe('Gaze Keyboard layout', () => {
     a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
   it.each([[{ width: 1512, height: 982 }], [{ width: 1440, height: 900 }], [{ width: 1920, height: 1080 }]])(
-    'fills most of a %j screen and leaves both corners free',
+    'fits every screen of keys on a %j display, with no more than 10 keys',
     (size) => {
-      const { keys, text } = layoutKeyboard(size);
-      const { wake, stop } = cornerTargets(size);
-      expect(keys.reduce((sum, key) => sum + area(key.rect), 0) / area({ x: 0, y: 0, ...size })).toBeGreaterThan(0.55);
-      for (const { rect } of [...keys, { rect: text }]) {
-        expect(intersect(rect, wake) || intersect(rect, stop)).toBe(false);
-        expect(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= size.width && rect.y + rect.height <= size.height).toBe(true);
-        for (const other of keys) if (other.rect !== rect) expect(intersect(rect, other.rect)).toBe(false);
+      for (const group of [null, ...GROUPS]) {
+        const { keys, text } = layoutKeyboard(size, group);
+        expect(keys.length).toBeLessThanOrEqual(10);
+        for (const { rect } of [...keys, { rect: text }]) {
+          expect(rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= size.width && rect.y + rect.height <= size.height).toBe(true);
+          for (const other of keys) if (other.rect !== rect) expect(intersect(rect, other.rect)).toBe(false);
+        }
+        // 240 px is near the low end of #5's usable key size, 263 to 703 px.
+        for (const { rect } of keys) expect(Math.min(rect.width, rect.height)).toBeGreaterThanOrEqual(240);
       }
-      expect(keys.map((key) => key.id)).toEqual([...'abcdefghijklmnopqrstuvwxyz', 'space', 'done', 'delete']);
+      const groupScreen = layoutKeyboard(size, null).keys;
+      expect(groupScreen.reduce((sum, key) => sum + area(key.rect), 0) / area({ x: 0, y: 0, ...size })).toBeGreaterThan(0.6);
     },
   );
+
+  it('puts every letter in exactly one group', () => {
+    expect(GROUPS.join('')).toBe('abcdefghijklmnopqrstuvwxyz');
+  });
 });
