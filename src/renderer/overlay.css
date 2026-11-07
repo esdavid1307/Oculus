@@ -68,6 +68,11 @@ body {
 
 #dot {
   position: fixed;
+}
+
+/* The snapped key draws the Gaze Dot at its centre. */
+#dot,
+.key.snapped::after {
   width: 40px;
   height: 40px;
   margin: -20px 0 0 -20px;
@@ -79,17 +84,11 @@ body {
   visibility: hidden;
 }
 
-/* The Gaze Dot, drawn by the key it is snapped to. */
 .key.snapped::after {
   content: '';
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 40px;
-  height: 40px;
-  margin: -20px 0 0 -20px;
-  border-radius: 50%;
-  background: #38bdf8;
 }
 
 /* The Gaze Keyboard sits under the corner targets, which stay visible on top. */

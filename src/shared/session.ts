@@ -25,7 +25,13 @@ function parseTimings(raw: unknown): Timings {
     const value = (raw as Record<string, unknown> | null | undefined)?.[key];
     return typeof value === 'number' && value > 0 ? value : DEFAULT_TIMINGS[key];
   };
-  return Object.fromEntries(Object.keys(DEFAULT_TIMINGS).map((key) => [key, timing(key as keyof Timings)])) as Timings;
+  return {
+    wakeHoldMs: timing('wakeHoldMs'),
+    lookAwayMs: timing('lookAwayMs'),
+    keyDwellMs: timing('keyDwellMs'),
+    snapReleasePx: timing('snapReleasePx'),
+    snapReleaseMs: timing('snapReleaseMs'),
+  };
 }
 
 // The box is 50vmin, as drawn in overlay.css. The centre must be inside, so a large radius can't start a hold.
@@ -59,7 +65,7 @@ export function createSession({
   let snapped: KeyId | null = null;
 
   // While snapped, the snapped key takes the dwell. Keys too large to snap still dwell under the gaze.
-  function keyAt(region: GazeRegion | null, t: number) {
+  function snapKeyAt(region: GazeRegion | null, t: number) {
     const { keys } = layoutKeyboard(screen, group);
     const rect = snap(t, region, keys.map((key) => key.rect));
     const key = keys.find((key) => (rect ? key.rect === rect : region !== null && contains(key.rect, region.x, region.y)));
@@ -94,7 +100,7 @@ export function createSession({
 
   // A key presses once per look. Typing the same letter twice takes a Move Off and back.
   function dwellOn(region: GazeRegion | null, t: number) {
-    const key = keyAt(region, t);
+    const key = snapKeyAt(region, t);
     if (key === undefined) {
       dwell = null;
       return;
