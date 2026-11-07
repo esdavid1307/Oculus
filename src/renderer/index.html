@@ -2,7 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <!-- MediaPipe posts usage logs to Google, with no option to turn them off. This keeps everything on the machine. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'" />
     <title>Oculus Agent</title>
     <link rel="stylesheet" href="./overlay.css" />
     <script type="module" src="./overlay.ts"></script>
@@ -10,5 +11,7 @@
   <body>
     <div id="wake" class="target"><div class="ring"></div><span id="wake-label">Wake</span></div>
     <div id="stop" class="target"><span>Stop</span></div>
+    <p id="gaze-message" hidden></p>
+    <div id="calibration-dot" hidden></div>
   </body>
 </html>

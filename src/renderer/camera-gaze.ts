@@ -1,0 +1,53 @@
+import type { Sample } from '../gaze-check/score';
+import { createTracker } from '../gaze-check/iris-tracker';
+import { calibrate, wait } from '../gaze-check/tracker';
+import type { GazeEvent } from '../shared/gaze';
+import { createGazeSource } from './gaze-source';
+
+const GET_IN_FRAME_MS = 5000;
+const STALL_CHECK_MS = 100;
+const STALL_MS = 500;
+
+const root = document.documentElement;
+const message = document.getElementById('gaze-message')!;
+const dot = document.getElementById('calibration-dot')!;
+
+function placeDot(x: number, y: number) {
+  dot.style.left = `${x}px`;
+  dot.style.top = `${y}px`;
+}
+
+export async function startCameraGaze(send: (event: GazeEvent) => void) {
+  let onSample: (sample: Sample) => void = () => {};
+  let lastSampleAt = Date.now();
+  const tracker = await createTracker((sample) => {
+    lastSampleAt = sample.t;
+    onSample(sample);
+  });
+
+  // Frames can stop without an error, for example on sleep, and a silent gap would count as part of a hold.
+  setInterval(() => {
+    const t = Date.now();
+    if (t - lastSampleAt > STALL_MS) send({ type: 'gaze', t, region: null });
+  }, STALL_CHECK_MS);
+
+  // No click starts this, so the user gets a moment to get in frame before the dots begin.
+  // shortcut: this can start during a run and hides the Stop Gesture for 27 seconds, refuse it once runs exist (#11).
+  const runCalibration = async () => {
+    // Null, so the time spent calibrating can't count towards a hold.
+    onSample = ({ t }) => send({ type: 'gaze', t, region: null });
+    root.dataset.calibrating = '';
+    message.textContent = 'Centre your face in the preview, then follow the dot with your eyes. Afterwards, blink 4 times quickly to recalibrate.';
+    message.hidden = false;
+    tracker.showPreview();
+    await wait(GET_IN_FRAME_MS);
+    tracker.hidePreview();
+    message.hidden = true;
+    dot.hidden = false;
+    await calibrate(tracker, { width: window.innerWidth, height: window.innerHeight }, placeDot);
+    dot.hidden = true;
+    delete root.dataset.calibrating;
+    onSample = createGazeSource(send, runCalibration);
+  };
+  await runCalibration();
+}

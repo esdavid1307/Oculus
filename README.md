@@ -180,6 +180,7 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 ```sh
 npm install
 npm run dev        # overlay with the dev-only mouse input
+npm run dev:gaze   # overlay with real gaze from the webcam
 npm test
 npm run typecheck
 ```

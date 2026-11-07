@@ -24,6 +24,6 @@ Rules for a gaze source:
 
 A Gaze Region is on a corner target when any part of it overlaps the target, so a larger `radius` makes the target easier to hit. Keep `radius` honest: an inflated one could start a hold during normal reading.
 
-The session core detects the corner holds, so they can be tested with scripted gaze events. A gaze source only reports where the user is looking.
+The session core detects the corner holds, so they can be tested with scripted gaze events. A gaze source only reports where the user is looking. The Recalibrate Gesture is handled inside real tracking, outside this format, and tracking sends `region: null` while calibrating.
 
 The session core also takes timer ticks, `{ type: 'tick', t }`, so timeouts fire when tracking is lost.

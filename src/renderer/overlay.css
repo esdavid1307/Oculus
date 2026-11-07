@@ -45,3 +45,31 @@ body {
 [data-phase='waiting-for-target'] #wake {
   background: rgb(3 105 161 / 90%);
 }
+
+[data-calibrating] body {
+  background: #0f172a;
+}
+
+[data-calibrating] .target {
+  visibility: hidden;
+}
+
+#gaze-message {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  padding: 16px;
+  transform: translate(-50%, -50%);
+  background: rgb(15 23 42 / 90%);
+  text-align: center;
+}
+
+#calibration-dot {
+  position: fixed;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  border-radius: 50%;
+  background: #38bdf8;
+}

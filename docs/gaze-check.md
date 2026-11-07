@@ -1,6 +1,6 @@
 # Gaze check
 
-A standalone webcam gaze test for #5. It measures the MediaPipe iris tracker on the demo laptop. It doesn't touch the Electron app.
+A standalone webcam gaze test for #5. It measures the MediaPipe iris tracker on the demo laptop. The Electron app uses the same tracker and calibration, as described under [Real gaze in the app](#real-gaze-in-the-app).
 
 WebGazer was compared first and removed once MediaPipe won. Its results are on #5, and its code is in git history at `a3902c7`.
 
@@ -43,6 +43,25 @@ Known limits:
 
 - `view=dot` still shows the camera preview.
 - Look Away only counts after the Start Gesture. If you leave at the start box, the camera stays on until you press Esc.
+
+## Real gaze in the app
+
+Run `npm run dev:gaze`. `npm run dev` stays on the dev-only mouse input, and a packaged app always uses the camera.
+
+1. The overlay shows your camera preview for 5 seconds so you can get in frame.
+2. Follow the dot through calibration, which takes about 22 seconds. Calibration covers the corners.
+3. Hold your gaze on the top-right corner for 2 seconds to do the Wake Gesture.
+4. Do the Recalibrate Gesture at any time after calibration: blink 4 times within 3 seconds.
+
+The Recalibrate Gesture stays inside the gaze source, so blinks never reach the session core and the `GazeEvent` format doesn't change. It's the only eyes-only way out of a bad calibration, because it doesn't depend on where the tracker thinks you're looking.
+
+The Gaze Region radius is a fixed 120 px, around the 66 to 154 px median error of the MediaPipe runs for #5. It widens the wake zone to about 360 px from the corner, and false wakes during normal reading haven't been measured. The overlay's Content-Security-Policy blocks MediaPipe's usage logs, as the gaze check's does, so keep it if you change that page.
+
+Known limits:
+
+- If no face is in frame during calibration, gaze stays lost until the user recalibrates, and nothing on screen says so.
+- The app has no Gaze Dot, Start Gesture or Look Away. Use the gaze check's `?view=free` to see what the tracker is doing.
+- Gaze is lost for the 27 seconds of a recalibration, and the corner targets are hidden. Once runs exist, #11 must refuse recalibration during a run, or the Stop Gesture is unavailable.
 
 ## MediaPipe test
 
