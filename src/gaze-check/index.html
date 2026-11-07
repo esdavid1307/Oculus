@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- MediaPipe posts usage logs to Google, with no option to turn them off. This keeps everything on the machine. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:"
+    />
+    <title>Gaze check</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0f172a;
+        color: #fff;
+        font: 20px system-ui, sans-serif;
+      }
+
+      #panel {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 280px 16px 16px;
+      }
+
+      #dot {
+        position: fixed;
+        width: 40px;
+        height: 40px;
+        margin: -20px 0 0 -20px;
+        border-radius: 50%;
+        background: #38bdf8;
+      }
+
+      #heat {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #start-box {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        box-sizing: border-box;
+        width: 50vmin;
+        height: 50vmin;
+        padding: 16px;
+        transform: translate(-50%, -50%);
+        border: 4px solid #38bdf8;
+        text-align: center;
+      }
+
+      button {
+        font: inherit;
+        padding: 12px 24px;
+      }
+
+      pre {
+        white-space: pre-wrap;
+      }
+    </style>
+    <script type="module" src="./main.ts"></script>
+  </head>
+  <body>
+    <div id="panel">
+      <h1>Gaze check</h1>
+      <p id="status">Starting the camera…</p>
+      <button id="start" hidden>Start</button>
+      <button id="copy" hidden>Copy results</button>
+      <pre id="results"></pre>
+    </div>
+    <canvas id="heat" hidden></canvas>
+    <div id="start-box" hidden>Look here for 3 seconds to start</div>
+    <div id="dot" hidden></div>
+  </body>
+</html>

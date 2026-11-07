@@ -106,7 +106,7 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 |---|---|
 | Frontend | React, TypeScript |
 | Styling | Tailwind CSS |
-| Eye tracking | WebGazer.js |
+| Eye tracking | MediaPipe iris |
 | Facial landmarks | MediaPipe Face Landmarker |
 | Computer vision | TensorFlow.js / MediaPipe |
 | Predictive text | Local autocomplete / LLM API |
@@ -153,7 +153,7 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 ### Phase 1 — Eye Tracking
 - [ ] Set up browser-based webcam tracking.
 - [ ] Implement gaze calibration.
-- [ ] Display a real-time estimated gaze cursor.
+- [ ] Display a real-time estimated Gaze Dot.
 - [ ] Implement smoothing and dwell-based selection.
 
 ### Phase 2 — Communication Interface
@@ -180,18 +180,17 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 ```sh
 npm install
 npm run dev        # overlay with the dev-only mouse input
+npm run dev:gaze   # overlay with real gaze from the webcam
 npm test
 npm run typecheck
 ```
 
-Hold the mouse on the top-right target to perform the Wake Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
+Hold the mouse on the centre box to perform the Start Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
 
-Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first, then type by holding the mouse on each key. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility).
-
-Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
+Timings live in `~/Library/Application Support/oculus-agent/config.json`. Both are optional:
 
 ```json
-{ "wakeHoldMs": 2000, "targetTimeoutMs": 5000, "keyDwellMs": 1000 }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000 }
 ```
 
 ## Hackathon Demo
