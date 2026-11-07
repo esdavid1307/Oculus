@@ -192,8 +192,10 @@ Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13
 Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "keyDwellMs": 1000 }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "keyDwellMs": 1000, "snapReleasePx": 120, "snapReleaseMs": 300 }
 ```
+
+On the Gaze Keyboard the Gaze Dot snaps to the key under it. It lets go once the Gaze Region centre has been more than `snapReleasePx` past the key's edge for `snapReleaseMs`.
 
 ## Hackathon Demo
 

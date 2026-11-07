@@ -1,19 +1,21 @@
-import type { GazeEvent, GazeRegion } from './gaze';
+import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import { contains, type Rect, type Screen } from './geometry';
 import { GROUPS, layoutKeyboard, type KeyId } from './keyboard';
+import { createGazeSnap } from './snap';
 
 export type KeyDwell = { key: KeyId; progress: number };
 
 export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; dwell: KeyDwell | null };
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; dwell: KeyDwell | null; snapped: KeyId | null };
 
 export type SessionInput = GazeEvent | { type: 'tick'; t: number } | { type: 'open-keyboard'; t: number };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction = { type: 'type-text'; text: string };
 
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, keyDwellMs: 1000 };
+// The Gaze Snap release distance is in px, but lives here with the timings so the same file configures it.
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, keyDwellMs: 1000, snapReleasePx: 120, snapReleaseMs: 300 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 
@@ -23,7 +25,7 @@ function parseTimings(raw: unknown): Timings {
     const value = (raw as Record<string, unknown> | null | undefined)?.[key];
     return typeof value === 'number' && value > 0 ? value : DEFAULT_TIMINGS[key];
   };
-  return { wakeHoldMs: timing('wakeHoldMs'), lookAwayMs: timing('lookAwayMs'), keyDwellMs: timing('keyDwellMs') };
+  return Object.fromEntries(Object.keys(DEFAULT_TIMINGS).map((key) => [key, timing(key as keyof Timings)])) as Timings;
 }
 
 // The box is 50vmin, as drawn in overlay.css. The centre must be inside, so a large radius can't start a hold.
@@ -31,10 +33,6 @@ function onCentreBox(region: GazeRegion | null, { width, height }: Screen) {
   if (region === null) return false;
   const half = Math.min(width, height) / 4;
   return Math.abs(region.x - width / 2) <= half && Math.abs(region.y - height / 2) <= half;
-}
-
-function offScreen(region: GazeRegion | null, { width, height }: Screen) {
-  return region === null || region.x < 0 || region.x > width || region.y < 0 || region.y > height;
 }
 
 export function createSession({
@@ -46,7 +44,8 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
 }) {
-  const { wakeHoldMs, lookAwayMs, keyDwellMs } = parseTimings(timings);
+  const { wakeHoldMs, lookAwayMs, keyDwellMs, snapReleasePx, snapReleaseMs } = parseTimings(timings);
+  const newSnap = () => createGazeSnap(screen, { releasePx: snapReleasePx, releaseMs: snapReleaseMs });
   let phase: OverlayState['phase'] = 'idle';
   let holdStart: number | null = null;
   let wakeProgress = 0;
@@ -55,10 +54,17 @@ export function createSession({
   let group: string | null = null;
   // The dwell follows a key's place on screen, so a key that appears under the gaze after a press waits for a Move Off.
   let dwell: { rect: Rect; key: KeyId | null; start: number; pressed: boolean; progress: number } | null = null;
+  // Gaze Snap only runs on the Gaze Keyboard, the only overlay elements so far, so it is off while idle.
+  let snap = newSnap();
+  let snapped: KeyId | null = null;
 
-  function keyAt(region: GazeRegion | null) {
-    if (region === null) return undefined;
-    return layoutKeyboard(screen, group).keys.find(({ rect }) => contains(rect, region.x, region.y));
+  // While snapped, the snapped key takes the dwell. Keys too large to snap still dwell under the gaze.
+  function keyAt(region: GazeRegion | null, t: number) {
+    const { keys } = layoutKeyboard(screen, group);
+    const rect = snap(t, region, keys.map((key) => key.rect));
+    const key = keys.find((key) => (rect ? key.rect === rect : region !== null && contains(key.rect, region.x, region.y)));
+    snapped = rect && key ? key.id : null;
+    return key;
   }
 
   function openKeyboard() {
@@ -68,6 +74,8 @@ export function createSession({
     text = '';
     group = null;
     dwell = null;
+    snap = newSnap();
+    snapped = null;
   }
 
   function press(key: KeyId) {
@@ -86,7 +94,7 @@ export function createSession({
 
   // A key presses once per look. Typing the same letter twice takes a Move Off and back.
   function dwellOn(region: GazeRegion | null, t: number) {
-    const key = keyAt(region);
+    const key = keyAt(region, t);
     if (key === undefined) {
       dwell = null;
       return;
@@ -108,7 +116,7 @@ export function createSession({
   function state(): OverlayState {
     if (phase !== 'typing') return { phase, wakeProgress };
     const shown = dwell?.key ? { key: dwell.key, progress: dwell.progress } : null;
-    return { phase, wakeProgress, text, group, dwell: shown };
+    return { phase, wakeProgress, text, group, dwell: shown, snapped };
   }
 
   return (input: SessionInput): OverlayState => {
