@@ -186,10 +186,12 @@ npm run typecheck
 
 Hold the mouse on the top-right target to perform the Wake Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
 
-Timings live in `~/Library/Application Support/oculus-agent/config.json`. Both are optional:
+Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first, then type by holding the mouse on each key. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility).
+
+Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 2000, "targetTimeoutMs": 5000 }
+{ "wakeHoldMs": 2000, "targetTimeoutMs": 5000, "keyDwellMs": 1000 }
 ```
 
 ## Hackathon Demo
