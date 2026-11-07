@@ -1,5 +1,6 @@
 import { CORNER_TARGET_SIZE } from '../shared/session';
-import { KEYS_NEEDED, scoreGazeCheck, type Sample, type Screen, type Target, type Trial } from './score';
+import { blinkCounter, holdTimer } from './free-look';
+import { KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
 import type { Tracker } from './tracker';
 
 const SETTLE_MS = 800;
@@ -12,14 +13,30 @@ const start = document.getElementById('start')!;
 const copy = document.getElementById('copy')!;
 const results = document.getElementById('results')!;
 const dot = document.getElementById('dot')!;
+const heat = document.getElementById('heat') as HTMLCanvasElement;
+const startBox = document.getElementById('start-box')!;
+
+const HEAT_RADIUS = 60;
+const START_HOLD_MS = 3000;
+const OFF_SCREEN_STOP_MS = 5000;
+
+const params = new URLSearchParams(location.search);
+// The heat map is for testing. A real user only gets the dot, as their cursor.
+const showHeat = params.get('view') === 'free';
+const useFreeLook = showHeat || params.get('view') === 'cursor';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let recording: Sample[] | null = null;
+let onGaze: ((sample: Sample) => void) | null = null;
 
-async function showDot(x: number, y: number) {
+function placeDot(x: number, y: number) {
   dot.style.left = `${x}px`;
   dot.style.top = `${y}px`;
+}
+
+async function showDot(x: number, y: number) {
+  placeDot(x, y);
   await wait(SETTLE_MS);
 }
 
@@ -77,6 +94,88 @@ function formatReport(report: ReturnType<typeof scoreGazeCheck>, trackerName: st
   ].join('\n');
 }
 
+// Gaze only exists after calibration, so this gates the heat map, not the calibration.
+function lookAtStartBox() {
+  startBox.hidden = false;
+  const { left, right, top, bottom } = startBox.getBoundingClientRect();
+  const held = holdTimer(START_HOLD_MS);
+  const blinked = blinkCounter();
+  const smooth = smoother();
+  return new Promise<'started' | 'recalibrate'>((resolve) => {
+    onGaze = (sample) => {
+      const { t, eyesClosed } = sample;
+      // Also here, because a bad calibration can make the box impossible to reach.
+      if (blinked(t, !!eyesClosed)) resolve('recalibrate');
+      const { estimate: cursor } = smooth(sample);
+      dot.hidden = !cursor;
+      if (cursor) placeDot(cursor.x, cursor.y);
+      const inside = !!cursor && cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom;
+      if (held(t, inside)) resolve('started');
+    };
+  });
+}
+
+// The dot is smoothed like a cursor. The heat map draws raw samples, to show exactly what the tracker outputs.
+function paintHeat(context: CanvasRenderingContext2D, { width, height }: Screen) {
+  const away = holdTimer(OFF_SCREEN_STOP_MS);
+  const blinked = blinkCounter();
+  const smooth = smoother();
+  return new Promise<'recalibrate'>((resolve) => {
+    onGaze = (sample) => {
+      const { t, estimate, eyesClosed } = sample;
+      if (blinked(t, !!eyesClosed)) resolve('recalibrate');
+      const { estimate: cursor } = smooth(sample);
+      dot.hidden = !cursor;
+      if (cursor) placeDot(cursor.x, cursor.y);
+      const onScreen = !!cursor && cursor.x >= 0 && cursor.x <= width && cursor.y >= 0 && cursor.y <= height;
+      if (away(t, !onScreen)) {
+        onGaze = null;
+        // Leaving fullscreen is what ends the session, the same as pressing Esc.
+        void document.exitFullscreen();
+      }
+      if (!estimate) return;
+      const { x, y } = estimate;
+      const spot = context.createRadialGradient(x, y, 0, x, y, HEAT_RADIUS);
+      spot.addColorStop(0, 'rgba(255, 60, 0, 0.08)');
+      spot.addColorStop(1, 'rgba(255, 60, 0, 0)');
+      context.fillStyle = spot;
+      context.fillRect(x - HEAT_RADIUS, y - HEAT_RADIUS, HEAT_RADIUS * 2, HEAT_RADIUS * 2);
+    };
+  });
+}
+
+async function freeLook(tracker: Tracker, screen: Screen) {
+  // Made up front, so Esc during calibration still ends the session once calibration finishes.
+  const exited = new Promise<'exited'>((resolve) => {
+    document.addEventListener('fullscreenchange', () => resolve('exited'), { once: true });
+  });
+  heat.width = screen.width;
+  heat.height = screen.height;
+  const context = heat.getContext('2d')!;
+
+  let outcome: 'exited' | 'started' | 'recalibrate';
+  do {
+    onGaze = null;
+    tracker.hidePreview();
+    heat.hidden = true;
+    dot.hidden = false;
+    await calibrate(tracker, screen);
+    tracker.showPreview();
+    // The old map came from the old calibration, so it can't be compared with the new one.
+    context.globalCompositeOperation = 'source-over';
+    context.clearRect(0, 0, screen.width, screen.height);
+    // Additive, so repeat visits build up from dim red to bright yellow.
+    context.globalCompositeOperation = 'lighter';
+    heat.hidden = !showHeat;
+
+    outcome = await Promise.race([exited, lookAtStartBox()]);
+    startBox.hidden = true;
+    if (outcome === 'started') outcome = await Promise.race([exited, paintHeat(context, screen)]);
+  } while (outcome === 'recalibrate');
+  onGaze = null;
+  dot.hidden = true;
+}
+
 async function run(tracker: Tracker) {
   await document.documentElement.requestFullscreen();
   await wait(SETTLE_MS);
@@ -85,6 +184,14 @@ async function run(tracker: Tracker) {
   tracker.hidePreview();
   panel.hidden = true;
   dot.hidden = false;
+  if (useFreeLook) {
+    await freeLook(tracker, screen);
+    tracker.stop();
+    status.textContent = 'Stopped. Reload to run again.';
+    start.hidden = true;
+    panel.hidden = showHeat;
+    return;
+  }
   await calibrate(tracker, screen);
   const trials: Trial[] = [];
   for (const target of testTargets(screen)) trials.push(await runTrial(target));
@@ -102,13 +209,20 @@ async function run(tracker: Tracker) {
 
 copy.addEventListener('click', () => navigator.clipboard.writeText(results.textContent!));
 
-const useIris = new URLSearchParams(location.search).get('tracker') === 'mediapipe';
+const useIris = params.get('tracker') === 'mediapipe';
 // Imported on demand so only the chosen tracker ever opens the camera.
 (useIris ? import('./iris-tracker') : import('./webgazer-tracker'))
-  .then(({ createTracker }) => createTracker((sample) => recording?.push(sample)))
+  .then(({ createTracker }) =>
+    createTracker((sample) => {
+      recording?.push(sample);
+      onGaze?.(sample);
+    }),
+  )
   .then((tracker) => {
     start.addEventListener('click', () => run(tracker));
-    status.textContent = 'Centre your face in the box, sit as you will for the demo, then press Start. Follow the dot with your eyes, keeping your head still. It takes about 90 seconds.';
+    status.textContent = useFreeLook
+      ? 'Centre your face in the box, then press Start. Follow the dot with your eyes for about 25 seconds, keeping your head still. Then look at the box for 3 seconds to start. Blink 4 times quickly to recalibrate. Press Esc or look off screen for 5 seconds to stop.'
+      : 'Centre your face in the box, sit as you will for the demo, then press Start. Follow the dot with your eyes, keeping your head still. It takes about 90 seconds.';
     start.hidden = false;
   })
   .catch((error: Error) => {

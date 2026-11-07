@@ -5,6 +5,8 @@ import modelAssetPath from './face_landmarker.task?url';
 import { fitRidge, irisFeatures, type CalibrationRow } from './iris';
 import { CALIBRATION_DWELL_MS, type CreateTracker } from './tracker';
 
+const EYE_CLOSED_SCORE = 0.5;
+
 export const createTracker: CreateTracker = async (onSample) => {
   // The whole screen spans only a few camera pixels of iris movement, so ask for more than the default.
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -17,6 +19,7 @@ export const createTracker: CreateTracker = async (onSample) => {
       runningMode: 'VIDEO',
       numFaces: 1,
       outputFacialTransformationMatrixes: true,
+      outputFaceBlendshapes: true,
     },
   );
 
@@ -44,7 +47,13 @@ export const createTracker: CreateTracker = async (onSample) => {
     const features =
       landmarks && matrix ? irisFeatures(landmarks, matrix, { width: video.videoWidth, height: video.videoHeight }) : null;
     if (features && target) calibration.push({ features, target });
-    onSample({ t: Date.now(), estimate: features && predict ? predict(features) : null });
+    const shapes = result.faceBlendshapes[0]?.categories ?? [];
+    const closed = (name: string) => (shapes.find(({ categoryName }) => categoryName === name)?.score ?? 0) > EYE_CLOSED_SCORE;
+    onSample({
+      t: Date.now(),
+      estimate: features && predict ? predict(features) : null,
+      eyesClosed: closed('eyeBlinkLeft') && closed('eyeBlinkRight'),
+    });
   };
   video.requestVideoFrameCallback(onFrame);
 
@@ -54,6 +63,9 @@ export const createTracker: CreateTracker = async (onSample) => {
       // Not display: none, which would stop the frame callbacks.
       video.style.opacity = '0';
     },
+    showPreview() {
+      video.style.opacity = '1';
+    },
     async calibrateAt(x, y) {
       target = { x, y };
       await new Promise((resolve) => setTimeout(resolve, CALIBRATION_DWELL_MS));
@@ -61,6 +73,8 @@ export const createTracker: CreateTracker = async (onSample) => {
     },
     finishCalibration() {
       if (calibration.length > 0) predict = fitRidge(calibration);
+      // A recalibration must not mix in rows from before the user moved.
+      calibration.length = 0;
     },
     stop() {
       stopped = true;

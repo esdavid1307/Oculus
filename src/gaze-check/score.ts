@@ -4,7 +4,7 @@ type Position = { x: number; y: number };
 
 export type Screen = { width: number; height: number };
 // What the tracker reports. It only becomes a Gaze Region once a real gaze source gives it a radius.
-export type Sample = { t: number; estimate: Position | null };
+export type Sample = { t: number; estimate: Position | null; eyesClosed?: boolean };
 // Corner targets are tested at the centre of their target.
 export type Target = Position & { kind: 'wake' | 'stop' | 'key' };
 export type Trial = { target: Target; samples: Sample[] };
@@ -22,17 +22,19 @@ const meanOf = (positions: Position[]) => ({
 });
 
 // A real gaze source must smooth before sending (docs/gaze-events.md), so score what it would send.
-function smooth(samples: Sample[]): Sample[] {
+export function smoother() {
   let recent: { t: number; estimate: Position }[] = [];
-  return samples.map(({ t, estimate }) => {
+  return ({ t, estimate }: Sample): Sample => {
     if (!estimate) {
       recent = [];
       return { t, estimate };
     }
     recent = [...recent.filter((sample) => t - sample.t <= SMOOTHING_MS), { t, estimate }];
     return { t, estimate: meanOf(recent.map((sample) => sample.estimate)) };
-  });
+  };
 }
+
+const smooth = (samples: Sample[]) => samples.map(smoother());
 
 const percentile = (values: number[], share: number) =>
   [...values].sort((a, b) => a - b)[Math.max(Math.ceil(values.length * share) - 1, 0)] ?? 0;

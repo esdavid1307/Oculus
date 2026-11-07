@@ -9,6 +9,8 @@ A standalone webcam gaze test for #5. It measures WebGazer or a MediaPipe iris t
 
 Repeat a few times, ideally with more than one person and in the demo room's lighting, because one run says little.
 
+To see what a tracker does, add `view=free` to the address, such as `?tracker=mediapipe&view=free`. After calibration, your camera preview returns to the top left corner and a live dot shows the tracker's estimate, smoothed over 300 ms like a cursor. The heat map draws the raw samples. Look at the centre box for 3 seconds to start the heat map. Blink 4 times within 3 seconds to recalibrate, which clears the map (MediaPipe only, because WebGazer has no blink signal). Press Esc, or look off screen for 5 seconds, to freeze the map. Losing your face counts as off screen. This mode skips the test points and gives no report. Use `view=cursor` instead for the same flow with only the dot, which is what a real user would see.
+
 The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. Corner targets use a Gaze Region radius of 0, so they are a worst case.
 
 Both trackers use the same calibration points, test targets and scoring. WebGazer gets 3 calibration samples per point, because it keeps only its last 50. The MediaPipe tracker uses every frame of the dwell.

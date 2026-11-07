@@ -33,6 +33,26 @@
         background: #38bdf8;
       }
 
+      #heat {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #start-box {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        box-sizing: border-box;
+        width: 50vmin;
+        height: 50vmin;
+        padding: 16px;
+        transform: translate(-50%, -50%);
+        border: 4px solid #38bdf8;
+        text-align: center;
+      }
+
       button {
         font: inherit;
         padding: 12px 24px;
@@ -52,6 +72,8 @@
       <button id="copy" hidden>Copy results</button>
       <pre id="results"></pre>
     </div>
+    <canvas id="heat" hidden></canvas>
+    <div id="start-box" hidden>Look here for 3 seconds to start</div>
     <div id="dot" hidden></div>
   </body>
 </html>

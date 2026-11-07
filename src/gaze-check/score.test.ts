@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scoreGazeCheck, type Sample, type Trial } from './score';
+import { scoreGazeCheck, smoother, type Sample, type Trial } from './score';
 
 const screen = { width: 1600, height: 1000 };
 const wake = { kind: 'wake', x: 1480, y: 120 } as const;
@@ -146,5 +146,26 @@ describe('suggested verdict', () => {
 
   it('draws no conclusion when a trial received no samples at all', () => {
     expect(scoreGazeCheck([{ target: key, samples: [] }], screen).verdict).toBe('no gaze data');
+  });
+});
+
+describe('smoother', () => {
+  it('averages the last 300 ms of gaze', () => {
+    const smooth = smoother();
+    smooth({ t: 0, estimate: { x: 0, y: 0 } });
+    expect(smooth({ t: 100, estimate: { x: 100, y: 40 } }).estimate).toEqual({ x: 50, y: 20 });
+  });
+
+  it('forgets gaze older than 300 ms', () => {
+    const smooth = smoother();
+    smooth({ t: 0, estimate: { x: 0, y: 0 } });
+    expect(smooth({ t: 301, estimate: { x: 100, y: 40 } }).estimate).toEqual({ x: 100, y: 40 });
+  });
+
+  it('starts again after tracking is lost', () => {
+    const smooth = smoother();
+    smooth({ t: 0, estimate: { x: 0, y: 0 } });
+    expect(smooth({ t: 50, estimate: null }).estimate).toBeNull();
+    expect(smooth({ t: 100, estimate: { x: 100, y: 40 } }).estimate).toEqual({ x: 100, y: 40 });
   });
 });

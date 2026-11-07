@@ -21,6 +21,7 @@ export const createTracker: CreateTracker = async (onSample) => {
   return {
     name: 'WebGazer',
     hidePreview: () => webgazer.showVideoPreview(false),
+    showPreview: () => webgazer.showVideoPreview(true),
     async calibrateAt(x, y) {
       for (let i = 0; i < CALIBRATION_SAMPLES; i++) {
         webgazer.recordScreenPosition(x, y, 'click');
