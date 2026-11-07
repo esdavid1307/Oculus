@@ -175,6 +175,23 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 - [ ] Add offline functionality.
 - [ ] Evaluate accuracy, communication speed, and usability.
 
+## Development
+
+```sh
+npm install
+npm run dev        # overlay with the dev-only mouse input
+npm test
+npm run typecheck
+```
+
+Hold the mouse on the top-right target to perform the Wake Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
+
+Timings live in `~/Library/Application Support/oculus-agent/config.json`. Both are optional:
+
+```json
+{ "wakeHoldMs": 2000, "targetTimeoutMs": 5000 }
+```
+
 ## Hackathon Demo
 
 Our goal is to demonstrate hands-free communication using only a standard laptop webcam.

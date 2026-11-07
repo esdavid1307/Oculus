@@ -1,0 +1,47 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font: 600 32px system-ui, sans-serif;
+  color: #fff;
+}
+
+.target {
+  position: fixed;
+  display: grid;
+  place-items: center;
+  width: var(--target-size);
+  height: var(--target-size);
+  box-sizing: border-box;
+  background: rgb(15 23 42 / 80%);
+  border: 4px solid #fff;
+}
+
+.target > * {
+  grid-area: 1 / 1;
+}
+
+#wake {
+  top: 0;
+  right: 0;
+}
+
+#stop {
+  bottom: 0;
+  left: 0;
+  background: rgb(153 27 27 / 85%);
+}
+
+.ring {
+  width: 85%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: conic-gradient(#38bdf8 calc(var(--wake-progress, 0) * 1turn), transparent 0);
+  mask: radial-gradient(closest-side, transparent 78%, #000 80%);
+}
+
+[data-phase='waiting-for-target'] #wake {
+  background: rgb(3 105 161 / 90%);
+}
