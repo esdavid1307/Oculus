@@ -1,8 +1,10 @@
 # Gaze check
 
-A standalone webcam gaze test for #5. It measures WebGazer or a MediaPipe iris tracker on the demo laptop. It doesn't touch the Electron app.
+A standalone webcam gaze test for #5. It measures the MediaPipe iris tracker on the demo laptop. It doesn't touch the Electron app.
 
-1. Run `npm run gaze-check` and open the printed `localhost` address in Chrome. That tests WebGazer. Add `?tracker=mediapipe` to the address to test the MediaPipe iris tracker.
+WebGazer was compared first and removed once MediaPipe won. Its results are on #5, and its code is in git history at `a3902c7`.
+
+1. Run `npm run gaze-check` and open the printed `localhost` address in Chrome.
 2. Allow the camera. Sit as you will for the demo and centre your face in the box.
 3. Press Start and follow the dot with your eyes. Calibration covers the corners, then 15 test points follow. It takes about 90 seconds.
 4. Press Copy results and paste them into a comment on #5.
@@ -11,7 +13,7 @@ Repeat a few times, ideally with more than one person and in the demo room's lig
 
 The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. Corner targets use a Gaze Region radius of 0, so they are a worst case.
 
-Both trackers use the same calibration points, test targets and scoring. WebGazer gets 3 calibration samples per point, because it keeps only its last 50. The MediaPipe tracker uses every frame of the dwell.
+The tracker uses every frame of the calibration dwell.
 
 The page's Content-Security-Policy blocks all network access beyond `localhost`, because MediaPipe otherwise posts usage logs to Google. The face model `src/gaze-check/face_landmarker.task` is stored in the repo, because it isn't part of the npm package.
 
@@ -23,11 +25,11 @@ Key counts leave no room for showing the typed text, so treat them as an upper l
 
 The report ends with each target's mean offset. If every target is off by about the same amount, the error is a shift. If the offset changes steadily across the screen, the mapping is curved, which is the case for adding quadratic terms.
 
-Samples per second counts camera frames for the MediaPipe tracker. For WebGazer it follows its own prediction loop, so don't compare the two.
+Samples per second counts camera frames.
 
 ## Watching gaze live
 
-Add `view=free` to the address, such as `?tracker=mediapipe&view=free`, to see what a tracker does. This mode skips the test points and gives no report.
+Add `?view=free` to the address to see what the tracker does. This mode skips the test points and gives no report.
 
 1. Press Start and follow the dot through calibration, which takes about 25 seconds.
 2. Do the Start Gesture: look at the centre box for 3 seconds. It comes after calibration because there's no gaze position before that.
@@ -39,8 +41,6 @@ Use `view=dot` for the same flow without the heat map, which is closer to what a
 
 Known limits:
 
-- The Recalibrate Gesture needs MediaPipe, because WebGazer has no blink signal.
-- WebGazer's camera preview doesn't come back after calibration.
 - `view=dot` still shows the camera preview.
 - Look Away only counts after the Start Gesture. If you leave at the start box, the camera stays on until you press Esc.
 

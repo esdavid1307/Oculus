@@ -106,7 +106,7 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 |---|---|
 | Frontend | React, TypeScript |
 | Styling | Tailwind CSS |
-| Eye tracking | WebGazer.js |
+| Eye tracking | MediaPipe iris |
 | Facial landmarks | MediaPipe Face Landmarker |
 | Computer vision | TensorFlow.js / MediaPipe |
 | Predictive text | Local autocomplete / LLM API |

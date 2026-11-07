@@ -1,5 +1,6 @@
 import { CORNER_TARGET_SIZE } from '../shared/session';
 import { blinkCounter, holdTimer } from './free-look';
+import { createTracker } from './iris-tracker';
 import { KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
 import type { Tracker } from './tracker';
 
@@ -209,19 +210,14 @@ async function run(tracker: Tracker) {
 
 copy.addEventListener('click', () => navigator.clipboard.writeText(results.textContent!));
 
-const useIris = params.get('tracker') === 'mediapipe';
-// Imported on demand so only the chosen tracker ever opens the camera.
-(useIris ? import('./iris-tracker') : import('./webgazer-tracker'))
-  .then(({ createTracker }) =>
-    createTracker((sample) => {
-      recording?.push(sample);
-      onGaze?.(sample);
-    }),
-  )
+createTracker((sample) => {
+  recording?.push(sample);
+  onGaze?.(sample);
+})
   .then((tracker) => {
     start.addEventListener('click', () => run(tracker));
     status.textContent = useFreeLook
-      ? `Centre your face in the box, then press Start. Follow the dot with your eyes for about 25 seconds, keeping your head still. Then look at the box for 3 seconds to start.${useIris ? ' Blink 4 times quickly to recalibrate.' : ''} Press Esc or look off screen for 5 seconds to end.`
+      ? 'Centre your face in the box, then press Start. Follow the dot with your eyes for about 25 seconds, keeping your head still. Then look at the box for 3 seconds to start. Blink 4 times quickly to recalibrate. Press Esc or look off screen for 5 seconds to end.'
       : 'Centre your face in the box, sit as you will for the demo, then press Start. Follow the dot with your eyes, keeping your head still. It takes about 90 seconds.';
     start.hidden = false;
   })
