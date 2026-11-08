@@ -239,6 +239,7 @@ function createWordPrediction(enabled: boolean) {
   }
   const predictor = createPredictor(spokenEnglish as BaseWords, readWordModel(saved));
   return {
+    enabled,
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
     suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
     learn(text: string) {
@@ -315,16 +316,20 @@ function typeText(text: string) {
   });
 }
 
-// Whether the box the text just went into is a password field, whose text must never be remembered. Checked on the
-// focused element's subrole. If it can't be read, that counts as secure: not learning is the safe mistake.
+// Whether the box the text is about to go into is a password field, whose text must never be remembered. Checked on
+// the focused element's subrole. If there is no focused element or it can't be read, the script throws and that
+// counts as secure: not learning is the safe mistake. A field with no subrole is an ordinary field.
 const FOCUSED_SUBROLE = `const events = Application('System Events');
 const focused = events.processes.whose({ frontmost: true })[0].attributes.byName('AXFocusedUIElement').value();
+if (!focused) throw new Error('No focused element');
 let subrole = '';
 try { subrole = focused.attributes.byName('AXSubrole').value() || ''; } catch (error) {}
 subrole`;
 
+// Typing waits on this, so a hung osascript is cut off and, like any other failure, counts as secure: the text is
+// still typed, only not learned.
 function isSecureField(done: (secure: boolean) => void) {
-  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], (error, stdout) => {
+  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], { timeout: 2000 }, (error, stdout) => {
     if (error) console.warn('Could not tell whether the field is a password field, so not learning:', error.message);
     done(error !== null || stdout.trim() === 'AXSecureTextField');
   });
@@ -397,11 +402,16 @@ function createOverlay() {
   const contexts = new Map<number, Promise<string>>();
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
-      typeText(action.text);
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
-      // A failed save must not stop the text being typed, so it only warns.
+      if (!words.enabled) {
+        typeText(action.text);
+        return;
+      }
+      // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
       isSecureField((secure) => {
+        typeText(action.text);
         if (secure) return;
+        // A failed save must not stop the text being typed, so it only warns.
         try {
           words.learn(action.text);
         } catch (error) {

@@ -14,8 +14,10 @@ export type WordModel = {
   next: Record<string, Record<string, number>>;
   ranker: Ranker;
   // Whole texts the user submitted, keyed by the text in lower case. Optional, so model files from before phrases still load.
-  phrases?: Record<string, { text: string; count: number; last: number }>;
+  phrases?: Record<string, Phrase>;
 };
+
+type Phrase = { text: string; count: number; last: number };
 
 type Ranker = { linear: number[]; hidden: number[][]; hiddenBias: number[]; out: number[] };
 
@@ -49,6 +51,14 @@ const MAX_PHRASES = 200;
 const SECRET_RUN = /\S{16,}/;
 
 const WORD = /^[a-z]+$/;
+
+// Drops the least used, then least recent, entries until at most max are left.
+function keepMostUsed(entries: Record<string, { count: number; last: number }>, max: number) {
+  const all = Object.entries(entries);
+  if (all.length <= max) return;
+  all.sort(([, a], [, b]) => a.count - b.count || a.last - b.last);
+  for (const [key] of all.slice(0, all.length - max)) delete entries[key];
+}
 
 // Keyed by typed words, so no inherited keys: a plain {} already has 'constructor', which poisons the counts.
 const table = <T>(entries: Record<string, T> = {}): Record<string, T> => Object.assign(Object.create(null), entries);
@@ -98,7 +108,7 @@ export function readWordModel(raw: unknown): WordModel {
   if (!valid) return emptyWordModel();
   const next = table<Record<string, number>>();
   for (const [previous, after] of Object.entries(model.next)) next[previous] = table(after);
-  const phrases = table<{ text: string; count: number; last: number }>();
+  const phrases = table<Phrase>();
   for (const [key, phrase] of Object.entries(model.phrases ?? {}))
     if (typeof phrase?.text === 'string' && Number.isFinite(phrase.count) && Number.isFinite(phrase.last)) phrases[key] = phrase;
   return { ...model, words: table(model.words), next, phrases };
@@ -206,20 +216,14 @@ export function createPredictor(baseWords: BaseWords, model: WordModel = emptyWo
   }
 
   function forget() {
-    const words = Object.entries(model.words);
-    if (words.length <= MAX_OWN_WORDS) return;
-    words.sort(([, a], [, b]) => a.count - b.count || a.last - b.last);
-    for (const [word] of words.slice(0, words.length - MAX_OWN_WORDS)) delete model.words[word];
+    keepMostUsed(model.words, MAX_OWN_WORDS);
   }
 
   // The model may have been read from an old file without phrases.
   const phrases = (model.phrases ??= table());
 
   function forgetPhrases() {
-    const all = Object.entries(phrases);
-    if (all.length <= MAX_PHRASES) return;
-    all.sort(([, a], [, b]) => a.count - b.count || a.last - b.last);
-    for (const [key] of all.slice(0, all.length - MAX_PHRASES)) delete phrases[key];
+    keepMostUsed(phrases, MAX_PHRASES);
   }
 
   return {

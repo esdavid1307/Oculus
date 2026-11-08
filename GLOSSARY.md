@@ -29,7 +29,7 @@ The on-screen keyboard that pops up so the user can fill in text. It scans, high
 _Avoid_: Virtual keyboard, typing mode
 
 **Suggested Word**:
-One of up to three words the Gaze Keyboard offers, scanned first, to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
+One of up to three words the Gaze Keyboard offers, scanned first (after the Suggested Phrase, when there is one), to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
 _Avoid_: Prediction, autocomplete, autofill
 
 **Gaze Region**:
