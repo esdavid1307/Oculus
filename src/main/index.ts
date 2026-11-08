@@ -332,7 +332,8 @@ function createOverlay() {
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
-      // Time to Action: Start Gesture to the Intent starting. Only logged, never shown.
+      // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
+      // starts, so a run that fails at once is still counted. Only logged, never shown.
       console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
       void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
         currentRun = null;

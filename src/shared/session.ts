@@ -339,6 +339,8 @@ export function createSession({
           // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
           // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
+          // Staying awake stands in for a new Start Gesture, so Time to Action counts from here, not the first wake.
+          wokeAt = input.t;
         }
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);

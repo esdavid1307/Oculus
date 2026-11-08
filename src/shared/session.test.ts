@@ -833,6 +833,22 @@ describe('Suggested Intents', () => {
     expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Mute', sinceWakeMs: 9100 });
   });
 
+  it('counts Time to Action from the last icon opened when the agent stayed awake after it', () => {
+    const actions: AgentAction[] = [];
+    const dock = ['Finder', 'Safari'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
+    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => dock });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, { x: 700, y: 820, radius: 120 }));
+    expect(session(gaze(6100, { x: 700, y: 820, radius: 120 })).phase).toBe('icons');
+    expect(session(select(6200)).phase).toBe('waiting-for-target');
+    session(gaze(60_000, target));
+    expect(session(gaze(61_000, target)).phase).toBe('thinking');
+    session({ type: 'intents', t: 62_000, request: 1, intents: ['Pause'] });
+    session(select(62_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Pause', sinceWakeMs: 62_100 - 6200 });
+  });
+
   it('presses nothing by looking at a choice', () => {
     const { session, actions } = choosing();
     const { x, y, width, height } = layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause'])[2].rect;
@@ -949,7 +965,7 @@ describe('Running an Intent', () => {
   it('asks the agent to run the chosen Intent on its target, with the next request number', () => {
     const { session, actions } = reach('choosing');
     expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2, sinceWakeMs: expect.any(Number) });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2, sinceWakeMs: 2100 });
   });
 
   it('shows the result when the run finishes', () => {

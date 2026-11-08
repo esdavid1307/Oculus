@@ -17,7 +17,7 @@ One of a few Intents the agent offers for the user to choose between; choosing o
 _Avoid_: Prediction, guess
 
 **Time to Action**:
-The seconds from the Start Gesture waking the agent to the chosen Intent starting. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
+The seconds from the Start Gesture finishing waking the agent (or from the last icon opened, when the agent stayed awake after it) to the Select Blink that chose the Intent. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
 _Avoid_: Latency, response time
 
 **Gaze Keyboard**:
