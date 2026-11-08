@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VideoTube mock</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #f9f9f9; color: #0f0f0f; }
+  header { height: 56px; display: flex; align-items: center; gap: 16px; padding: 0 24px; background: #fff; border-bottom: 1px solid #ddd; }
+  header b { font-size: 22px; color: #c4302b; }
+  header .search { flex: 1; max-width: 560px; height: 36px; border: 1px solid #ccc; border-radius: 18px; padding: 8px 16px; color: #888; }
+  main { display: flex; gap: 24px; padding: 24px; }
+  .left { flex: 1; min-width: 0; }
+  .player { position: relative; aspect-ratio: 16 / 9; background: #111; border-radius: 12px; overflow: hidden; color: #fff; }
+  .ad, .video { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 12px; }
+  .ad { background: linear-gradient(135deg, #1b2a49, #2f6f8f); }
+  .ad h2 { margin: 0; font-size: 44px; }
+  .ad p { margin: 0; font-size: 20px; opacity: .85; }
+  .product { width: 160px; height: 110px; border-radius: 16px; background: #f2b134; box-shadow: 0 8px 24px #0006; }
+  .video { background: #000; font-size: 28px; color: #bbb; }
+  .badge { position: absolute; left: 16px; bottom: 16px; background: #fcd116; color: #000; font-weight: 700; padding: 4px 10px; border-radius: 4px; }
+  .sponsored { position: absolute; left: 16px; top: 16px; font-size: 16px; opacity: .9; }
+  .skip { position: absolute; right: 16px; bottom: 16px; padding: 12px 22px; font-size: 18px; font-weight: 600; color: #fff; background: #000c; border: 2px solid #fff; border-radius: 4px; cursor: pointer; }
+  .skip:hover { background: #fff; color: #000; }
+  .title { font-size: 20px; font-weight: 600; margin: 16px 0 4px; }
+  .meta { color: #606060; }
+  aside { width: 400px; display: flex; flex-direction: column; gap: 12px; }
+  .card { display: flex; gap: 8px; cursor: pointer; }
+  .thumb { width: 168px; aspect-ratio: 16 / 9; flex: none; background: #bbb; border-radius: 8px; }
+  .card .t { font-weight: 600; }
+  .card .m { color: #606060; font-size: 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><b>VideoTube</b><div class="search">Search</div></header>
+<main>
+  <div class="left">
+    <div class="player" id="player">
+      <div class="ad" id="ad">
+        <div class="product"></div>
+        <h2>Zoomo Sneakers</h2>
+        <p>Run lighter. Shop now.</p>
+        <span class="sponsored">Sponsored</span>
+        <span class="badge">Ad · 0:05</span>
+        <button class="skip" id="skip">Skip Ad ▸</button>
+      </div>
+      <div class="video" id="video" hidden>Playing: Slow mornings in the mountains</div>
+    </div>
+    <div class="title">Slow mornings in the mountains</div>
+    <div class="meta">Trail Notes · 1.2M views · 2 weeks ago</div>
+  </div>
+  <aside id="recs"></aside>
+</main>
+<script>
+  const cards = [
+    ['10 minute pasta that tastes like a restaurant', 'Kitchen Table', '2.3M views'],
+    ['Why bridges do not fall down', 'Small Engineering', '845K views'],
+    ['Lo-fi beats to study to', 'Quiet Hours', '12M views'],
+    ['I built a treehouse in 30 days', 'Backyard Builds', '3.1M views'],
+    ['The history of the bicycle', 'Old Wheels', '410K views'],
+    ['Easy stretching routine for desk workers', 'Move Daily', '980K views'],
+  ];
+  document.getElementById('recs').innerHTML = cards
+    .map(([t, c, v]) => `<div class="card"><div class="thumb"></div><div><div class="t">${t}</div><div class="m">${c}<br>${v}</div></div></div>`)
+    .join('');
+  document.getElementById('skip').onclick = () => {
+    document.getElementById('ad').hidden = true;
+    document.getElementById('video').hidden = false;
+  };
+</script>
+</body>
+</html>

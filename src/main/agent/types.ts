@@ -21,6 +21,8 @@ export const MODEL_MAX_LONG_EDGE = 1280;
 // Time for the compositor to drop the overlay before the capture.
 export const OVERLAY_HIDE_SETTLE_MS = 150;
 export const LOG_PREFIX = '[agent-check]';
+// The error of a run cut short by the Stop Gesture (an aborted AbortSignal).
+export const STOPPED_ERROR = 'Stopped by the user';
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -76,7 +78,10 @@ export type Execute = (action: InputAction) => Promise<void>;
 
 // The slice of the SDK the loop uses, so tests can pass a fake. new Anthropic().beta.messages fits it.
 export type MessagesApi = {
-  create(params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming): Promise<Anthropic.Beta.Messages.BetaMessage>;
+  create(
+    params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+    options?: { signal?: AbortSignal },
+  ): Promise<Anthropic.Beta.Messages.BetaMessage>;
 };
 
 export type ModelCall = {
@@ -130,4 +135,6 @@ export type AgentDeps = {
   log: (line: string) => void;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  // Aborted by the Stop Gesture: no further model call or action, and the result's error is STOPPED_ERROR.
+  signal?: AbortSignal;
 };

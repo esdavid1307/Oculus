@@ -6,7 +6,7 @@ import type { Rect } from '../shared/geometry';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
 import { createCapture } from './agent/capture';
-import { runAgentCheckInElectron } from './agent/check';
+import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -32,6 +32,8 @@ const DEV_SELECT_SHORTCUT = 'CommandOrControl+Shift+Space';
 const QUIT_SHORTCUT = 'CommandOrControl+Alt+Q';
 // shortcut: runs one agent check on Chrome until the Intent flow exists.
 const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
+// shortcut: one display can't put the mouse off screen, so this toggles Look Away for the mouse input.
+const DEV_LOOK_AWAY_SHORTCUT = 'CommandOrControl+Shift+L';
 // Time for the Centre Box to be drawn before the first screenshot.
 const OVERLAY_DRAW_MS = 1000;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
@@ -250,6 +252,8 @@ function typeText(text: string) {
 
 // Runs never overlap: two would fight over the same cursor.
 let running = false;
+// The Intent run in progress, so the Stop Gesture and quitting can abort it.
+let currentRun: { request: number; controller: AbortController } | null = null;
 async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'shortcut') {
   const config = readAgentConfig(process.env, trigger);
   if (!config || running) return;
@@ -317,7 +321,24 @@ function createOverlay() {
       void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture).then((intents) =>
         advance({ type: 'intents', t: Date.now(), request: action.request, intents }),
       );
-    } else if (action.type === 'run-intent') console.log('Run the Intent, once #10 is built:', action.intent);
+    } else if (action.type === 'run-intent') {
+      const { intent, region, request } = action;
+      const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
+      // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
+      if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
+      const controller = new AbortController();
+      running = true;
+      currentRun = { request, controller };
+      void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
+        currentRun = null;
+        running = false;
+        finish(outcome.ok, outcome.summary);
+      });
+    } else if (action.type === 'stop-run') {
+      if (currentRun?.request !== action.request) return;
+      console.log(`[intent-run] stop request=${action.request}`);
+      currentRun.controller.abort();
+    }
     // The Dock moves when it shows, so it is read again for the scan.
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
     else if (action.type === 'release-dock') releaseDock();
@@ -342,12 +363,13 @@ function createOverlay() {
   });
   const advance = (input: SessionInput) => overlay.webContents.send('overlay-state', session(input));
 
+  let lookingAway = false;
   const timers = [setInterval(() => advance({ type: 'tick', t: Date.now() }), TICK_MS), setInterval(refreshIcons, ICON_READ_MS)];
   if (useMouse) {
     timers.push(
       setInterval(() => {
         const { x, y } = screen.getCursorScreenPoint();
-        const region = { x: x - bounds.x, y: y - bounds.y, radius: MOUSE_REGION_RADIUS };
+        const region = lookingAway ? null : { x: x - bounds.x, y: y - bounds.y, radius: MOUSE_REGION_RADIUS };
         advance({ type: 'gaze', t: Date.now(), region });
       }, MOUSE_SAMPLE_MS),
     );
@@ -360,7 +382,13 @@ function createOverlay() {
   if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);
   if (!app.isPackaged) {
     globalShortcut.register(DEV_OPEN_KEYBOARD_SHORTCUT, () => advance({ type: 'open-keyboard', t: Date.now() }));
-    if (useMouse) globalShortcut.register(DEV_SELECT_SHORTCUT, () => advance({ type: 'select', t: Date.now() }));
+    if (useMouse) {
+      globalShortcut.register(DEV_SELECT_SHORTCUT, () => advance({ type: 'select', t: Date.now() }));
+      globalShortcut.register(DEV_LOOK_AWAY_SHORTCUT, () => {
+        lookingAway = !lookingAway;
+        console.log(`[dev] look away ${lookingAway ? 'on' : 'off'}`);
+      });
+    }
   }
   overlay.on('closed', () => timers.forEach(clearInterval));
   return overlay;
@@ -374,4 +402,7 @@ app.whenReady().then(async () => {
   globalShortcut.register(DEV_AGENT_CHECK_SHORTCUT, () => void runAgentCheckOnce(overlay, 'shortcut'));
   overlay.webContents.once('did-finish-load', () => setTimeout(() => void runAgentCheckOnce(overlay, 'env'), OVERLAY_DRAW_MS));
 });
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  currentRun?.controller.abort();
+});

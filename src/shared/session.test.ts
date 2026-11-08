@@ -814,7 +814,7 @@ describe('Suggested Intents', () => {
     session(tick(9000));
     expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
     expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause' });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2 });
   });
 
   it('presses nothing by looking at a choice', () => {
@@ -869,22 +869,26 @@ describe('Suggested Intents', () => {
     expect(actions).toHaveLength(1);
   });
 
+  const stopRun = { type: 'stop-run', request: 2 };
+
   it.each([
-    ['thinking', () => thinking().session],
-    ['choosing', () => choosing().session],
+    ['thinking', () => thinking(), []],
+    ['choosing', () => choosing(), []],
     [
       'running',
       () => {
-        const { session } = choosing();
-        session(select(5100));
-        return session;
+        const woken = choosing();
+        woken.session(select(5100));
+        return woken;
       },
+      [stopRun],
     ],
-  ])('stops on the Stop Gesture while %s', (phase, reach) => {
-    const session = reach();
+  ])('stops on the Stop Gesture while %s', (phase, reach, stops) => {
+    const { session, actions } = reach();
     expect(session(tick(6200)).phase).toBe(phase);
     session(gaze(6200, offScreen));
     expect(session(tick(11_200))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions.filter((action) => action.type === 'stop-run')).toEqual(stops);
   });
 
   it('ignores a late answer to an earlier request', () => {
@@ -902,6 +906,137 @@ describe('Suggested Intents', () => {
   it('ignores suggestions that arrive when it is not thinking', () => {
     const { session } = awake();
     expect(session({ type: 'intents', t: 3100, request: 1, intents: ['Pause'] }).phase).toBe('waiting-for-target');
+  });
+});
+
+describe('Running an Intent', () => {
+  const target = { x: 300, y: 300, radius: 120 };
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const finish = (t: number, request = 2, ok = true, summary = 'Skipped the ad.') => ({ type: 'run-finished', t, request, ok, summary }) as const;
+  const stops = (actions: AgentAction[]) => actions.filter((action) => action.type === 'stop-run');
+
+  // Woken at 3 s, thinking from 4.1 s (request 1), choosing from 5 s, and the first Intent chosen at 5.1 s (request 2).
+  const reach = (until: 'awake' | 'thinking' | 'choosing' | 'running', timings?: unknown) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, timings, act: (action) => actions.push(action) });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    if (until !== 'awake') {
+      session(gaze(3100, target));
+      session(gaze(4100, target));
+    }
+    if (until === 'choosing' || until === 'running') session({ type: 'intents', t: 5000, request: 1, intents: ['Skip the ad', 'Pause'] });
+    if (until === 'running') session(select(5100));
+    return { session, actions };
+  };
+
+  it('asks the agent to run the chosen Intent on its target, with the next request number', () => {
+    const { session, actions } = reach('choosing');
+    expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad' });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2 });
+  });
+
+  it('shows the result when the run finishes', () => {
+    const { session } = reach('running');
+    expect(session(finish(6000))).toEqual({ phase: 'finished', wakeProgress: 0, intent: 'Skip the ad', ok: true, summary: 'Skipped the ad.' });
+    const failed = reach('running');
+    expect(failed.session(finish(6000, 2, false, 'No skip button.'))).toMatchObject({ phase: 'finished', ok: false, summary: 'No skip button.' });
+  });
+
+  it('goes idle 3 seconds after the run finishes, on a tick or a gaze event', () => {
+    const { session } = reach('running');
+    session(finish(6000));
+    expect(session(tick(8999)).phase).toBe('finished');
+    expect(session(tick(9000))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    const byGaze = reach('running');
+    byGaze.session(finish(6000));
+    expect(byGaze.session(gaze(8999, inBox)).phase).toBe('finished');
+    expect(byGaze.session(gaze(9000, inBox)).phase).toBe('idle');
+  });
+
+  it('uses the configured finished time', () => {
+    const { session } = reach('running', { finishedMs: 500 });
+    session(finish(6000));
+    expect(session(tick(6499)).phase).toBe('finished');
+    expect(session(tick(6500)).phase).toBe('idle');
+  });
+
+  it('needs a full new hold to wake again after the result goes away', () => {
+    const { session } = reach('running');
+    session(finish(6000));
+    session(tick(9000));
+    session(gaze(9100, inBox));
+    expect(session(gaze(12_099, inBox)).phase).toBe('idle');
+    expect(session(gaze(12_100, inBox)).phase).toBe('waiting-for-target');
+  });
+
+  it('ignores the end of an earlier run while running', () => {
+    const { session } = reach('running');
+    expect(session(finish(6000, 1)).phase).toBe('running');
+    expect(session(finish(6100, 3)).phase).toBe('running');
+    expect(session(finish(6200)).phase).toBe('finished');
+  });
+
+  it('ignores the end of a run when none is running', () => {
+    for (const until of ['awake', 'thinking', 'choosing'] as const) {
+      const { session } = reach(until);
+      expect(session(finish(5200, 1)).phase).toBe(until === 'awake' ? 'waiting-for-target' : until);
+    }
+    expect(createSession({ screen })(finish(0, 0)).phase).toBe('idle');
+  });
+
+  it('keeps the first result if the run is reported finished again', () => {
+    const { session } = reach('running');
+    session(finish(6000));
+    expect(session(finish(6100, 2, false, 'Late.'))).toMatchObject({ phase: 'finished', ok: true, summary: 'Skipped the ad.' });
+  });
+
+  it('stops the run once on the Stop Gesture, then goes idle', () => {
+    const { session, actions } = reach('running');
+    session(gaze(6000, offScreen));
+    expect(session(gaze(10_999, offScreen)).phase).toBe('running');
+    expect(stops(actions)).toEqual([]);
+    expect(session(gaze(11_000, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    session(gaze(12_000, offScreen));
+    session(tick(20_000));
+    expect(stops(actions)).toEqual([{ type: 'stop-run', request: 2 }]);
+  });
+
+  it('ignores the end of a stopped run', () => {
+    const { session } = reach('running');
+    session(gaze(6000, offScreen));
+    session(gaze(11_000, offScreen));
+    expect(session(finish(11_500))).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it.each(['thinking', 'choosing'] as const)('sends no stop-run on the Stop Gesture while %s', (until) => {
+    const { session, actions } = reach(until);
+    session(gaze(5100, offScreen));
+    expect(session(gaze(10_100, offScreen)).phase).toBe('idle');
+    expect(stops(actions)).toEqual([]);
+  });
+
+  it('sends no stop-run on the Stop Gesture while showing the result', () => {
+    const { session, actions } = reach('running', { finishedMs: 20_000 });
+    session(finish(6000));
+    session(gaze(6100, offScreen));
+    expect(session(gaze(11_100, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(stops(actions)).toEqual([]);
+  });
+
+  it('ignores open-keyboard while running, but not while showing the result', () => {
+    const { session } = reach('running');
+    expect(session({ type: 'open-keyboard', t: 5200 })).toMatchObject({ phase: 'running' });
+    session(finish(6000));
+    expect(session({ type: 'open-keyboard', t: 6100 })).toMatchObject({ phase: 'typing', text: '' });
+  });
+
+  it('ignores a Select Blink while running and while showing the result', () => {
+    const { session, actions } = reach('running');
+    expect(session(select(5500)).phase).toBe('running');
+    session(finish(6000));
+    expect(session(select(6100)).phase).toBe('finished');
+    expect(actions).toHaveLength(2);
   });
 });
 

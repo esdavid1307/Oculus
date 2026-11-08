@@ -7,7 +7,9 @@ export type OverlayState =
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
   | { phase: 'running'; wakeProgress: number; intent: string }
-  | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon };
+  | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
+  // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
+  | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
 // The name is what the outside world needs to find it again, in overlay coordinates.
@@ -23,14 +25,19 @@ export type SessionInput =
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
   // The model's answer to the suggest-intents request with the same number.
   | { type: 'intents'; t: number; request: number; intents: string[] }
-  | { type: 'menu-opened'; t: number; icons: Icon[] };
+  | { type: 'menu-opened'; t: number; icons: Icon[] }
+  // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
+  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
   | { type: 'type-text'; text: string }
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
-  | { type: 'run-intent'; intent: string }
+  // region is the target the Intent was suggested for, so "Open this video" knows which video.
+  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number }
+  // The Stop Gesture during a run: the agent must stop acting at once.
+  | { type: 'stop-run'; request: number }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
   | { type: 'release-dock' }
@@ -44,7 +51,7 @@ const MAX_INTENTS = 3;
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
 const HOLD_GRACE_MS = 500;
 
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, iconHoldMs: 3000 };
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, iconHoldMs: 3000, finishedMs: 3000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 
@@ -60,6 +67,7 @@ function parseTimings(raw: unknown): Timings {
     scanStepMs: timing('scanStepMs'),
     targetHoldMs: timing('targetHoldMs'),
     iconHoldMs: timing('iconHoldMs'),
+    finishedMs: timing('finishedMs'),
   };
 }
 
@@ -121,7 +129,7 @@ export function createSession({
   // The menus of the app in front, then the status items.
   menubar?: () => Icon[];
 }) {
-  const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs } = parseTimings(timings);
+  const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar };
   const distance = (region: GazeRegion | null, from: 'dock' | 'desktop' | 'menubar') =>
     from === 'menubar' ? menuBarDistance(region, menubar(), screen) : iconDistance(region, iconsOf[from](), screen);
@@ -156,6 +164,9 @@ export function createSession({
   let source: IconSource = 'dock';
   let icons: Icon[] = [];
   let iconHighlight: Icon | undefined;
+  let runOk = false;
+  let summary = '';
+  let finishedAt = 0;
 
   // Suggested Intents and icons scan the same way as the Gaze Keyboard.
   function scan(t: number) {
@@ -240,8 +251,8 @@ export function createSession({
   function choose(key: KeyId) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
-    act({ type: 'run-intent', intent });
     phase = 'running';
+    act({ type: 'run-intent', intent, region: asked!, request: ++request });
   }
 
   function holdTarget(region: GazeRegion | null, t: number) {
@@ -265,18 +276,27 @@ export function createSession({
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
     if (phase === 'running') return { phase, wakeProgress, intent };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
+    if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
   }
 
   return (input: SessionInput): OverlayState => {
     if (input.type === 'open-keyboard') {
-      if (phase !== 'typing') openKeyboard(input.t);
+      // The agent owns the mouse and keys while it runs, so typing would collide with it.
+      if (phase !== 'typing' && phase !== 'running') openKeyboard(input.t);
     } else if (input.type === 'intents') {
       if (phase === 'thinking' && input.request === request) {
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
         scanStart = input.t;
         scan(input.t);
+      }
+    } else if (input.type === 'run-finished') {
+      if (phase === 'running' && input.request === request) {
+        phase = 'finished';
+        runOk = input.ok;
+        summary = input.summary;
+        finishedAt = input.t;
       }
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
@@ -292,8 +312,13 @@ export function createSession({
         const away = offScreen(input.region, screen) && !onEdgeIcon;
         awaySince = away ? (awaySince ?? input.t) : null;
       }
-      // The Stop Gesture closes the Gaze Keyboard without typing the text, and the icon scan without opening anything.
-      if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
+      if (phase === 'finished' && input.t - finishedAt >= finishedMs) {
+        phase = 'idle';
+        awaySince = null;
+      } else if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
+        // The Stop Gesture closes the Gaze Keyboard without typing the text, the icon scan without opening anything,
+        // and stops a run.
+        if (phase === 'running') act({ type: 'stop-run', request });
         if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
         phase = 'idle';
         awaySince = null;
