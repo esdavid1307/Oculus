@@ -365,7 +365,19 @@ describe('Suggested Intents', () => {
     expect(session(gaze(4099, target)).phase).toBe('waiting-for-target');
     expect(actions).toEqual([]);
     expect(session(gaze(4100, target)).phase).toBe('thinking');
-    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1 }]);
+    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
+  });
+
+  it('needs a Move Off the Centre Box before a target hold starts, so staying on it after waking picks nothing', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, inBox));
+    expect(session(gaze(5000, inBox)).phase).toBe('waiting-for-target');
+    expect(actions).toEqual([]);
+    session(gaze(5100, target));
+    session(gaze(5200, inBox));
+    expect(session(gaze(6199, inBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(6200, inBox)).phase).toBe('thinking');
+    expect(actions).toEqual([{ type: 'suggest-intents', region: inBox, request: 1, turnedDown: [] }]);
   });
 
   it('restarts the hold when the gaze moves to somewhere else, but not on jitter inside the Gaze Region', () => {
@@ -383,16 +395,16 @@ describe('Suggested Intents', () => {
 
   it('needs a full new hold after waking again, even if the last hold was cut short by the Gaze Keyboard', () => {
     const { session, actions } = awake();
-    session(gaze(3100, inBox));
+    session(gaze(3100, target));
     session({ type: 'open-keyboard', t: 3500 });
     session(gaze(3600, offScreen));
     session(gaze(8600, offScreen));
     session(gaze(9000, inBox));
     expect(session(gaze(12_000, inBox)).phase).toBe('waiting-for-target');
-    expect(session(gaze(12_100, inBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(12_100, target)).phase).toBe('waiting-for-target');
     expect(actions).toEqual([]);
-    expect(session(gaze(13_099, inBox)).phase).toBe('waiting-for-target');
-    expect(session(gaze(13_100, inBox)).phase).toBe('thinking');
+    expect(session(gaze(13_099, target)).phase).toBe('waiting-for-target');
+    expect(session(gaze(13_100, target)).phase).toBe('thinking');
   });
 
   const thinking = () => {
@@ -445,7 +457,7 @@ describe('Suggested Intents', () => {
   it('runs the highlighted Suggested Intent on a Select Blink, which is the confirmation', () => {
     const { session, actions } = choosing();
     session(tick(9000));
-    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1 }]);
+    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
     expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause' });
     expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause' });
   });
@@ -459,14 +471,35 @@ describe('Suggested Intents', () => {
     expect(actions).toHaveLength(1);
   });
 
-  it('fetches fresh suggestions for the same target on Something else', () => {
+  it('fetches fresh suggestions for the same target on Something else, passing over the ones shown', () => {
     const { session, actions } = choosing();
     session(tick(11_000));
     expect(session(select(11_000)).phase).toBe('thinking');
     expect(actions).toEqual([
-      { type: 'suggest-intents', region: target, request: 1 },
-      { type: 'suggest-intents', region: target, request: 2 },
+      { type: 'suggest-intents', region: target, request: 1, turnedDown: [] },
+      { type: 'suggest-intents', region: target, request: 2, turnedDown: ['Skip the ad', 'Open a related video', 'Pause'] },
     ]);
+  });
+
+  it('keeps passing over everything turned down for this target, and forgets it for a new target', () => {
+    const { session, actions } = choosing();
+    session(select(11_000));
+    session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] });
+    session(select(14_000));
+    expect(actions.at(-1)).toEqual({
+      type: 'suggest-intents',
+      region: target,
+      request: 3,
+      turnedDown: ['Skip the ad', 'Open a related video', 'Pause', 'Mute'],
+    });
+
+    session(gaze(14_100, offScreen));
+    session(gaze(19_100, offScreen));
+    session(gaze(19_200, inBox));
+    session(gaze(22_200, inBox));
+    session(gaze(22_300, target));
+    session(gaze(23_300, target));
+    expect(actions.at(-1)).toEqual({ type: 'suggest-intents', region: target, request: 4, turnedDown: [] });
   });
 
   it('starts the scan again from the first choice when fresh suggestions arrive', () => {

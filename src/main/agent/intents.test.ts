@@ -6,10 +6,16 @@ describe('intentsPrompt', () => {
   const frame = { x: 0, y: 0, width: 1600, height: 1000, imageWidth: 1280, imageHeight: 800 };
 
   it('gives the Gaze Region in screenshot pixels, so it lines up with the image the model sees', () => {
-    const prompt = intentsPrompt({ x: 800, y: 250, radius: 120 }, frame);
+    const prompt = intentsPrompt({ x: 800, y: 250, radius: 120 }, frame, []);
     expect(prompt).toContain('(640, 200)');
     expect(prompt).toContain('within about 96 pixels');
     expect(prompt).toContain('1280 x 800');
+    expect(prompt).not.toContain('turned down');
+  });
+
+  it('asks for different suggestions than the ones turned down with Something else', () => {
+    const prompt = intentsPrompt({ x: 800, y: 250, radius: 120 }, frame, ['Skip the ad', 'Pause']);
+    expect(prompt).toContain('They turned down ["Skip the ad","Pause"], so suggest different ones.');
   });
 });
 
