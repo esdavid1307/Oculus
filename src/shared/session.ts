@@ -7,7 +7,8 @@ export type OverlayState =
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
   // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
-  | { phase: 'running'; wakeProgress: number; intent: string }
+  // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
+  | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
   | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
@@ -30,7 +31,9 @@ export type SessionInput =
   | { type: 'past-intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] }
   // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
-  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string };
+  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string }
+  // A step of the run-intent request with the same number, in a few words for the overlay.
+  | { type: 'run-progress'; t: number; request: number; activity: string };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
@@ -38,7 +41,8 @@ export type AgentAction =
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
-  // sinceWakeMs is the time from the Start Gesture waking the agent to this Intent starting, for Time to Action.
+  // sinceWakeMs is the time from the Start Gesture waking the agent (or the last icon opened) to the Select Blink that
+  // chose this Intent, for Time to Action.
   | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number }
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
@@ -162,8 +166,9 @@ export function createSession({
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
-  // When the Start Gesture finished waking the agent. Time to Action counts from here.
+  // When the Start Gesture finished waking the agent, or the last icon was opened. Time to Action counts from here.
   let wokeAt = 0;
+  let activity = '';
   // seen is when the gaze was last near the held icon target.
   let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
@@ -259,6 +264,7 @@ export function createSession({
   function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
+    activity = '';
     phase = 'running';
     act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt });
   }
@@ -283,7 +289,7 @@ export function createSession({
   function state(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
-    if (phase === 'running') return { phase, wakeProgress, intent };
+    if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
@@ -332,6 +338,8 @@ export function createSession({
         summary = input.summary;
         finishedAt = input.t;
       }
+    } else if (input.type === 'run-progress') {
+      if (phase === 'running' && input.request === request) activity = input.activity;
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
@@ -369,6 +377,8 @@ export function createSession({
           // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
           // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
+          // Staying awake stands in for a new Start Gesture, so Time to Action counts from here, not the first wake.
+          wokeAt = input.t;
         }
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
