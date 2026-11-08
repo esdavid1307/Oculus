@@ -153,6 +153,8 @@ export async function suggestIntents(
   try {
     if (config.backend === 'api' && !process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing: copy .env.example to .env');
     const shot = await capture();
+    // A Stop during the screenshot comes before the abort listener exists, so check here or claude still starts.
+    signal?.throwIfAborted();
     const prompt = intentsPrompt(region, shot.frame, turnedDown);
     const reply = config.backend === 'api' ? await askApi(config, shot, prompt, signal) : await askClaudeCode(config, shot, prompt, signal);
     const intents = parseIntents(reply, turnedDown);
