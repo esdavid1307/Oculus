@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createIntentHistory, emptyIntentHistory, readIntentHistory } from './intent-history';
+import { createIntentHistory, emptyIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from './intent-history';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -42,7 +42,9 @@ describe('Intent History', () => {
     history.learn('Mail', 'Reply', 1);
     expect(history.suggest('Google Chrome')).toEqual(['Pause']);
     expect(history.suggest('Mail')).toEqual(['Reply']);
-    expect(history.suggest('Google Chrome · youtube.com')).toEqual([]);
+    // A site is topped up from its app, but the app on its own never gets a site's Intents.
+    history.learn('Google Chrome · youtube.com', 'Like', 2);
+    expect(history.suggest('Google Chrome')).toEqual(['Pause']);
   });
 
   it('counts the same Intent in a different case as one', () => {
@@ -88,5 +90,119 @@ describe('Intent History', () => {
     history.learn('constructor', 'constructor', 1);
     expect(history.suggest('__proto__')).toEqual([]);
     expect(history.suggest('constructor', 2, 1)).toEqual(['constructor']);
+  });
+});
+
+describe('neural ranker', () => {
+  const neural = () => createIntentHistory(emptyIntentHistory(), 'neural');
+
+  it('is chosen only by "neural", and anything else falls back to count and recency', () => {
+    expect(parseIntentRanker('neural')).toBe('neural');
+    for (const other of [undefined, null, 'count', 'Neural', 7, true, {}]) expect(parseIntentRanker(other)).toBe('count');
+  });
+
+  it('orders Intents like count and recency before it has learned anything', () => {
+    const plain = createIntentHistory();
+    const learned = neural();
+    const uses: [string, number][] = [['a', 0], ['a', DAY], ['b', 2 * DAY], ['c', 3 * DAY], ['c', 4 * DAY], ['c', 5 * DAY], ['d', 40 * DAY], ['e', 41 * DAY], ['e', 41.5 * DAY]];
+    // Replayed into the model directly, so the neural one never trains.
+    for (const [intent, at] of uses) {
+      plain.learn('Notes', intent, at);
+      createIntentHistory(learned.model(), 'count').learn('Notes', intent, at);
+    }
+    expect(learned.suggest('Notes', 5, 45 * DAY)).toEqual(plain.suggest('Notes', 5, 45 * DAY));
+  });
+
+  it('raises a repeatedly confirmed Intent to the top, sooner than counting would', () => {
+    const history = neural();
+    const plain = createIntentHistory();
+    for (const h of [history, plain]) {
+      for (let i = 0; i < 4; i++) h.learn('Notes', 'Old favourite', i * DAY);
+      h.learn('Notes', 'New habit', 30 * DAY);
+    }
+    expect(history.suggest('Notes', 1, 30 * DAY)).toEqual(['New habit']);
+    let neuralAt = 0;
+    let plainAt = 0;
+    for (let i = 1; i <= 12; i++) {
+      history.learn('Notes', 'New habit', 30 * DAY + i);
+      plain.learn('Notes', 'New habit', 30 * DAY + i);
+      if (!neuralAt && history.suggest('Notes', 1, 31 * DAY)[0] === 'New habit') neuralAt = i;
+      if (!plainAt && plain.suggest('Notes', 1, 31 * DAY)[0] === 'New habit') plainAt = i;
+    }
+    expect(neuralAt).toBeGreaterThan(0);
+    expect(neuralAt).toBeLessThanOrEqual(plainAt);
+  });
+
+  it('round-trips its weights through save and read', () => {
+    const history = neural();
+    for (let i = 0; i < 5; i++) {
+      history.learn('Notes', 'a', i);
+      history.learn('Notes', 'b', 10 + i);
+    }
+    const saved = JSON.parse(JSON.stringify(history.model()));
+    expect(saved.ranker.linear).not.toEqual(emptyIntentHistory().ranker.linear);
+    expect(readIntentHistory(saved).ranker).toEqual(history.model().ranker);
+  });
+
+  it('still loads a model saved without weights, starting from the prior', () => {
+    const history = createIntentHistory();
+    history.learn('Notes', 'Pause', 1000);
+    const { ranker, ...old } = JSON.parse(JSON.stringify(history.model()));
+    const loaded = readIntentHistory(old);
+    expect(loaded.ranker).toEqual(emptyIntentHistory().ranker);
+    expect(createIntentHistory(loaded, 'neural').suggest('Notes', 2, 1000)).toEqual(['Pause']);
+  });
+
+  it('does not train on the default ranking, so a switch later starts from the prior', () => {
+    const history = createIntentHistory();
+    for (let i = 0; i < 5; i++) history.learn('Notes', 'a', i);
+    expect(history.model().ranker).toEqual(emptyIntentHistory().ranker);
+  });
+});
+
+describe('historyContext', () => {
+  it('is the app plus the domain in a browser', () => {
+    expect(historyContext('Google Chrome', 'https://www.youtube.com/watch?v=1')).toBe('Google Chrome · youtube.com');
+    expect(historyContext('Google Chrome', 'https://mail.google.com/mail/u/0/#inbox')).toBe('Google Chrome · mail.google.com');
+    expect(historyContext('Google Chrome', 'http://Example.com:8080/x')).toBe('Google Chrome · example.com');
+  });
+
+  it('is the app alone when the site can not be read', () => {
+    for (const url of [undefined, null, '', 'not a url', 'chrome://newtab/', 'file:///Users/a/b.html', 'about:blank']) {
+      expect(historyContext('Google Chrome', url)).toBe('Google Chrome');
+    }
+  });
+
+  it('is the app alone outside Chrome, Safari included since it hides which windows are private', () => {
+    expect(historyContext('Mail', 'https://www.youtube.com')).toBe('Mail');
+    expect(historyContext('Safari', 'https://www.youtube.com')).toBe('Safari');
+  });
+
+  it('keeps app plus site and the app alone as separate histories', () => {
+    const history = createIntentHistory();
+    history.learn(historyContext('Google Chrome', 'https://youtube.com/watch'), 'Pause', 1);
+    history.learn(historyContext('Google Chrome', 'https://mail.google.com'), 'Reply', 1);
+    history.learn(historyContext('Google Chrome', null), 'Scroll down', 1);
+    expect(history.suggest(historyContext('Google Chrome', 'https://www.youtube.com/'), 1)).toEqual(['Pause']);
+    expect(history.suggest(historyContext('Google Chrome', 'https://mail.google.com/x'), 1)).toEqual(['Reply']);
+    expect(history.suggest(historyContext('Google Chrome', null))).toEqual(['Scroll down']);
+  });
+
+  it("tops up a site from the app's own history, so per-app history learned earlier is still offered", () => {
+    const history = createIntentHistory();
+    history.learn('Google Chrome', 'Scroll down', 1);
+    history.learn('Google Chrome', 'Pause', 2);
+    expect(history.suggest('Google Chrome · example.com')).toEqual(['Pause', 'Scroll down']);
+    history.learn('Google Chrome · youtube.com', 'pause', 3);
+    history.learn('Google Chrome · youtube.com', 'Like', 4);
+    history.learn('Google Chrome · youtube.com', 'Like', 5);
+    // The site's own come first, and "pause" isn't offered twice.
+    expect(history.suggest('Google Chrome · youtube.com', 3)).toEqual(['Like', 'pause', 'Scroll down']);
+  });
+
+  it('never tops up an app from another app', () => {
+    const history = createIntentHistory();
+    history.learn('Google Chrome', 'Pause', 1);
+    expect(history.suggest('Mail')).toEqual([]);
   });
 });

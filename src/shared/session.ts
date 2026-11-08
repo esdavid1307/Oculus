@@ -1,20 +1,26 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
 
-export type OverlayState =
+export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
   // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
-  | { phase: 'running'; wakeProgress: number; intent: string }
+  // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
+  | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
-  | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
+  | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string }
+) & {
+  // The milliseconds left before the Stop Gesture stops the agent. Only there while the gaze is off the screen.
+  stopInMs?: number;
+};
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
-// The name is what the outside world needs to find it again, in overlay coordinates.
-export type Icon = { name: string; rect: Rect };
+// The name is what the outside world needs to find it again, in overlay coordinates. The label is what a person reads:
+// the name itself can be a lookup key, as for menu bar items.
+export type Icon = { name: string; rect: Rect; label?: string };
 
 // 'menu' is the menu a menu bar item just opened.
 export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
@@ -24,13 +30,17 @@ export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
 export type SessionInput =
   | GazeEvent
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
+  // Recalibrating counts as a Stop at once: the old calibration no longer says where the user is looking.
+  | { type: 'recalibrate'; t: number }
   // The model's answer to the suggest-intents request with the same number.
   | { type: 'intents'; t: number; request: number; intents: string[] }
   // The user's own past Intents for the target of the suggest-intents request with the same number, best first.
   | { type: 'past-intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] }
   // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
-  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string };
+  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string }
+  // A step of the run-intent request with the same number, in a few words for the overlay.
+  | { type: 'run-progress'; t: number; request: number; activity: string };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
@@ -38,7 +48,8 @@ export type AgentAction =
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
-  // sinceWakeMs is the time from the Start Gesture waking the agent to this Intent starting, for Time to Action.
+  // sinceWakeMs is the time from the Start Gesture waking the agent (or the last icon opened) to the Select Blink that
+  // chose this Intent, for Time to Action.
   | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number }
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
@@ -50,11 +61,17 @@ export type AgentAction =
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
 
+// The one text submitted before that the typed text starts, if any. See src/shared/predict.ts.
+export type SuggestPhrase = (text: string) => string | undefined;
+
 const MAX_INTENTS = 3;
 const MAX_PAST_INTENTS = 2;
 
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
 const HOLD_GRACE_MS = 500;
+// The gaze must be off the screen this long before the Stop Gesture countdown shows, so a lost camera frame or a blink
+// doesn't flash it while the user is just reading. The 5 s still count from the first sample off the screen.
+const STOP_HINT_DELAY_MS = 1000;
 
 const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, iconHoldMs: 3000, finishedMs: 3000 };
 
@@ -120,6 +137,7 @@ export function createSession({
   timings,
   act = () => {},
   suggest = () => [],
+  suggestPhrase = () => undefined,
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
@@ -128,6 +146,7 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
   suggest?: Suggest;
+  suggestPhrase?: SuggestPhrase;
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
@@ -144,6 +163,8 @@ export function createSession({
   let holdStart: number | null = null;
   let wakeProgress = 0;
   let awaySince: number | null = null;
+  // The time of the latest input, which the Stop Gesture countdown counts from.
+  let now = 0;
   // The Gaze Region where the user started holding on a target after waking.
   let target: { region: GazeRegion; start: number } | null = null;
   // The wake hold ends on the Centre Box, so a target hold only starts after a Move Off from it.
@@ -154,6 +175,7 @@ export function createSession({
   let scanStart = 0;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
+  let phrase: string | undefined;
   let intents: string[] = [];
   let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
@@ -162,8 +184,9 @@ export function createSession({
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
-  // When the Start Gesture finished waking the agent. Time to Action counts from here.
+  // When the Start Gesture finished waking the agent, or the last icon was opened. Time to Action counts from here.
   let wokeAt = 0;
+  let activity = '';
   // seen is when the gaze was last near the held icon target.
   let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
@@ -181,7 +204,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrase).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -219,20 +242,29 @@ export function createSession({
     return iconHold !== null;
   }
 
+  function refreshSuggestions() {
+    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+    phrase = suggestPhrase(text) || undefined;
+  }
+
   function openKeyboard(t: number) {
     phase = 'typing';
     holdStart = null;
     wakeProgress = 0;
     text = '';
     group = null;
-    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+    refreshSuggestions();
     scanStart = t;
     scan(t);
   }
 
   function press(key: KeyId, t: number) {
     if (phase === 'choosing') choose(key, t);
-    else if (key.startsWith(SUGGESTION_KEY)) {
+    else if (key === PHRASE_KEY) {
+      // The phrase starts with what was typed, so it replaces all of it.
+      text = phrase ?? text;
+      group = null;
+    } else if (key.startsWith(SUGGESTION_KEY)) {
       // The word replaces the letters typed so far, and the space after it is free.
       text = text.replace(/[a-z]*$/, '') + key.slice(SUGGESTION_KEY.length) + ' ';
       group = null;
@@ -259,6 +291,7 @@ export function createSession({
   function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
+    activity = '';
     phase = 'running';
     act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt });
   }
@@ -280,17 +313,38 @@ export function createSession({
     }
   }
 
-  function state(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
+  // The Stop Gesture, and recalibrating. Closes the Gaze Keyboard without typing the text, the icon scan without
+  // opening anything, and stops a run. Nothing is asked of the outside world after the stop-run.
+  function stop() {
+    if (phase === 'running') act({ type: 'stop-run', request });
+    if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
+    phase = 'idle';
+    awaySince = null;
+    // A Dock hold in progress ends too, so the Dock is released at the end of this input and not left forced open.
+    iconHold = null;
+  }
+
+  function shown(): OverlayState {
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
-    if (phase === 'running') return { phase, wakeProgress, intent };
+    if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
   }
 
+  function state(): OverlayState {
+    const base = shown();
+    // The result of a finished run isn't stopped by looking away, it just goes away.
+    if (awaySince === null || now - awaySince < STOP_HINT_DELAY_MS || phase === 'idle' || phase === 'finished') return base;
+    return { ...base, stopInMs: Math.max(lookAwayMs - (now - awaySince), 0) };
+  }
+
   return (input: SessionInput): OverlayState => {
-    if (input.type === 'open-keyboard') {
+    now = input.t;
+    if (input.type === 'recalibrate') {
+      if (phase !== 'idle') stop();
+    } else if (input.type === 'open-keyboard') {
       // The agent owns the mouse and keys while it runs, so typing would collide with it.
       if (phase !== 'typing' && phase !== 'running') openKeyboard(input.t);
     } else if (input.type === 'past-intents') {
@@ -332,6 +386,8 @@ export function createSession({
         summary = input.summary;
         finishedAt = input.t;
       }
+    } else if (input.type === 'run-progress') {
+      if (phase === 'running' && input.request === request) activity = input.activity;
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
@@ -347,15 +403,9 @@ export function createSession({
         awaySince = away ? (awaySince ?? input.t) : null;
       }
       if (phase === 'finished' && input.t - finishedAt >= finishedMs) {
-        phase = 'idle';
-        awaySince = null;
+        stop();
       } else if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
-        // The Stop Gesture closes the Gaze Keyboard without typing the text, the icon scan without opening anything,
-        // and stops a run.
-        if (phase === 'running') act({ type: 'stop-run', request });
-        if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
-        phase = 'idle';
-        awaySince = null;
+        stop();
       } else if (phase === 'waiting-for-target' && input.type === 'gaze') {
         // An icon hold wins, so the shorter target hold can't fire on the way to the Dock.
         if (holdIcons(input.region, input.t)) target = null;
@@ -369,12 +419,14 @@ export function createSession({
           // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
           // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
+          // Staying awake stands in for a new Start Gesture, so Time to Action counts from here, not the first wake.
+          wokeAt = input.t;
         }
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
         if (input.type === 'select') {
           press(highlight, input.t);
-          if (phase === 'typing') suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+          if (phase === 'typing') refreshSuggestions();
           scanStart = input.t;
           scan(input.t);
         }

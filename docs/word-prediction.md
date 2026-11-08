@@ -52,3 +52,16 @@ Known limits:
 - Lower-case letters only, because the keyboard has no apostrophe or capitals. Contractions such as "don't" can't be suggested.
 - There's no on-screen reset yet. The file has to be deleted.
 - Suggested Intents (#28) could rank their choices with the same approach.
+
+## Suggested Phrase
+
+Every text confirmed with Done is also remembered whole. Once 2 or more typed letters match the start of a remembered text (ignoring case), the keyboard offers it as one Suggested Phrase in a wide row above the Suggested Words, so the scan reaches it first. Choosing it replaces everything typed so far, so a message sent often takes one blink. At most one phrase is offered, ranked by how often and how recently it was sent. No phrase is offered on an empty keyboard, after a single letter, or on the letter screens.
+
+Privacy:
+
+- Text with a space-free run of 16 or more characters looks like a password, key or code, and is never learned, words included.
+- At Done, before learning, Oculus asks System Events for the focused field's subrole. A secure text field (`AXSecureTextField`) teaches nothing. If the subrole can't be read, nothing is learned.
+- Text closed by the Stop Gesture is never learned.
+- `"wordPrediction": false` turns phrases off along with words.
+
+Phrases live in the same `word-model.json`, in a new optional `phrases` field, so files saved before phrases still load. Up to 200 are kept, the least used going first.

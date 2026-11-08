@@ -13,7 +13,11 @@ export type WordModel = {
   // previous word ('' at the start of the text) -> next word -> count.
   next: Record<string, Record<string, number>>;
   ranker: Ranker;
+  // Whole texts the user submitted, keyed by the text in lower case. Optional, so model files from before phrases still load.
+  phrases?: Record<string, Phrase>;
 };
+
+type Phrase = { text: string; count: number; last: number };
 
 type Ranker = { linear: number[]; hidden: number[][]; hiddenBias: number[]; out: number[] };
 
@@ -40,12 +44,26 @@ const FROM_BASE_NEXT_WORD = 60;
 // Each confirmed word is replayed as it was typed, from no letters up to this many, as training examples.
 const REPLAYED_PREFIXES = 4;
 
+// A Suggested Phrase needs this many letters typed first, so a phrase never slows the scan on an empty keyboard.
+const PHRASE_MIN_LETTERS = 2;
+const MAX_PHRASES = 200;
+// Text with a space-free run this long looks like a password, key or code, and is never learned.
+const SECRET_RUN = /\S{16,}/;
+
 const WORD = /^[a-z]+$/;
+
+// Drops the least used, then least recent, entries until at most max are left.
+function keepMostUsed(entries: Record<string, { count: number; last: number }>, max: number) {
+  const all = Object.entries(entries);
+  if (all.length <= max) return;
+  all.sort(([, a], [, b]) => a.count - b.count || a.last - b.last);
+  for (const [key] of all.slice(0, all.length - max)) delete entries[key];
+}
 
 // Keyed by typed words, so no inherited keys: a plain {} already has 'constructor', which poisons the counts.
 const table = <T>(entries: Record<string, T> = {}): Record<string, T> => Object.assign(Object.create(null), entries);
 
-function seededRandom(seed: number) {
+export function seededRandom(seed: number) {
   let state = seed >>> 0;
   return () => {
     state = (state * 1664525 + 1013904223) >>> 0;
@@ -59,6 +77,7 @@ export function emptyWordModel(seed = 7): WordModel {
     version: 1,
     words: table(),
     next: table(),
+    phrases: table(),
     ranker: {
       linear: [...PRIOR],
       hidden: Array.from({ length: HIDDEN }, () => FEATURES.map(() => random() * 0.6)),
@@ -89,7 +108,10 @@ export function readWordModel(raw: unknown): WordModel {
   if (!valid) return emptyWordModel();
   const next = table<Record<string, number>>();
   for (const [previous, after] of Object.entries(model.next)) next[previous] = table(after);
-  return { ...model, words: table(model.words), next };
+  const phrases = table<Phrase>();
+  for (const [key, phrase] of Object.entries(model.phrases ?? {}))
+    if (typeof phrase?.text === 'string' && Number.isFinite(phrase.count) && Number.isFinite(phrase.last)) phrases[key] = phrase;
+  return { ...model, words: table(model.words), next, phrases };
 }
 
 // The word being typed and the one before it. After a space the word being typed is '', which predicts the next word.
@@ -194,13 +216,32 @@ export function createPredictor(baseWords: BaseWords, model: WordModel = emptyWo
   }
 
   function forget() {
-    const words = Object.entries(model.words);
-    if (words.length <= MAX_OWN_WORDS) return;
-    words.sort(([, a], [, b]) => a.count - b.count || a.last - b.last);
-    for (const [word] of words.slice(0, words.length - MAX_OWN_WORDS)) delete model.words[word];
+    keepMostUsed(model.words, MAX_OWN_WORDS);
+  }
+
+  // The model may have been read from an old file without phrases.
+  const phrases = (model.phrases ??= table());
+
+  function forgetPhrases() {
+    keepMostUsed(phrases, MAX_PHRASES);
   }
 
   return {
+    // At most one text the user submitted before that starts with what is typed, once 2+ letters are typed.
+    // Ranked by how often and how recently it was sent.
+    suggestPhrase(text: string, now = Date.now()): string | undefined {
+      if (text.replace(/[^a-z]/gi, '').length < PHRASE_MIN_LETTERS) return;
+      const typed = text.toLowerCase();
+      let best: { text: string; score: number } | undefined;
+      for (const [key, phrase] of Object.entries(phrases)) {
+        // The same text again saves nothing: Done does that.
+        if (key.length <= typed.length || !key.startsWith(typed)) continue;
+        const score = Math.log2(1 + phrase.count) + Math.exp(-(now - phrase.last) / RECENCY_MS);
+        if (best === undefined || score > best.score) best = { text: phrase.text, score };
+      }
+      return best?.text;
+    },
+
     suggest(text: string, limit = 3, now = Date.now()): string[] {
       const { prefix, previous, before } = contextOf(text);
       if (!WORD.test(prefix) && prefix !== '') return [];
@@ -211,6 +252,14 @@ export function createPredictor(baseWords: BaseWords, model: WordModel = emptyWo
 
     // Called with text the user confirmed with Done. Stopped or discarded text never reaches it.
     learn(text: string, now = Date.now()) {
+      // Secret-looking text teaches nothing, not even its words.
+      if (SECRET_RUN.test(text)) return;
+      const phrase = text.trim();
+      if (phrase !== '') {
+        const key = phrase.toLowerCase();
+        phrases[key] = { text: phrase, count: (phrases[key]?.count ?? 0) + 1, last: now };
+        forgetPhrases();
+      }
       const words = text.toLowerCase().split(/\s+/).filter((word) => WORD.test(word));
       words.forEach((word, i) => {
         const previous = words[i - 1] ?? '';

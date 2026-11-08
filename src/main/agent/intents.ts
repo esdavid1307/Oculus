@@ -23,6 +23,10 @@ const VIDEO_RULES =
   'If the user is looking at a video thumbnail or title (recommendations, search results, a home grid), offer exactly "Open this video", first after any ad. ' +
   'If the user is looking at the playing video itself and there is no ad, include "Open a related video" and something like "Pause the video". ';
 
+// Demo flow one (#10): the run agent writes the continuation, so the user only has to pick it.
+const DOCUMENT_RULES =
+  'If the user is looking at a document they are writing, such as an essay in Google Docs, offer exactly "Continue the essay", first after any ad. ';
+
 const INTENTS_SCHEMA = {
   type: 'object',
   properties: { intents: { type: 'array', items: { type: 'string' } } },
@@ -39,6 +43,7 @@ export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown
     `The user is looking at about (${x}, ${y}), within about ${radius} pixels, in this ${frame.imageWidth} x ${frame.imageHeight} screenshot. ` +
     `Suggest up to ${MAX_INTENTS} things they most likely want done with what is there, most likely first. ` +
     VIDEO_RULES +
+    DOCUMENT_RULES +
     (turnedDown.length ? `They turned down ${JSON.stringify(turnedDown)}, so suggest different ones. ` : '') +
     'Each is one short action of at most 6 words. ' +
     'Reply with only JSON: {"intents": ["..."]}'

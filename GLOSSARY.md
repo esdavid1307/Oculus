@@ -17,11 +17,11 @@ One of a few Intents the agent offers for the user to choose between; choosing o
 _Avoid_: Prediction, guess
 
 **Time to Action**:
-The seconds from the Start Gesture waking the agent to the chosen Intent starting. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
+The seconds from the Start Gesture finishing waking the agent (or from the last icon opened, when the agent stayed awake after it) to the Select Blink that chose the Intent. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
 _Avoid_: Latency, response time
 
 **Intent History**:
-The Intents this user chose before that ran ok, kept per app on this machine. Up to 2 of the usual ones for the app in front show at once when a target is picked, and Claude's Suggested Intents are added after them without moving anything. "Skip the ad" is never kept.
+The Intents this user chose before that ran ok, kept per app on this machine, and per site in Chrome when `"historyPerSite": true` is set (never for Incognito windows). Up to 2 of the usual ones for the app in front show, a site's own first and then the app's, at once when a target is picked, and Claude's Suggested Intents are added after them without moving anything. "Skip the ad" is never kept. Ranked by count and recency, or by an optional small neural ranker (`"intentRanker": "neural"` in config.json).
 _Avoid_: Memory, favourites
 
 **Gaze Keyboard**:
@@ -29,7 +29,7 @@ The on-screen keyboard that pops up so the user can fill in text. It scans, high
 _Avoid_: Virtual keyboard, typing mode
 
 **Suggested Word**:
-One of up to three words the Gaze Keyboard offers, scanned first, to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
+One of up to three words the Gaze Keyboard offers, scanned first (after the Suggested Phrase, when there is one), to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
 _Avoid_: Prediction, autocomplete, autofill
 
 **Gaze Region**:
@@ -65,7 +65,7 @@ The run of quick, deliberate blinks that restarts calibration.
 _Avoid_: Reset, blink command
 
 **Stop Gesture**:
-Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts.
+Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts. A countdown ("Stopping in 3…") shows while it runs, and recalibrating counts as a Stop at once, discarding any typed text.
 _Avoid_: Cancel, abort
 
 **Look Away**:
@@ -75,3 +75,15 @@ _Avoid_: Look away (for leaving a key)
 **Move Off**:
 Gaze leaving a target, such as the Centre Box, while staying on the screen, which restarts that hold.
 _Avoid_: Look away
+
+**Large View**:
+The mode, on by default, that makes what Oculus does not draw itself big enough to see: a larger Dock, the Icon Magnifier, and a UI Scale on the overlay's own text, Gaze Dot and outlines. Turned off with `"largeView": false`.
+_Avoid_: Zoom, accessibility mode
+
+**Icon Magnifier**:
+The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small icon is also grown to a minimum size.
+_Avoid_: Tooltip, zoom
+
+**Suggested Phrase**:
+The one earlier-submitted text the Gaze Keyboard offers, in a wide key scanned before the Suggested Words, once 2 or more typed letters match its start. Choosing it replaces everything typed so far.
+_Avoid_: Autocomplete, saved message
