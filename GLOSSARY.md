@@ -37,12 +37,12 @@ The large box in the middle of the screen, shown only while the agent is asleep,
 _Avoid_: Start Box, Wake target, corner target
 
 **Select Blink**:
-Both eyes closed for half a second, which presses the highlighted key or Dock icon. Natural blinks are too short to count.
+Both eyes closed for half a second, which presses the highlighted key or opens the highlighted icon. Natural blinks are too short to count.
 _Avoid_: Click, wink
 
-**Dock Scan**:
-Looking near the macOS Dock for 3 seconds, while the agent is awake, sticks to the Dock. The highlight then steps through its icons, and another Select Blink opens the highlighted one.
-_Avoid_: Dock snap, dock mode
+**Icon Scan**:
+Looking near the macOS Dock, or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. The agent stays awake afterwards.
+_Avoid_: Dock Scan, Dock snap, dock mode
 
 **Start Gesture**:
 The deliberate look at the Centre Box that wakes the agent. It replaced the corner Wake Gesture.

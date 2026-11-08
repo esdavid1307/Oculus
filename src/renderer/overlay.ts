@@ -27,7 +27,7 @@ function chime() {
 const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
-const dockHighlight = document.getElementById('dock-highlight')!;
+const iconHighlight = document.getElementById('icon-highlight')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
   Object.assign(element.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` });
@@ -73,7 +73,7 @@ function showKeyboard({ text, group, highlight }: Extract<OverlayState, { phase:
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
-  if (state.phase === 'dock') place(dockHighlight, state.highlight.rect);
+  if (state.phase === 'icons') place(iconHighlight, state.highlight.rect);
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
   root.dataset.phase = state.phase;

@@ -44,7 +44,7 @@ body {
 
 [data-phase='waiting-for-target'] #wake,
 [data-phase='typing'] #wake,
-[data-phase='dock'] #wake {
+[data-phase='icons'] #wake {
   visibility: hidden;
 }
 
@@ -54,7 +54,7 @@ body {
 
 /* The scan picks the key, so a dot following the eyes would only distract. */
 [data-phase='typing'] #dot,
-[data-phase='dock'] #dot {
+[data-phase='icons'] #dot {
   visibility: hidden;
 }
 
@@ -215,8 +215,8 @@ body {
   --rest: #78350f;
 }
 
-/* The Dock icon the scan is on. */
-#dock-highlight {
+/* The Dock or Desktop icon the scan is on. */
+#icon-highlight {
   position: fixed;
   display: none;
   box-sizing: border-box;
@@ -224,7 +224,7 @@ body {
   border-radius: 16px;
 }
 
-[data-phase='dock'] #dock-highlight {
+[data-phase='icons'] #icon-highlight {
   display: block;
 }
 

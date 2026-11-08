@@ -307,7 +307,61 @@ describe('Dock', () => {
     const { session } = awake();
     session(gaze(3100, nearDock));
     expect(session(gaze(6099, nearDock)).phase).toBe('waiting-for-target');
-    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'dock', wakeProgress: 0, highlight: items[0] });
+    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0] });
+  });
+
+  describe('showing the Dock', () => {
+    const hidden = items.map(({ name, rect }) => ({ name, rect: { ...rect, y: screen.height } }));
+    const awakeWithHiddenDock = () => {
+      const actions: AgentAction[] = [];
+      const session = createSession({ screen, act: (action) => actions.push(action), dock: () => hidden });
+      session(gaze(0, inBox));
+      session(gaze(3000, inBox));
+      return { session, actions };
+    };
+
+    it('shows the Dock when the user starts looking at it, and gives it back on looking away', () => {
+      const { session, actions } = awakeWithHiddenDock();
+      session(gaze(3100, belowDock));
+      session(gaze(3200, belowDock));
+      session(gaze(3300, outsideBox));
+      session(gaze(3400, belowDock));
+      expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }, { type: 'show-dock' }]);
+    });
+
+    it('keeps the Dock up for the whole scan, even when the gaze leaves it', () => {
+      const { session, actions } = awakeWithHiddenDock();
+      session(gaze(3100, belowDock));
+      session(gaze(6100, belowDock));
+      session(gaze(6200, outsideBox));
+      session(tick(9000));
+      expect(actions).toEqual([{ type: 'show-dock' }]);
+    });
+
+    it('lets the opened app take the Dock away', () => {
+      const { session, actions } = awakeWithHiddenDock();
+      session(gaze(3100, belowDock));
+      session(gaze(6100, belowDock));
+      session(select(6200));
+      session(gaze(6300, outsideBox));
+      expect(actions.map(({ type }) => type)).toEqual(['show-dock', 'open-icon']);
+    });
+
+    it('gives the Dock back when the Stop Gesture ends the scan', () => {
+      const { session, actions } = awakeWithHiddenDock();
+      session(gaze(3100, belowDock));
+      session(gaze(6100, belowDock));
+      session(gaze(6200, offScreen));
+      session(gaze(11_200, offScreen));
+      expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }]);
+    });
+
+    it('does not ask for the Dock while asleep', () => {
+      const actions: AgentAction[] = [];
+      const session = createSession({ screen, act: (action) => actions.push(action), dock: () => hidden });
+      session(gaze(0, belowDock));
+      expect(actions).toEqual([]);
+    });
   });
 
   it('restarts the hold when the user looks away from the Dock', () => {
@@ -316,7 +370,7 @@ describe('Dock', () => {
     session(gaze(5000, outsideBox));
     session(gaze(5100, nearDock));
     expect(session(gaze(8099, nearDock)).phase).toBe('waiting-for-target');
-    expect(session(gaze(8100, nearDock)).phase).toBe('dock');
+    expect(session(gaze(8100, nearDock)).phase).toBe('icons');
   });
 
   it('does not stick to the Dock on a Select Blink', () => {
@@ -340,9 +394,9 @@ describe('Dock', () => {
   });
 
   it('uses the configured Dock hold', () => {
-    const { session } = awake({ dockHoldMs: 1000 });
+    const { session } = awake({ iconHoldMs: 1000 });
     session(gaze(3100, nearDock));
-    expect(session(gaze(4100, nearDock)).phase).toBe('dock');
+    expect(session(gaze(4100, nearDock)).phase).toBe('icons');
   });
 
   it('steps through the icons every 2 seconds and opens the highlighted one on a Select Blink', () => {
@@ -351,19 +405,19 @@ describe('Dock', () => {
     expect(session(tick(10100))).toMatchObject({ highlight: items[2] });
     expect(session(tick(12100))).toMatchObject({ highlight: items[0] });
     session(tick(14100));
-    expect(session(select(14200))).toEqual({ phase: 'idle', wakeProgress: 0 });
-    expect(actions).toEqual([{ type: 'open-dock-item', name: 'Safari' }]);
+    expect(session(select(14200))).toEqual({ phase: 'waiting-for-target', wakeProgress: 0 });
+    expect(actions).toEqual([{ type: 'show-dock' }, { type: 'open-icon', source: 'dock', name: 'Safari' }]);
   });
 
   it('counts gaze far past the screen edge under the Dock as near it', () => {
     const { session } = awake();
     session(gaze(3100, belowDock));
-    expect(session(gaze(6100, belowDock)).phase).toBe('dock');
+    expect(session(gaze(6100, belowDock)).phase).toBe('icons');
   });
 
   it('does not count gaze past the edge under the Dock as Look Away', () => {
     const { session } = onDock();
-    expect(session(gaze(30_000, belowDock)).phase).toBe('dock');
+    expect(session(gaze(30_000, belowDock)).phase).toBe('icons');
   });
 
   it('still counts gaze past the edge away from the Dock as Look Away', () => {
@@ -377,7 +431,7 @@ describe('Dock', () => {
     const { session, actions } = onDock();
     session(gaze(7000, offScreen));
     expect(session(gaze(12_000, offScreen)).phase).toBe('idle');
-    expect(actions).toEqual([]);
+    expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }]);
   });
 
   it('needs a full new hold after waking again', () => {
@@ -388,6 +442,77 @@ describe('Dock', () => {
     session(gaze(9100, inBox));
     session(gaze(12_100, inBox));
     expect(session(gaze(12_200, nearDock)).phase).toBe('waiting-for-target');
+  });
+});
+
+describe('Desktop', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  // Out of order, as Accessibility lists them: a column on the right edge and one icon on its own.
+  const at = (name: string, x: number, y: number) => ({ name, rect: { x, y, width: 64, height: 64 } });
+  const desktop = [at('Projects', 650, 230), at('Screenshot 2', 1500, 490), at('school', 1500, 40), at('Screenshot 1', 1500, 150)];
+  const dock = [at('Finder', 600, 920)];
+  const awake = () => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => dock, desktop: () => desktop });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    return { session, actions };
+  };
+
+  it('sticks to the Desktop after 3 seconds near any of its icons', () => {
+    const { session } = awake();
+    session(gaze(3100, { x: 660, y: 260, radius: 120 }));
+    expect(session(gaze(6100, { x: 660, y: 260, radius: 120 }))).toMatchObject({ phase: 'icons', source: 'desktop' });
+  });
+
+  it('counts gaze past the right edge beside a Desktop icon', () => {
+    const { session } = awake();
+    const pastEdge = { x: 1900, y: 500, radius: 120 };
+    session(gaze(3100, pastEdge));
+    expect(session(gaze(6100, pastEdge))).toMatchObject({ phase: 'icons', source: 'desktop' });
+    expect(session(gaze(30_000, pastEdge)).phase).toBe('icons');
+  });
+
+  it('scans column by column from the left, top to bottom, and opens the highlighted file', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, { x: 660, y: 260, radius: 120 }));
+    session(gaze(6100, { x: 660, y: 260, radius: 120 }));
+    const order = [6100, 8100, 10_100, 12_100].map((t) => {
+      const state = session(tick(t));
+      return state.phase === 'icons' ? state.highlight.name : null;
+    });
+    expect(order).toEqual(['Projects', 'school', 'Screenshot 1', 'Screenshot 2']);
+    session(select(12_200));
+    expect(actions).toEqual([{ type: 'open-icon', source: 'desktop', name: 'Screenshot 2' }]);
+  });
+
+  it('stays awake after opening, so the next icon needs only another 3 second look', () => {
+    const { session, actions } = awake();
+    const onProjects = { x: 660, y: 260, radius: 120 };
+    session(gaze(3100, onProjects));
+    session(gaze(6100, onProjects));
+    session(select(6200));
+    session(gaze(6300, onProjects));
+    expect(session(gaze(9300, onProjects))).toMatchObject({ phase: 'icons', source: 'desktop' });
+    session(select(9400));
+    expect(actions).toEqual([
+      { type: 'open-icon', source: 'desktop', name: 'Projects' },
+      { type: 'open-icon', source: 'desktop', name: 'Projects' },
+    ]);
+  });
+
+  it('restarts the hold when the gaze moves from the Desktop to the Dock', () => {
+    const { session } = awake();
+    session(gaze(3100, { x: 660, y: 260, radius: 120 }));
+    session(gaze(5000, { x: 630, y: 950, radius: 120 }));
+    expect(session(gaze(6100, { x: 630, y: 950, radius: 120 })).phase).toBe('waiting-for-target');
+    expect(session(gaze(8000, { x: 630, y: 950, radius: 120 }))).toMatchObject({ phase: 'icons', source: 'dock' });
+  });
+
+  it('ignores a spot with no visible Desktop icon', () => {
+    const { session } = awake();
+    session(gaze(3100, outsideBox));
+    expect(session(gaze(6100, outsideBox)).phase).toBe('waiting-for-target');
   });
 });
 
