@@ -22,7 +22,7 @@ Demo flow one (#10): the user looks at an essay in Google Docs, chooses "Continu
 
 Plain text (letters, digits, ASCII punctuation, spaces) is typed with System Events keystrokes. On 2026-11-08 a 585-character paragraph took 0.3 s in Chrome with nothing dropped, so the 10-second cutoff in `src/main/agent/executor.ts` is far away.
 
-Text with a new line or any other character (é, ñ, curly quotes, an em dash) is pasted instead, because keystrokes drop new lines and garble accented letters on some keyboard layouts. The paste puts the user's clipboard back half a second later.
+New lines are Return presses, since keystrokes drop them and Google Docs adds an empty paragraph after a pasted line break. A line with any other character (é, ñ, curly quotes, an em dash) is pasted, because keystrokes garble accented letters on some keyboard layouts. The user's clipboard is put back half a second after the last paste.
 
 To time it on the demo laptop, click into a scratch Google Doc, then run this in a terminal and switch back to the Doc within 3 seconds:
 
@@ -60,6 +60,7 @@ Fill in after each run on the demo laptop.
 |---|---|---|---|---|
 | 2026-11-08 | claude-code, claude-sonnet-5-5 | 0.3 s (Chrome) | Dev laptop, a local essay page in Chrome, not yet Google Docs | Done in 12.8 s, 90 words added at the end, nothing else changed. The Stop Gesture (Look Away) worked. |
 | 2026-11-08 | claude-code, claude-sonnet-5-5 | 0.3 s (Chrome) | Same page, after the fixes. Text started with a new line, so it was pasted | Done in 12.9 s as its own paragraph, clipboard put back. Looking at the margin beside the essay: Done in 10.9 s, clicked after the last word. "Summarize the essay": no clicks or typing, essay unchanged. |
+| 2026-11-08 | claude-code, claude-sonnet-5-5 | under 1 s | Dev laptop, a real Google Doc in Chrome | Done in 11.9 s: a 90-word paragraph right after the last one, no empty line, nothing else changed, clipboard put back. |
 
 ## Known limits
 

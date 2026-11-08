@@ -20,31 +20,35 @@ export function checkAccessibility(): Promise<void> {
   return osascript(['-l', 'JavaScript', '-e', ACCESSIBILITY_GUARD]);
 }
 
-const KEYSTROKE = ['on run argv', 'tell application "System Events" to keystroke (item 1 of argv)', 'end run'];
 const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
-// keystroke drops "\n" and garbles accents ("café" typed "cafa"), so other text is pasted and the clipboard put back.
-// shortcut: one form of the clipboard comes back and a copy made in the 0.5 s is lost, save every type if users notice.
-const PASTE = [
-  'on run argv',
-  'try',
-  'set saved to the clipboard',
-  'end try',
-  'set the clipboard to (item 1 of argv)',
-  'tell application "System Events" to keystroke "v" using command down',
-  'delay 0.5',
-  'try',
-  'set the clipboard to saved',
-  'end try',
-  'end run',
-];
+// The AppleScript that types text, one line per argv item. keystroke drops "\n" and Google Docs adds a paragraph after
+// a pasted line break, so lines are joined with Return. keystroke garbles accents ("café" typed "cafa"), so such a line
+// is pasted, waiting for the app to read it, and the clipboard is put back.
+// shortcut: one form of the clipboard comes back and a copy made during typing is lost, save every type if users notice.
+export function typeScript(text: string): { script: string[]; args: string[] } {
+  const args = text.split(/\r?\n/);
+  const pastes = args.some((line) => !PRINTABLE_ASCII.test(line));
+  const lines = args.flatMap((line, i) => [
+    ...(i > 0 ? ['tell application "System Events" to key code 36'] : []),
+    ...(line === ''
+      ? []
+      : PRINTABLE_ASCII.test(line)
+        ? [`tell application "System Events" to keystroke (item ${i + 1} of argv)`]
+        : [`set the clipboard to (item ${i + 1} of argv)`, 'tell application "System Events" to keystroke "v" using command down', 'delay 0.5']),
+  ]);
+  const save = pastes ? ['try', 'set saved to the clipboard', 'end try'] : [];
+  const restore = pastes ? ['try', 'set the clipboard to saved', 'end try'] : [];
+  return { script: ['on run argv', ...save, ...lines, ...restore, 'end run'], args };
+}
 
 // Every script checks Accessibility first, since CGEventPost drops events silently without it.
 // System Events fails on its own without it.
 export const execute: Execute = (action) => {
   if (action.type === 'type') {
-    const script = PRINTABLE_ASCII.test(action.text) ? KEYSTROKE : PASTE;
-    return osascript([...script.flatMap((line) => ['-e', line]), action.text]);
+    const { script, args } = typeScript(action.text);
+    // "--" so a line starting with "-", like a bullet, isn't read as an osascript option.
+    return osascript([...script.flatMap((line) => ['-e', line]), '--', ...args]);
   }
   let script: string;
   try {
