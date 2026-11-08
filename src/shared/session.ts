@@ -15,6 +15,10 @@ export type OverlayState =
 // The name is what the outside world needs to find it again, in overlay coordinates.
 export type Icon = { name: string; rect: Rect };
 
+// A text field or search box on screen the Gaze Keyboard can type into. The name is the outside world's handle for it,
+// used to focus the box again before typing lands.
+export type TextBox = { name: string; rect: Rect };
+
 // 'menu' is the menu a menu bar item just opened.
 export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
 
@@ -32,6 +36,8 @@ export type SessionInput =
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
   | { type: 'type-text'; text: string }
+  // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
+  | { type: 'focus-text-box'; name: string }
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
@@ -118,6 +124,7 @@ export function createSession({
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
+  textBoxes = () => [],
 }: {
   screen: Screen;
   timings?: unknown;
@@ -128,6 +135,8 @@ export function createSession({
   desktop?: () => Icon[];
   // The menus of the app in front, then the status items.
   menubar?: () => Icon[];
+  // Text fields the Gaze Keyboard can type into, read from the app in front.
+  textBoxes?: () => TextBox[];
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar };
@@ -255,6 +264,20 @@ export function createSession({
     act({ type: 'run-intent', intent, region: asked!, request: ++request });
   }
 
+  // The text box the Gaze Region touches, nearest first, so staring between two picks the one closer in.
+  function textBoxAt(region: GazeRegion): TextBox | undefined {
+    let best: TextBox | undefined;
+    let bestD = region.radius;
+    for (const box of textBoxes()) {
+      const d = iconDistance(region, [box], screen);
+      if (d <= bestD) {
+        best = box;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
   function holdTarget(region: GazeRegion | null, t: number) {
     if (region === null || offScreen(region, screen)) {
       target = null;
@@ -267,7 +290,11 @@ export function createSession({
     if (target === null || moved) target = { region, start: t };
     if (t - target.start >= targetHoldMs) {
       // Where the gaze settled, not where the hold began: the first sample is often still on the way in.
-      suggestIntents(region, []);
+      const box = textBoxAt(region);
+      if (box) {
+        act({ type: 'focus-text-box', name: box.name });
+        openKeyboard(t);
+      } else suggestIntents(region, []);
       target = null;
     }
   }

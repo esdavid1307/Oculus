@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
-import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
+import { createSession, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
+import { execute } from './agent/executor';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
@@ -23,7 +24,7 @@ const MOUSE_SAMPLE_MS = 33;
 const MOUSE_REGION_RADIUS = 60;
 // shortcut: polls for icons and windows moving, listen for Accessibility changes if the delay shows up in use.
 const ICON_READ_MS = 2000;
-// shortcut: opens the Gaze Keyboard until #13 opens it from a text box target.
+// Dev fallback for opening the Gaze Keyboard when no text box is read, for example before Chrome enables its a11y tree.
 const DEV_OPEN_KEYBOARD_SHORTCUT = 'CommandOrControl+Shift+K';
 // The mouse can't blink, so this stands in for the Select Blink.
 const DEV_SELECT_SHORTCUT = 'CommandOrControl+Shift+Space';
@@ -183,6 +184,67 @@ function runMenuScript(script: string, path: string, failure: string) {
 
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
+// Chrome exposes web content through AX only once its accessibility tree is on, so a YouTube search box stays hidden
+// until a VoiceOver-like reader has asked. The size floor drops hidden or tiny controls the user couldn't look at.
+const READ_TEXT_BOXES = `function run() {
+  try {
+    const events = Application('System Events');
+    const procs = events.processes.whose({ frontmost: true });
+    if (procs.length === 0) return '[]';
+    const windows = procs[0].windows;
+    if (windows.length === 0) return '[]';
+    const roles = { AXTextField: 1, AXTextArea: 1, AXSearchField: 1, AXComboBox: 1 };
+    const results = [];
+    function walk(el, depth) {
+      if (depth > 25) return;
+      var role;
+      try { role = el.role(); } catch (e) { return; }
+      if (roles[role]) {
+        try {
+          var pos = el.position();
+          var size = el.size();
+          if (pos && size && size[0] >= 40 && size[1] >= 15) {
+            var name = '';
+            try { name = el.description() || ''; } catch (e) {}
+            if (!name) try { name = el.title() || ''; } catch (e) {}
+            if (!name) try { name = el.help() || ''; } catch (e) {}
+            results.push({ name: name || role, role: role, x: pos[0], y: pos[1], width: size[0], height: size[1] });
+          }
+        } catch (e) {}
+      }
+      var kids;
+      try { kids = el.uiElements(); } catch (e) { return; }
+      for (var i = 0; i < kids.length; i++) walk(kids[i], depth + 1);
+    }
+    walk(windows[0], 0);
+    return JSON.stringify(results);
+  } catch (e) { return '[]'; }
+}`;
+
+type RawTextBox = { name: string; role: string; x: number; y: number; width: number; height: number };
+
+// Read can be slow on big web pages, so it gets more time than the icon read.
+const READ_TEXT_BOXES_TIMEOUT_MS = 4000;
+
+// Walking a big web page can take longer than the icon refresh, so skip the next read while one is still in flight.
+let readingTextBoxes = false;
+function readTextBoxes(origin: Rect, done: (boxes: TextBox[]) => void) {
+  if (readingTextBoxes) return;
+  readingTextBoxes = true;
+  execFile('osascript', ['-l', 'JavaScript', '-e', READ_TEXT_BOXES], { timeout: READ_TEXT_BOXES_TIMEOUT_MS }, (error, stdout) => {
+    readingTextBoxes = false;
+    if (error) return done([]);
+    let raw: RawTextBox[];
+    try {
+      raw = JSON.parse(stdout);
+    } catch {
+      return done([]);
+    }
+    // The index keeps the name unique when a page has several boxes of the same role or description.
+    done(raw.map((box, i) => ({ name: `${box.role}#${i}:${box.name}`, rect: { x: box.x - origin.x, y: box.y - origin.y, width: box.width, height: box.height } })));
+  });
+}
+
 function readIcons(source: 'dock' | 'desktop', origin: Rect, done: (icons: Icon[]) => void) {
   const script = `${READ_WINDOWS}
 const icons = Application('System Events').${ICONS[source].elements};
@@ -293,10 +355,16 @@ function createOverlay() {
   else overlay.loadFile(join(__dirname, '../renderer/index.html'), { search });
 
   const icons = { dock: [] as Icon[], desktop: [] as Icon[], menubar: [] as Icon[] };
+  let textBoxes: TextBox[] = [];
+  let textBoxByName = new Map<string, Rect>();
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
+    readTextBoxes(bounds, (read) => {
+      textBoxes = read;
+      textBoxByName = new Map(read.map(({ name, rect }) => [name, rect]));
+    });
   };
   refreshIcons();
   const settings = readTimingsFile();
@@ -341,6 +409,15 @@ function createOverlay() {
       if (currentRun?.request !== action.request) return;
       console.log(`[intent-run] stop request=${action.request}`);
       currentRun.controller.abort();
+    } else if (action.type === 'focus-text-box') {
+      // Clicks the box's centre at the HID tap, so the focus lands beneath the click-through overlay before typing.
+      // Falls back silently when the latest read no longer has the box, so a stale target cannot type into nothing.
+      const rect = textBoxByName.get(action.name);
+      if (!rect) return console.warn(`[text-box] ${action.name} is gone, skipping focus`);
+      const at = { x: bounds.x + rect.x + rect.width / 2, y: bounds.y + rect.y + rect.height / 2 };
+      void execute({ type: 'click', at, button: 'left', count: 1, modifiers: [] }).catch((error: Error) =>
+        console.error('Could not focus the text box:', error.message),
+      );
     }
     // The Dock moves when it shows, so it is read again for the scan.
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
@@ -363,6 +440,7 @@ function createOverlay() {
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
+    textBoxes: () => textBoxes,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
