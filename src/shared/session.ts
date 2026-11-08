@@ -5,7 +5,8 @@ import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, SUGGESTION_KEY,
 export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
+  // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
@@ -27,6 +28,8 @@ export type SessionInput =
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
   // The model's answer to the suggest-intents request with the same number.
   | { type: 'intents'; t: number; request: number; intents: string[] }
+  // The user's own past Intents for the target of the suggest-intents request with the same number, best first.
+  | { type: 'past-intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] }
   // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
   | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string }
@@ -53,6 +56,7 @@ export type AgentAction =
 export type Suggest = (text: string) => string[];
 
 const MAX_INTENTS = 3;
+const MAX_PAST_INTENTS = 2;
 
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
 const HOLD_GRACE_MS = 500;
@@ -156,6 +160,7 @@ export function createSession({
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let intents: string[] = [];
+  let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
   let turnedDown: string[] = [];
@@ -182,7 +187,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents) : layoutKeyboard(screen, group, suggestions).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -284,7 +289,7 @@ export function createSession({
 
   function state(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
-    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
+    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
@@ -295,12 +300,37 @@ export function createSession({
     if (input.type === 'open-keyboard') {
       // The agent owns the mouse and keys while it runs, so typing would collide with it.
       if (phase !== 'typing' && phase !== 'running') openKeyboard(input.t);
+    } else if (input.type === 'past-intents') {
+      // Only before Claude has answered: after that the picker is already up and the past ones would be reordering it.
+      if (phase === 'thinking' && input.request === request && input.intents.length > 0) {
+        phase = 'choosing';
+        intents = input.intents.slice(0, MAX_PAST_INTENTS);
+        cells = 6;
+        scanStart = input.t;
+        scan(input.t);
+      }
     } else if (input.type === 'intents') {
       if (phase === 'thinking' && input.request === request) {
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
+        cells = 4;
         scanStart = input.t;
         scan(input.t);
+      } else if (phase === 'choosing' && input.request === request) {
+        // Claude's Suggested Intents join the end of what the user is already scanning. Nothing moves.
+        const shown = new Set(intents.map((text) => text.toLowerCase()));
+        const added = input.intents.filter((text) => !shown.has(text.toLowerCase()) && shown.add(text.toLowerCase())).slice(0, MAX_INTENTS);
+        if (added.length > 0) {
+          scan(input.t);
+          const before = highlight;
+          const spent = Math.max(input.t - scanStart, 0) % scanStepMs;
+          intents = [...intents, ...added];
+          // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
+          // where it was, so the same key stays lit and keeps the time it already had.
+          const at = layoutIntents(screen, intents, cells).findIndex((key) => key.id === before);
+          scanStart = input.t - at * scanStepMs - spent;
+          scan(input.t);
+        }
       }
     } else if (input.type === 'run-finished') {
       if (phase === 'running' && input.request === request) {

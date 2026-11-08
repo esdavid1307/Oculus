@@ -3,6 +3,7 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
+import { createIntentHistory, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
@@ -249,6 +250,36 @@ function createWordPrediction(enabled: boolean) {
   };
 }
 
+// What the user ran before, per app. Chosen Intents only, kept on this machine.
+function createHistory() {
+  const file = join(app.getPath('userData'), 'intent-history.json');
+  let saved: unknown;
+  try {
+    saved = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Starting Intent History fresh, ignoring ${file}:`, error);
+  }
+  const history = createIntentHistory(readIntentHistory(saved));
+  return {
+    suggest: history.suggest,
+    learn(context: string, intent: string) {
+      history.learn(context, intent);
+      // Write then rename, so a crash mid-write never leaves a half file that would start the history fresh.
+      writeFileSync(`${file}.tmp`, JSON.stringify(history.model()));
+      renameSync(`${file}.tmp`, file);
+    },
+  };
+}
+
+// The app in front. The overlay never takes focus, so this is the app the user is looking at.
+// shortcut: System Events through osascript. Any failure gives '', which means no history for this request.
+function readContext(): Promise<string> {
+  const script = 'Application("System Events").processes.whose({frontmost: true})[0].name()';
+  return new Promise((resolve) => {
+    execFile('osascript', ['-l', 'JavaScript', '-e', script], { timeout: 3000 }, (error, stdout) => resolve(error ? '' : stdout.trim()));
+  });
+}
+
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
 // shortcut: types through System Events, which needs the Accessibility permission. #6 may replace this.
 function typeText(text: string) {
@@ -319,6 +350,9 @@ function createOverlay() {
   refreshIcons();
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
+  const history = createHistory();
+  // The context of each suggest-intents request, read when it starts since the front app can change during a run.
+  const contexts = new Map<number, Promise<string>>();
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       typeText(action.text);
@@ -330,6 +364,16 @@ function createOverlay() {
         console.warn('Could not save word prediction:', error);
       }
     } else if (action.type === 'suggest-intents') {
+      const context = readContext();
+      contexts.set(action.request, context);
+      for (const old of contexts.keys()) if (old < action.request - 10) contexts.delete(old);
+      // Not after Something else: those are the ones the user just turned down. The answer comes after this session
+      // call has returned, because osascript is asynchronous.
+      if (action.turnedDown.length === 0)
+        void context.then((name) => {
+          const past = name === '' ? [] : history.suggest(name);
+          if (past.length > 0) advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
+        });
       // A folder per request, so overlapping requests never share a screenshot. It's deleted once answered.
       const saveDir = join(app.getPath('userData'), 'intents', String(action.request));
       const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
@@ -356,6 +400,15 @@ function createOverlay() {
       void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
+        // The run's request number follows the suggest-intents request it was chosen from.
+        if (outcome.ok)
+          void contexts.get(request - 1)?.then((name) => {
+            try {
+              history.learn(name, intent);
+            } catch (error) {
+              console.warn('Could not save Intent History:', error);
+            }
+          });
         finish(outcome.ok, outcome.summary);
       });
     } else if (action.type === 'stop-run') {
@@ -387,8 +440,9 @@ function createOverlay() {
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
-    // The Stop Gesture or the Gaze Keyboard ended the wait, so the answer would be dropped anyway.
-    if (state.phase !== 'thinking') pendingIntents?.abort();
+    // The Stop Gesture, the Gaze Keyboard or a run ended the wait, so the answer would be dropped anyway.
+    // The picker can be up already, with past Intents, while Claude is still answering.
+    if (state.phase !== 'thinking' && state.phase !== 'choosing') pendingIntents?.abort();
     overlay.webContents.send('overlay-state', state);
   };
 

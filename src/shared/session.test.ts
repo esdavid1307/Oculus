@@ -796,6 +796,7 @@ describe('Suggested Intents', () => {
       wakeProgress: 0,
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
       highlight: 'intent-0',
+      cells: 4,
     });
     expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
       'Skip the ad',
@@ -947,6 +948,87 @@ describe('Suggested Intents', () => {
   it('ignores suggestions that arrive when it is not thinking', () => {
     const { session } = awake();
     expect(session({ type: 'intents', t: 3100, request: 1, intents: ['Pause'] }).phase).toBe('waiting-for-target');
+  });
+
+  describe('with past Intents', () => {
+    const past = (intents = ['Pause', 'Mute'], t = 4500) => {
+      const woken = thinking();
+      woken.session({ type: 'past-intents', t, request: 1, intents });
+      return woken;
+    };
+    const claude = (t: number, intents: string[]) => ({ type: 'intents', t, request: 1, intents }) as const;
+
+    it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
+      const { session } = past();
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6 });
+      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
+    });
+
+    it('shows at most 2 past Intents, and ignores an empty list or another request', () => {
+      expect(past(['a', 'b', 'c']).session(tick(4500))).toMatchObject({ intents: ['a', 'b'] });
+      expect(past([]).session(tick(4500)).phase).toBe('thinking');
+      const { session } = thinking();
+      expect(session({ type: 'past-intents', t: 4500, request: 9, intents: ['a'] }).phase).toBe('thinking');
+    });
+
+    it("appends up to 3 of Claude's Intents after the past ones, dropping duplicates ignoring case", () => {
+      const { session } = past();
+      expect(session(claude(5000, ['pause', 'Open it', 'Like', 'Share', 'Save']))).toMatchObject({
+        phase: 'choosing',
+        intents: ['Pause', 'Mute', 'Open it', 'Like', 'Share'],
+      });
+    });
+
+    it("keeps the same key highlighted, with the time it had, when Claude's Intents arrive", () => {
+      const { session } = past();
+      session(tick(7000));
+      expect(session(claude(7000, ['Like', 'Share']))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(8499))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-2' });
+    });
+
+    it("keeps Something else highlighted when it is the lit key as Claude's Intents arrive", () => {
+      const { session } = past(['Pause']);
+      expect(session(tick(6600))).toMatchObject({ highlight: 'something-else' });
+      expect(session(claude(6600, ['Like', 'Share']))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(8499))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-0' });
+    });
+
+    it("keeps every cell where it was when Claude's Intents arrive", () => {
+      const before = layoutIntents(screen, ['Pause', 'Mute'], 6);
+      const after = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6);
+      expect(after.slice(0, 2).map((key) => key.rect)).toEqual(before.slice(0, 2).map((key) => key.rect));
+      expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
+      expect(after).toHaveLength(6);
+    });
+
+    it('does nothing when Claude only repeats the past Intents', () => {
+      const { session } = past();
+      session(tick(7000));
+      expect(session(claude(7000, ['PAUSE']))).toMatchObject({ intents: ['Pause', 'Mute'], highlight: 'intent-1' });
+    });
+
+    it('turns down everything shown on Something else, past and new', () => {
+      const { session, actions } = past();
+      session(claude(5000, ['Like']));
+      session(tick(10_500));
+      expect(session(select(10_500)).phase).toBe('thinking');
+      expect(actions.at(-1)).toEqual({ type: 'suggest-intents', region: target, request: 2, turnedDown: ['Pause', 'Mute', 'Like'] });
+    });
+
+    it("ignores Claude's late answer during a run", () => {
+      const { session } = past();
+      expect(session(select(4600)).phase).toBe('running');
+      expect(session(claude(5000, ['Like']))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
+    });
+
+    it('ignores past Intents that arrive after Claude has answered', () => {
+      const { session } = thinking();
+      session(claude(5000, ['Like']));
+      expect(session({ type: 'past-intents', t: 5100, request: 1, intents: ['Pause'] })).toMatchObject({ intents: ['Like'], cells: 4 });
+    });
   });
 });
 
