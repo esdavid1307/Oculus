@@ -16,12 +16,20 @@ _Avoid_: Command, task, action
 One of a few Intents the agent offers for the user to choose between; choosing one is the user's confirmation.
 _Avoid_: Prediction, guess
 
+**Time to Action**:
+The seconds from the Start Gesture finishing waking the agent (or from the last icon opened, when the agent stayed awake after it) to the Select Blink that chose the Intent. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
+_Avoid_: Latency, response time
+
+**Intent History**:
+The Intents this user chose before that ran ok, kept per app on this machine, and per site in Chrome when `"historyPerSite": true` is set (never for Incognito windows). Up to 2 of the usual ones for the app in front show, a site's own first and then the app's, at once when a target is picked, and Claude's Suggested Intents are added after them without moving anything. "Skip the ad" is never kept. Ranked by count and recency, or by an optional small neural ranker (`"intentRanker": "neural"` in config.json).
+_Avoid_: Memory, favourites
+
 **Gaze Keyboard**:
 The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
 _Avoid_: Virtual keyboard, typing mode
 
 **Suggested Word**:
-One of up to three words the Gaze Keyboard offers, scanned first, to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
+One of up to three words the Gaze Keyboard offers, scanned first (after the Suggested Phrase, when there is one), to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
 _Avoid_: Prediction, autocomplete, autofill
 
 **Gaze Region**:

@@ -74,6 +74,12 @@ body {
   text-align: center;
 }
 
+/* What the agent is doing right now, between the Intent and the stop hint. */
+#status span {
+  display: block;
+  margin-top: 8px;
+}
+
 #status small {
   display: block;
   margin-top: calc(8px * var(--ui-scale, 1));

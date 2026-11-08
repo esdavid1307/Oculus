@@ -96,9 +96,11 @@ function showStatus(state: OverlayState) {
   status.hidden = state.phase !== 'thinking' && state.phase !== 'running' && state.phase !== 'finished';
   if (status.hidden) return;
   if (state.phase === 'running') {
+    const activity = document.createElement('span');
+    activity.textContent = state.activity ? `${state.activity}…` : 'Starting…';
     const hint = document.createElement('small');
     hint.textContent = state.stopInMs === undefined ? 'Look away to stop' : stopping(state.stopInMs);
-    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), hint);
+    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), activity, hint);
   } else if (state.phase === 'finished') {
     status.textContent = `${state.ok ? 'Done' : "Couldn't finish"}: ${state.summary}`;
     root.dataset.ok = String(state.ok);
@@ -128,7 +130,7 @@ window.overlay.onState((state) => {
   if (state.phase === 'typing') showKeyboard(state);
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
+    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells));
     highlightKey(state.highlight);
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
