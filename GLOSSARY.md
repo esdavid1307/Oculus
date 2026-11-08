@@ -75,3 +75,7 @@ _Avoid_: Zoom, accessibility mode
 **Icon Magnifier**:
 The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small icon is also grown to a minimum size.
 _Avoid_: Tooltip, zoom
+
+**Suggested Phrase**:
+The one earlier-submitted text the Gaze Keyboard offers, in a wide key scanned before the Suggested Words, once 2 or more typed letters match its start. Choosing it replaces everything typed so far.
+_Avoid_: Autocomplete, saved message

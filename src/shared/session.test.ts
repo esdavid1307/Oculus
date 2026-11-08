@@ -1057,6 +1057,81 @@ describe('Running an Intent', () => {
   });
 });
 
+describe('Suggested Phrase', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const phrases: Record<string, string> = { pl: 'please call the nurse', pla: 'please call the nurse' };
+  const make = (withPhrases = true) => {
+    const session = createSession({
+      screen,
+      suggest: (text) => (text === '' ? [] : ['one', 'two', 'three']),
+      suggestPhrase: withPhrases ? (text) => phrases[text] : undefined,
+    });
+    let state = session({ type: 'open-keyboard', t: 0 });
+    let t = 0;
+    const press = (id: string) => {
+      const start = t;
+      while (state.phase === 'typing' && state.highlight !== id) {
+        if (t - start > 60_000) throw new Error(`the scan never reached ${id}`);
+        state = session(tick((t += 100)));
+      }
+      return (state = session(select(t)));
+    };
+    const type = (...letters: string[]) => letters.forEach((l) => (press(GROUPS.find((g) => g.includes(l))!), press(l)));
+    return { press, type, state: () => state };
+  };
+
+  it('offers no phrase on an empty keyboard or after 1 letter', () => {
+    const { type, state } = make();
+    expect(state()).not.toHaveProperty('phrase');
+    type('p');
+    expect(state()).not.toHaveProperty('phrase');
+  });
+
+  it('offers the phrase after 2 letters and scans it before the Suggested Words', () => {
+    const { type, state } = make();
+    type('p', 'l');
+    expect(state()).toMatchObject({ phrase: 'please call the nurse', suggestions: ['one', 'two', 'three'], highlight: 'phrase' });
+  });
+
+  it('replaces everything typed with the phrase when pressed', () => {
+    const { type, press, state } = make();
+    type('p', 'l');
+    expect(press('phrase')).toMatchObject({ text: 'please call the nurse', group: null });
+    expect(state()).not.toHaveProperty('phrase');
+  });
+
+  it('hides the phrase key on the letter screens', () => {
+    expect(layoutKeyboard(screen, 'abcde', [], 'x').keys.map(({ id }) => id)).not.toContain('phrase');
+  });
+
+  it('behaves as before without a phrase dependency', () => {
+    const { type, state } = make(false);
+    type('p', 'l');
+    expect(state()).not.toHaveProperty('phrase');
+    expect(state()).toMatchObject({ highlight: 'word:one' });
+  });
+
+  it('lays the phrase out as one wide first row, with the words after it, without overlap', () => {
+    for (const size of [{ width: 1512, height: 982 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
+      const { keys } = layoutKeyboard(size, null, ['a', 'b', 'c'], 'a whole sentence');
+      expect(keys.length).toBeLessThanOrEqual(13);
+      expect(keys[0]).toMatchObject({ id: 'phrase', label: 'a whole sentence' });
+      expect(keys[0].rect.width).toBeCloseTo(size.width);
+      expect(keys.slice(1, 4).map(({ id }) => id)).toEqual(['word:a', 'word:b', 'word:c']);
+      const hit = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+      for (const { rect } of keys) {
+        expect(rect.x >= 0 && rect.y >= 120 && rect.x + rect.width <= size.width + 0.001 && rect.y + rect.height <= size.height + 0.001).toBe(true);
+        for (const other of keys) if (other.rect !== rect) expect(hit(rect, other.rect)).toBe(false);
+      }
+    }
+  });
+
+  it('keeps the layout unchanged when there is no phrase', () => {
+    expect(layoutKeyboard(screen, null, ['a', 'b'], undefined)).toEqual(layoutKeyboard(screen, null, ['a', 'b']));
+    expect(layoutKeyboard(screen, null, [], '')).toEqual(layoutKeyboard(screen, null));
+  });
+});
+
 describe('Gaze Keyboard layout', () => {
   const area = (r: Rect) => r.width * r.height;
   const intersect = (a: Rect, b: Rect) =>

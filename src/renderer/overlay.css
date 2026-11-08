@@ -230,3 +230,14 @@ body {
   font-size: calc(56px * var(--ui-scale, 1));
   font-weight: 500;
 }
+
+/* The Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
+.key[data-key='phrase'] {
+  --rest: #3b0764;
+  --fill: #7e22ce;
+  padding: 0 calc(24px * var(--ui-scale, 1));
+  overflow: hidden;
+  text-align: center;
+  font-size: calc(48px * var(--ui-scale, 1));
+  font-weight: 500;
+}

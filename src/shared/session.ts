@@ -1,10 +1,10 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
 
 export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
   | { phase: 'running'; wakeProgress: number; intent: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
@@ -46,6 +46,9 @@ export type AgentAction =
 
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
+
+// The one text submitted before that the typed text starts, if any. See src/shared/predict.ts.
+export type SuggestPhrase = (text: string) => string | undefined;
 
 const MAX_INTENTS = 3;
 
@@ -116,6 +119,7 @@ export function createSession({
   timings,
   act = () => {},
   suggest = () => [],
+  suggestPhrase = () => undefined,
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
@@ -124,6 +128,7 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
   suggest?: Suggest;
+  suggestPhrase?: SuggestPhrase;
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
@@ -150,6 +155,7 @@ export function createSession({
   let scanStart = 0;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
+  let phrase: string | undefined;
   let intents: string[] = [];
   // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
@@ -174,7 +180,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents) : layoutKeyboard(screen, group, suggestions).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents) : layoutKeyboard(screen, group, suggestions, phrase).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -212,20 +218,29 @@ export function createSession({
     return iconHold !== null;
   }
 
+  function refreshSuggestions() {
+    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+    phrase = suggestPhrase(text) || undefined;
+  }
+
   function openKeyboard(t: number) {
     phase = 'typing';
     holdStart = null;
     wakeProgress = 0;
     text = '';
     group = null;
-    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+    refreshSuggestions();
     scanStart = t;
     scan(t);
   }
 
   function press(key: KeyId) {
     if (phase === 'choosing') choose(key);
-    else if (key.startsWith(SUGGESTION_KEY)) {
+    else if (key === PHRASE_KEY) {
+      // The phrase starts with what was typed, so it replaces all of it.
+      text = phrase ?? text;
+      group = null;
+    } else if (key.startsWith(SUGGESTION_KEY)) {
       // The word replaces the letters typed so far, and the space after it is free.
       text = text.replace(/[a-z]*$/, '') + key.slice(SUGGESTION_KEY.length) + ' ';
       group = null;
@@ -274,7 +289,7 @@ export function createSession({
   }
 
   function state(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
     if (phase === 'running') return { phase, wakeProgress, intent };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
@@ -342,7 +357,7 @@ export function createSession({
         scan(input.t);
         if (input.type === 'select') {
           press(highlight);
-          if (phase === 'typing') suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+          if (phase === 'typing') refreshSuggestions();
           scanStart = input.t;
           scan(input.t);
         }
