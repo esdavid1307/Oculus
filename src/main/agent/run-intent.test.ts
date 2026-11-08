@@ -78,6 +78,7 @@ function setup(over: Partial<RunIntentDeps> = {}) {
     cwd: '/cwd',
     messages: () => ({ create: async () => ({}) as never }),
     signal: new AbortController().signal,
+    onActivity: () => {},
     backends: {
       'claude-code': async (options, d) => (calls.push({ api: false, options, deps: d }), result()),
       api: async (options, d) => (calls.push({ api: true, options, deps: d }), result({ finalText: 'Done: via api' })),
@@ -119,6 +120,21 @@ describe('runIntent', () => {
     expect(calls).toHaveLength(0);
     expect(outcome).toMatchObject({ ok: false, stopped: true, summary: 'Stopped' });
     expect(logs.at(-1)).toContain('stopped=true');
+  });
+
+  it.each(['claude-code', 'api'] as const)('reports each screenshot and input of the %s backend as an activity', async (backend) => {
+    const activities: string[] = [];
+    const steps = async (_options: unknown, d: { capture: RunIntentDeps['capture']; execute: RunIntentDeps['execute'] }) => {
+      await d.capture();
+      await d.execute({ type: 'click', at: { x: 1, y: 2 }, button: 'left', count: 1, modifiers: [] });
+      await d.execute({ type: 'key', keys: 'cmd+down', repeat: 1 });
+      await d.execute({ type: 'type', text: 'The end.' });
+      await d.execute({ type: 'scroll', at: null, direction: 'down', amount: 3, modifiers: [] });
+      return result();
+    };
+    const { deps } = setup({ onActivity: (activity) => activities.push(activity), backends: { 'claude-code': steps, api: steps } });
+    await runIntent(run, { ...config, backend }, deps);
+    expect(activities).toEqual(['Looking at the screen', 'Clicking', 'Pressing cmd+down', 'Typing', 'Scrolling']);
   });
 
   it('never throws when the backend throws', async () => {

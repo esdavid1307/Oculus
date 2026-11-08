@@ -332,7 +332,8 @@ function createOverlay() {
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
+      const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
+      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
         finish(outcome.ok, outcome.summary);

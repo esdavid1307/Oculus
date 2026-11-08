@@ -6,7 +6,8 @@ export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
-  | { phase: 'running'; wakeProgress: number; intent: string }
+  // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
+  | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
   | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
@@ -27,7 +28,9 @@ export type SessionInput =
   | { type: 'intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] }
   // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
-  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string };
+  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string }
+  // A step of the run-intent request with the same number, in a few words for the overlay.
+  | { type: 'run-progress'; t: number; request: number; activity: string };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
@@ -156,6 +159,7 @@ export function createSession({
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
+  let activity = '';
   // seen is when the gaze was last near the held icon target.
   let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
@@ -251,6 +255,7 @@ export function createSession({
   function choose(key: KeyId) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
+    activity = '';
     phase = 'running';
     act({ type: 'run-intent', intent, region: asked!, request: ++request });
   }
@@ -275,7 +280,7 @@ export function createSession({
   function state(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
-    if (phase === 'running') return { phase, wakeProgress, intent };
+    if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
@@ -299,6 +304,8 @@ export function createSession({
         summary = input.summary;
         finishedAt = input.t;
       }
+    } else if (input.type === 'run-progress') {
+      if (phase === 'running' && input.request === request) activity = input.activity;
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);

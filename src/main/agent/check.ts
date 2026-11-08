@@ -66,6 +66,7 @@ export async function runIntentInElectron(
   overlay: BrowserWindow,
   run: Omit<IntentRun, 'frame'>,
   signal: AbortSignal,
+  onActivity: (activity: string) => void,
   log: (line: string) => void = console.log,
 ): Promise<IntentOutcome> {
   const started = Date.now();
@@ -100,6 +101,7 @@ export async function runIntentInElectron(
       cwd: runDir,
       messages: () => new Anthropic().beta.messages,
       signal,
+      onActivity,
     });
     await writeFile(join(runDir, 'run.json'), JSON.stringify({ run, outcome, config }, null, 2));
     log(`${RUN_LOG_PREFIX} screenshots and run.json in ${runDir}`);

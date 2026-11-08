@@ -1,7 +1,16 @@
 import type { GazeRegion } from '../../shared/gaze';
 import { runClaudeCode } from './claude-code';
 import { runAgentCheck } from './loop';
-import { STOPPED_ERROR, type AgentCheckResult, type AgentConfig, type Capture, type Execute, type MessagesApi, type ScreenFrame } from './types';
+import {
+  STOPPED_ERROR,
+  type AgentCheckResult,
+  type AgentConfig,
+  type Capture,
+  type Execute,
+  type InputAction,
+  type MessagesApi,
+  type ScreenFrame,
+} from './types';
 
 // Running one chosen Suggested Intent for real (#14, and the base #10 builds on). No electron imports, so tests can load it.
 
@@ -43,6 +52,8 @@ export type RunIntentDeps = {
   // Only called on the API backend, so a Claude Code run never needs ANTHROPIC_API_KEY.
   messages: () => MessagesApi;
   signal: AbortSignal;
+  // Each screenshot and input in a few words, such as "Typing", so the overlay shows what the agent is doing.
+  onActivity: (activity: string) => void;
   // Injected so tests swap the backends for fakes; defaults are runClaudeCode and runAgentCheck.
   backends?: { 'claude-code'?: typeof runClaudeCode; api?: typeof runAgentCheck };
 };
@@ -57,9 +68,20 @@ export function intentGoal(run: Pick<IntentRun, 'intent' | 'region' | 'frame'>):
     `They chose it while looking at about (${x}, ${y}), within about ${radius} pixels, in the ${frame.imageWidth} x ${frame.imageHeight} screenshot. "This" or "that" in the Intent means what is there.`,
     'For a video: click its thumbnail or title once. "A related video" means one from the recommendations beside or below the player, not the one playing.',
     'For an ad: click "Skip" or "Skip ad" if it is shown; if a countdown is shown, wait for it (at most 10 seconds) and then click it. If no ad is playing, stop.',
+    'For an essay or document: click in its text, press cmd+down to put the cursor at the very end, and read what is written on screen. ' +
+      'Then type one paragraph of about 80 to 120 words that continues it, in the same voice, tense and language, starting with a space or a new line as fits. ' +
+      'Never change or delete text that is already there.',
     "Don't scroll, search or browse further than the Intent needs. Never sign in, enter passwords, subscribe, buy or accept anything; stop instead.",
     'Take one screenshot to check, then reply with one short sentence starting "Done:" if it worked or "Failed:" if not.',
   ].join('\n');
+}
+
+function activityOf(action: InputAction): string {
+  if (action.type === 'click') return 'Clicking';
+  if (action.type === 'move') return 'Moving the pointer';
+  if (action.type === 'scroll') return 'Scrolling';
+  if (action.type === 'type') return 'Typing';
+  return `Pressing ${action.keys}`;
 }
 
 const clip = (text: string) => (text.length > SUMMARY_MAX_CHARS ? `${text.slice(0, SUMMARY_MAX_CHARS - 1)}…` : text);
@@ -85,7 +107,10 @@ export async function runIntent(run: IntentRun, config: AgentConfig, deps: RunIn
       outcome = readOutcome({ ok: false, finalText: '', error: STOPPED_ERROR });
     } else {
       const options = { goal: intentGoal(run), model: config.model, effort: config.effort, maxSteps: Math.max(config.maxSteps, INTENT_MIN_STEPS) };
-      const { capture, execute, sleep } = deps;
+      const { sleep, onActivity } = deps;
+      // Both backends act only through these two, so wrapping them reports every step of either.
+      const capture: Capture = () => (onActivity('Looking at the screen'), deps.capture());
+      const execute: Execute = (action) => (onActivity(activityOf(action)), deps.execute(action));
       const result =
         config.backend === 'claude-code'
           ? await (deps.backends?.['claude-code'] ?? runClaudeCode)(options, {

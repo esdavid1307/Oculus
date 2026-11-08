@@ -821,7 +821,7 @@ describe('Suggested Intents', () => {
     const { session, actions } = choosing();
     session(tick(9000));
     expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
-    expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause' });
+    expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
     expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2 });
   });
 
@@ -940,8 +940,32 @@ describe('Running an Intent', () => {
 
   it('asks the agent to run the chosen Intent on its target, with the next request number', () => {
     const { session, actions } = reach('choosing');
-    expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad' });
+    expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad', activity: '' });
     expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2 });
+  });
+
+  it('shows what the agent is doing during its run', () => {
+    const { session } = reach('running');
+    expect(session({ type: 'run-progress', t: 5500, request: 2, activity: 'Typing' })).toEqual({
+      phase: 'running',
+      wakeProgress: 0,
+      intent: 'Skip the ad',
+      activity: 'Typing',
+    });
+    expect(session(tick(5600))).toMatchObject({ phase: 'running', activity: 'Typing' });
+  });
+
+  it('ignores progress from another run, or when none is running', () => {
+    const progress = (t: number, request: number) => ({ type: 'run-progress', t, request, activity: 'Clicking' }) as const;
+    const { session } = reach('running');
+    expect(session(progress(5500, 1))).toMatchObject({ activity: '' });
+    expect(session(progress(5600, 3))).toMatchObject({ activity: '' });
+    session(finish(6000));
+    expect(session(progress(6100, 2))).toEqual({ phase: 'finished', wakeProgress: 0, intent: 'Skip the ad', ok: true, summary: 'Skipped the ad.' });
+    const stopped = reach('running');
+    stopped.session(gaze(6000, offScreen));
+    stopped.session(gaze(11_000, offScreen));
+    expect(stopped.session(progress(11_100, 2))).toEqual({ phase: 'idle', wakeProgress: 0 });
   });
 
   it('shows the result when the run finishes', () => {
