@@ -240,6 +240,7 @@ function createWordPrediction(enabled: boolean) {
   const predictor = createPredictor(spokenEnglish as BaseWords, readWordModel(saved));
   return {
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
+    suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
@@ -314,6 +315,21 @@ function typeText(text: string) {
   });
 }
 
+// Whether the box the text just went into is a password field, whose text must never be remembered. Checked on the
+// focused element's subrole. If it can't be read, that counts as secure: not learning is the safe mistake.
+const FOCUSED_SUBROLE = `const events = Application('System Events');
+const focused = events.processes.whose({ frontmost: true })[0].attributes.byName('AXFocusedUIElement').value();
+let subrole = '';
+try { subrole = focused.attributes.byName('AXSubrole').value() || ''; } catch (error) {}
+subrole`;
+
+function isSecureField(done: (secure: boolean) => void) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], (error, stdout) => {
+    if (error) console.warn('Could not tell whether the field is a password field, so not learning:', error.message);
+    done(error !== null || stdout.trim() === 'AXSecureTextField');
+  });
+}
+
 // Runs never overlap: two would fight over the same cursor.
 let running = false;
 // The Intent run in progress, so the Stop Gesture and quitting can abort it.
@@ -384,11 +400,14 @@ function createOverlay() {
       typeText(action.text);
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
       // A failed save must not stop the text being typed, so it only warns.
-      try {
-        words.learn(action.text);
-      } catch (error) {
-        console.warn('Could not save word prediction:', error);
-      }
+      isSecureField((secure) => {
+        if (secure) return;
+        try {
+          words.learn(action.text);
+        } catch (error) {
+          console.warn('Could not save word prediction:', error);
+        }
+      });
     } else if (action.type === 'suggest-intents') {
       const context = readContext(perSite);
       contexts.set(action.request, context);
@@ -460,6 +479,7 @@ function createOverlay() {
     timings: settings,
     act: perform,
     suggest: words.suggest,
+    suggestPhrase: words.suggestPhrase,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
