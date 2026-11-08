@@ -1,7 +1,7 @@
 import type { Sample } from '../gaze-check/score';
 import { createTracker } from '../gaze-check/iris-tracker';
 import { calibrate, wait } from '../gaze-check/tracker';
-import type { GazeEvent } from '../shared/gaze';
+import type { SessionInput } from '../shared/session';
 import { createGazeSource } from './gaze-source';
 
 const GET_IN_FRAME_MS = 5000;
@@ -17,7 +17,7 @@ function placeDot(x: number, y: number) {
   dot.style.top = `${y}px`;
 }
 
-export async function startCameraGaze(send: (event: GazeEvent) => void) {
+export async function startCameraGaze(send: (input: SessionInput) => void) {
   let onSample: (sample: Sample) => void = () => {};
   let lastSampleAt = Date.now();
   const tracker = await createTracker((sample) => {

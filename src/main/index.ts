@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
-import type { GazeEvent } from '../shared/gaze';
 import { createSession, type AgentAction, type SessionInput } from '../shared/session';
 import { runAgentCheckInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
@@ -19,6 +18,8 @@ const MOUSE_SAMPLE_MS = 33;
 const MOUSE_REGION_RADIUS = 60;
 // shortcut: opens the Gaze Keyboard until #13 opens it from a text box target.
 const DEV_OPEN_KEYBOARD_SHORTCUT = 'CommandOrControl+Shift+K';
+// The mouse can't blink, so this stands in for the Select Blink.
+const DEV_SELECT_SHORTCUT = 'CommandOrControl+Shift+Space';
 // shortcut: runs one agent check on Chrome until the Intent flow exists.
 const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
 // Time for the Centre Box to be drawn before the first screenshot.
@@ -98,9 +99,12 @@ function createOverlay() {
       }, MOUSE_SAMPLE_MS),
     );
   } else {
-    ipcMain.on('gaze', (_event, gaze: GazeEvent) => advance(gaze));
+    ipcMain.on('gaze', (_event, input: SessionInput) => advance(input));
   }
-  if (!app.isPackaged) globalShortcut.register(DEV_OPEN_KEYBOARD_SHORTCUT, () => advance({ type: 'open-keyboard', t: Date.now() }));
+  if (!app.isPackaged) {
+    globalShortcut.register(DEV_OPEN_KEYBOARD_SHORTCUT, () => advance({ type: 'open-keyboard', t: Date.now() }));
+    if (useMouse) globalShortcut.register(DEV_SELECT_SHORTCUT, () => advance({ type: 'select', t: Date.now() }));
+  }
   overlay.on('closed', () => timers.forEach(clearInterval));
   return overlay;
 }

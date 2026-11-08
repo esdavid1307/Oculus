@@ -1,11 +1,10 @@
-import type { GazeEvent } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
 import { layoutKeyboard } from '../shared/keyboard';
-import type { OverlayState } from '../shared/session';
+import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
   interface Window {
-    overlay: { onState(listener: (state: OverlayState) => void): void; sendGaze(event: GazeEvent): void };
+    overlay: { onState(listener: (state: OverlayState) => void): void; sendGaze(input: SessionInput): void };
   }
 }
 
@@ -59,16 +58,15 @@ function showKeys(group: string | null) {
 let lastPhase: OverlayState['phase'] = 'idle';
 let litKey: HTMLElement | undefined;
 
-function showKeyboard({ text, group, dwell }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
   if (group !== shownGroup) showKeys(group);
-  const element = dwell ? keyElements.get(dwell.key) : undefined;
-  if (litKey !== element) litKey?.style.removeProperty('--dwell');
-  element?.style.setProperty('--dwell', String(dwell?.progress ?? 0));
-  litKey = element;
+  litKey?.classList.remove('highlighted');
+  litKey = keyElements.get(highlight);
+  litKey?.classList.add('highlighted');
 }
 
 window.overlay.onState((state) => {
