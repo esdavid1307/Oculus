@@ -1,9 +1,22 @@
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
-import { createSession, type Icon, type SessionInput } from '../shared/session';
+import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
+import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
+import { createCapture } from './agent/capture';
+import { runAgentCheckInElectron } from './agent/check';
+import { readAgentConfig } from './agent/config';
+import { suggestIntents } from './agent/intents';
+import spokenEnglish from './words/spoken-english.json';
+
+// Holds ANTHROPIC_API_KEY and the OCULUS_AGENT_* settings. Loaded before anything reads process.env.
+try {
+  process.loadEnvFile(join(app.getAppPath(), '.env'));
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Ignoring .env:', error);
+}
 
 const TICK_MS = 100;
 const MOUSE_SAMPLE_MS = 33;
@@ -17,6 +30,10 @@ const DEV_SELECT_SHORTCUT = 'CommandOrControl+Shift+Space';
 // The overlay ignores clicks and has no menu, so this is the only way to quit besides the terminal.
 // Not Cmd+Shift+Q, which is macOS's Log Out.
 const QUIT_SHORTCUT = 'CommandOrControl+Alt+Q';
+// shortcut: runs one agent check on Chrome until the Intent flow exists.
+const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
+// Time for the Centre Box to be drawn before the first screenshot.
+const OVERLAY_DRAW_MS = 1000;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 
@@ -197,6 +214,28 @@ function openIcon(source: 'dock' | 'desktop', name: string) {
   });
 }
 
+// The user's own words and the ranker's weights. Typed words only, kept on this machine.
+function createWordPrediction(enabled: boolean) {
+  const file = join(app.getPath('userData'), 'word-model.json');
+  let saved: unknown;
+  try {
+    saved = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Starting word prediction fresh, ignoring ${file}:`, error);
+  }
+  const predictor = createPredictor(spokenEnglish as BaseWords, readWordModel(saved));
+  return {
+    suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
+    learn(text: string) {
+      if (!enabled) return;
+      predictor.learn(text);
+      // Write then rename, so a crash mid-write never leaves a half file that would start the model fresh.
+      writeFileSync(`${file}.tmp`, JSON.stringify(predictor.model()));
+      renameSync(`${file}.tmp`, file);
+    },
+  };
+}
+
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
 // shortcut: types through System Events, which needs the Accessibility permission. #6 may replace this.
 function typeText(text: string) {
@@ -207,6 +246,20 @@ function typeText(text: string) {
     clipboard.writeText(text);
     console.error('Could not type the Gaze Keyboard text, so it is on the clipboard:', error.message);
   });
+}
+
+// Runs never overlap: two would fight over the same cursor.
+let running = false;
+async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'shortcut') {
+  const config = readAgentConfig(process.env, trigger);
+  if (!config || running) return;
+  running = true;
+  try {
+    const result = await runAgentCheckInElectron(overlay, config);
+    if (config.quitWhenDone) app.exit(result.ok ? 0 : 1);
+  } finally {
+    running = false;
+  }
 }
 
 function createOverlay() {
@@ -240,24 +293,49 @@ function createOverlay() {
     readMenuBar(bounds, (read) => (icons.menubar = read));
   };
   refreshIcons();
+  const settings = readTimingsFile();
+  // On unless config.json says "wordPrediction": false.
+  const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
+  const perform = (action: AgentAction) => {
+    if (action.type === 'type-text') {
+      typeText(action.text);
+      // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
+      // A failed save must not stop the text being typed, so it only warns.
+      try {
+        words.learn(action.text);
+      } catch (error) {
+        console.warn('Could not save word prediction:', error);
+      }
+    } else if (action.type === 'suggest-intents') {
+      // A fresh capture each time, so the one screenshot on disk is always shot-1.png, overwritten by the next request.
+      const capture = createCapture({
+        overlay,
+        display: screen.getPrimaryDisplay(),
+        saveDir: join(app.getPath('userData'), 'intents'),
+        hideOverlay: true,
+      });
+      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture).then((intents) =>
+        advance({ type: 'intents', t: Date.now(), request: action.request, intents }),
+      );
+    } else if (action.type === 'run-intent') console.log('Run the Intent, once #10 is built:', action.intent);
+    // The Dock moves when it shows, so it is read again for the scan.
+    else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
+    else if (action.type === 'release-dock') releaseDock();
+    else if (action.type === 'close-menu') {
+      if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
+      openMenu = null;
+    } else if (action.source === 'menubar')
+      openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
+    else if (action.source === 'menu') {
+      openMenu = null;
+      runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
+    } else openIcon(action.source, action.name);
+  };
   const session = createSession({
     screen: bounds,
-    timings: readTimingsFile(),
-    // The Dock moves when it shows, so it is read again for the scan.
-    act: (action) => {
-      if (action.type === 'show-dock') showDock(bounds, refreshIcons);
-      else if (action.type === 'release-dock') releaseDock();
-      else if (action.type === 'type-text') typeText(action.text);
-      else if (action.type === 'close-menu') {
-        if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
-        openMenu = null;
-      } else if (action.source === 'menubar')
-        openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
-      else if (action.source === 'menu') {
-        openMenu = null;
-        runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
-      } else openIcon(action.source, action.name);
-    },
+    timings: settings,
+    act: perform,
+    suggest: words.suggest,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
@@ -274,7 +352,10 @@ function createOverlay() {
       }, MOUSE_SAMPLE_MS),
     );
   } else {
-    ipcMain.on('gaze', (_event, input: SessionInput) => advance(input));
+    // The overlay page only sends gaze and Select Blinks. A model answer must never come from it.
+    ipcMain.on('gaze', (_event, input: SessionInput) => {
+      if (input?.type === 'gaze' || input?.type === 'select') advance(input);
+    });
   }
   if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);
   if (!app.isPackaged) {
@@ -282,11 +363,15 @@ function createOverlay() {
     if (useMouse) globalShortcut.register(DEV_SELECT_SHORTCUT, () => advance({ type: 'select', t: Date.now() }));
   }
   overlay.on('closed', () => timers.forEach(clearInterval));
+  return overlay;
 }
 
 app.whenReady().then(async () => {
   // A refusal shows up as a camera error on the overlay.
   if (!useMouse) await systemPreferences.askForMediaAccess('camera');
-  createOverlay();
+  const overlay = createOverlay();
+  if (app.isPackaged) return;
+  globalShortcut.register(DEV_AGENT_CHECK_SHORTCUT, () => void runAgentCheckOnce(overlay, 'shortcut'));
+  overlay.webContents.once('did-finish-load', () => setTimeout(() => void runAgentCheckOnce(overlay, 'env'), OVERLAY_DRAW_MS));
 });
 app.on('will-quit', () => globalShortcut.unregisterAll());

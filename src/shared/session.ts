@@ -1,10 +1,12 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutKeyboard, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, SUGGESTION_KEY, type KeyId } from './keyboard';
 
 export type OverlayState =
-  | { phase: 'idle' | 'waiting-for-target'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId }
+  | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
+  | { phase: 'running'; wakeProgress: number; intent: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon };
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
@@ -19,15 +21,30 @@ export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
 export type SessionInput =
   | GazeEvent
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
+  // The model's answer to the suggest-intents request with the same number.
+  | { type: 'intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] };
 
 // Requests for the outside world. The session core never acts on the OS itself.
-export type AgentAction = { type: 'type-text'; text: string } | { type: 'open-icon'; source: IconSource; name: string } | { type: 'show-dock' } | { type: 'release-dock' } | { type: 'close-menu' };
+export type AgentAction =
+  | { type: 'type-text'; text: string }
+  // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
+  | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
+  | { type: 'run-intent'; intent: string }
+  | { type: 'open-icon'; source: IconSource; name: string }
+  | { type: 'show-dock' }
+  | { type: 'release-dock' }
+  | { type: 'close-menu' };
+
+// Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
+export type Suggest = (text: string) => string[];
+
+const MAX_INTENTS = 3;
 
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
 const HOLD_GRACE_MS = 500;
 
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, iconHoldMs: 3000 };
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, iconHoldMs: 3000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 
@@ -41,6 +58,7 @@ function parseTimings(raw: unknown): Timings {
     wakeHoldMs: timing('wakeHoldMs'),
     lookAwayMs: timing('lookAwayMs'),
     scanStepMs: timing('scanStepMs'),
+    targetHoldMs: timing('targetHoldMs'),
     iconHoldMs: timing('iconHoldMs'),
   };
 }
@@ -88,6 +106,7 @@ export function createSession({
   screen,
   timings,
   act = () => {},
+  suggest = () => [],
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
@@ -95,13 +114,14 @@ export function createSession({
   screen: Screen;
   timings?: unknown;
   act?: (action: AgentAction) => void;
+  suggest?: Suggest;
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
   // The menus of the app in front, then the status items.
   menubar?: () => Icon[];
 }) {
-  const { wakeHoldMs, lookAwayMs, scanStepMs, iconHoldMs } = parseTimings(timings);
+  const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar };
   const distance = (region: GazeRegion | null, from: 'dock' | 'desktop' | 'menubar') =>
     from === 'menubar' ? menuBarDistance(region, menubar(), screen) : iconDistance(region, iconsOf[from](), screen);
@@ -111,12 +131,24 @@ export function createSession({
   let holdStart: number | null = null;
   let wakeProgress = 0;
   let awaySince: number | null = null;
+  // The Gaze Region where the user started holding on a target after waking.
+  let target: { region: GazeRegion; start: number } | null = null;
+  // The wake hold ends on the Centre Box, so a target hold only starts after a Move Off from it.
+  let movedOffCentreBox = false;
   let text = '';
   let group: string | null = null;
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
   let scanStart = 0;
   let highlight: KeyId = '';
-  // seen is when the gaze was last near the held target.
+  let suggestions: string[] = [];
+  let intents: string[] = [];
+  // The target the model was asked about and what was turned down there, so Something else can ask again.
+  let asked: GazeRegion | null = null;
+  let turnedDown: string[] = [];
+  // Numbers each request, so a late answer to an earlier one is dropped.
+  let request = 0;
+  let intent = '';
+  // seen is when the gaze was last near the held icon target.
   let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
   let dockShown = false;
@@ -125,11 +157,12 @@ export function createSession({
   let icons: Icon[] = [];
   let iconHighlight: Icon | undefined;
 
+  // Suggested Intents and icons scan the same way as the Gaze Keyboard.
   function scan(t: number) {
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const { keys } = layoutKeyboard(screen, group);
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents) : layoutKeyboard(screen, group, suggestions).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -146,18 +179,45 @@ export function createSession({
     scan(t);
   }
 
+  // Looking near the Dock, the menu bar or a Desktop icon for 3 seconds sticks to it, and the scan steps through all
+  // of its icons. Where two are near, as with a Desktop icon just under the menu bar, the closer one wins.
+  // Returns whether an icon hold is going, which then takes the place of a target hold.
+  function holdIcons(region: GazeRegion | null, t: number) {
+    const nearest = (['dock', 'menubar', 'desktop'] as const)
+      .filter((from) => near(region, from))
+      .sort((a, b) => distance(region, a) - distance(region, b))[0];
+    // Other apps can hide the Dock just past the bottom edge, so looking down starts a hold on it. Asks for it to
+    // show, as the mouse would. Whether it's hidden right now is checked on the spot, outside the session.
+    if (iconHold !== null && nearest === iconHold.source) iconHold.seen = t;
+    else if (iconHold === null || t - iconHold.seen > HOLD_GRACE_MS) {
+      if (nearest === 'dock' && !dockShown) {
+        act({ type: 'show-dock' });
+        dockShown = true;
+      }
+      iconHold = nearest === undefined ? null : { source: nearest, start: t, seen: t };
+    }
+    if (iconHold !== null && t - iconHold.start >= iconHoldMs) scanIcons(iconHold.source, iconsOf[iconHold.source](), t);
+    return iconHold !== null;
+  }
+
   function openKeyboard(t: number) {
     phase = 'typing';
     holdStart = null;
     wakeProgress = 0;
     text = '';
     group = null;
+    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
     scanStart = t;
     scan(t);
   }
 
   function press(key: KeyId) {
-    if (GROUPS.includes(key)) group = key;
+    if (phase === 'choosing') choose(key);
+    else if (key.startsWith(SUGGESTION_KEY)) {
+      // The word replaces the letters typed so far, and the space after it is free.
+      text = text.replace(/[a-z]*$/, '') + key.slice(SUGGESTION_KEY.length) + ' ';
+      group = null;
+    } else if (GROUPS.includes(key)) group = key;
     else if (key === 'back') group = null;
     else if (key === 'delete') text = text.slice(0, -1);
     else if (key === 'space') text += ' ';
@@ -170,8 +230,40 @@ export function createSession({
     }
   }
 
+  function suggestIntents(region: GazeRegion, passedOver: string[]) {
+    asked = region;
+    turnedDown = passedOver;
+    act({ type: 'suggest-intents', region, request: ++request, turnedDown });
+    phase = 'thinking';
+  }
+
+  function choose(key: KeyId) {
+    if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
+    intent = intents[Number(key.replace('intent-', ''))];
+    act({ type: 'run-intent', intent });
+    phase = 'running';
+  }
+
+  function holdTarget(region: GazeRegion | null, t: number) {
+    if (region === null || offScreen(region, screen)) {
+      target = null;
+      return;
+    }
+    if (!onCentreBox(region, screen)) movedOffCentreBox = true;
+    if (!movedOffCentreBox) return;
+    // Jitter inside the first Gaze Region still counts as the same target.
+    const moved = target && Math.hypot(region.x - target.region.x, region.y - target.region.y) > target.region.radius;
+    if (target === null || moved) target = { region, start: t };
+    if (t - target.start >= targetHoldMs) {
+      suggestIntents(target.region, []);
+      target = null;
+    }
+  }
+
   function state(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight };
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
+    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
+    if (phase === 'running') return { phase, wakeProgress, intent };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     return { phase, wakeProgress };
   }
@@ -179,6 +271,13 @@ export function createSession({
   return (input: SessionInput): OverlayState => {
     if (input.type === 'open-keyboard') {
       if (phase !== 'typing') openKeyboard(input.t);
+    } else if (input.type === 'intents') {
+      if (phase === 'thinking' && input.request === request) {
+        phase = 'choosing';
+        intents = input.intents.slice(0, MAX_INTENTS);
+        scanStart = input.t;
+        scan(input.t);
+      }
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
@@ -198,13 +297,10 @@ export function createSession({
         if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
         phase = 'idle';
         awaySince = null;
-      } else if (phase === 'typing') {
-        scan(input.t);
-        if (input.type === 'select') {
-          press(highlight);
-          scanStart = input.t;
-          scan(input.t);
-        }
+      } else if (phase === 'waiting-for-target' && input.type === 'gaze') {
+        // An icon hold wins, so the shorter target hold can't fire on the way to the Dock.
+        if (holdIcons(input.region, input.t)) target = null;
+        else holdTarget(input.region, input.t);
       } else if (phase === 'icons') {
         scan(input.t);
         if (input.type === 'select') {
@@ -215,23 +311,14 @@ export function createSession({
           // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
         }
-      } else if (input.type === 'gaze') {
-        // Looking near the Dock, the menu bar or a Desktop icon for 3 seconds sticks to it, and the scan steps through
-        // all of its icons. Where two are near, as with a Desktop icon just under the menu bar, the closer one wins.
-        const target = (['dock', 'menubar', 'desktop'] as const)
-          .filter((from) => near(input.region, from))
-          .sort((a, b) => distance(input.region, a) - distance(input.region, b))[0];
-        // Other apps can hide the Dock just past the bottom edge, so looking down starts a hold on it. Asks for it to
-        // show, as the mouse would. Whether it's hidden right now is checked on the spot, outside the session.
-        if (iconHold !== null && target === iconHold.source) iconHold.seen = input.t;
-        else if (iconHold === null || input.t - iconHold.seen > HOLD_GRACE_MS) {
-          if (target === 'dock' && !dockShown) {
-            act({ type: 'show-dock' });
-            dockShown = true;
-          }
-          iconHold = target === undefined ? null : { source: target, start: input.t, seen: input.t };
+      } else if (phase === 'typing' || phase === 'choosing') {
+        scan(input.t);
+        if (input.type === 'select') {
+          press(highlight);
+          if (phase === 'typing') suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+          scanStart = input.t;
+          scan(input.t);
         }
-        if (iconHold !== null && input.t - iconHold.start >= iconHoldMs) scanIcons(iconHold.source, iconsOf[iconHold.source](), input.t);
       }
     } else if (input.type === 'gaze') {
       if (onCentreBox(input.region, screen)) {
@@ -246,6 +333,9 @@ export function createSession({
         iconHold = null;
         holdStart = null;
         wakeProgress = 0;
+        // A target hold cut short last time, for example by the Gaze Keyboard, must not carry over.
+        target = null;
+        movedOffCentreBox = false;
       }
     }
     // Leaving the Dock without opening anything takes the focus off it, so the app that hid it hides it again.
