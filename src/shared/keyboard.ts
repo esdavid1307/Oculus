@@ -57,9 +57,12 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null, 
 
 // Suggested Intents fill a 2 x 2 grid over the whole screen. Something else always takes the last cell,
 // so it stays put when fresh suggestions arrive.
-export function layoutIntents({ width, height }: Screen, intents: string[]): Key[] {
+// With past Intents the grid is 2 x 3 from the start, since 2 past plus 3 from Claude need 5 cells and a grid
+// that grew later would move everything on screen.
+export function layoutIntents({ width, height }: Screen, intents: string[], cells: 4 | 6 = 4): Key[] {
+  const rows = cells / 2;
   const cellWidth = (width - GAP) / 2;
-  const cellHeight = (height - GAP) / 2;
+  const cellHeight = (height - (rows - 1) * GAP) / rows;
   const cell = (index: number) => ({
     x: (index % 2) * (cellWidth + GAP),
     y: Math.floor(index / 2) * (cellHeight + GAP),
@@ -68,6 +71,6 @@ export function layoutIntents({ width, height }: Screen, intents: string[]): Key
   });
   return [
     ...intents.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
-    { id: 'something-else', label: 'Something else', rect: cell(3) },
+    { id: 'something-else', label: 'Something else', rect: cell(cells - 1) },
   ];
 }

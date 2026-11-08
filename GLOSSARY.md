@@ -20,6 +20,10 @@ _Avoid_: Prediction, guess
 The seconds from the Start Gesture waking the agent to the chosen Intent starting. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
 _Avoid_: Latency, response time
 
+**Intent History**:
+The Intents this user chose before that ran ok, kept per app on this machine. Up to 2 of the usual ones for the app in front show at once when a target is picked, and Claude's Suggested Intents are added after them without moving anything. "Skip the ad" is never kept.
+_Avoid_: Memory, favourites
+
 **Gaze Keyboard**:
 The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
 _Avoid_: Virtual keyboard, typing mode

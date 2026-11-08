@@ -99,7 +99,7 @@ window.overlay.onState((state) => {
   if (state.phase === 'typing') showKeyboard(state);
   if (state.phase === 'icons') place(iconHighlight, state.highlight.rect);
   if (state.phase === 'choosing') {
-    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
+    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells));
     highlightKey(state.highlight);
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;

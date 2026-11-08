@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import type { GazeRegion } from '../../shared/gaze';
+import { isSkipAd } from '../../shared/skip-ad';
 import { DENIED_TOOLS } from './claude-code';
 import { AGENT_MAX_TOKENS, FALLBACK_BETA, LOG_PREFIX, type AgentConfig, type Capture, type ScreenFrame, type Screenshot } from './types';
 
@@ -44,8 +45,6 @@ export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown
   );
 }
 
-const SKIP_AD = /\bskip\b.*\bads?\b/i;
-
 // Anything unreadable gives no intents, and the user can still choose Something else.
 export function parseIntents(reply: string, turnedDown: string[] = []): string[] {
   const json = reply.match(/\{[\s\S]*\}/)?.[0];
@@ -58,7 +57,7 @@ export function parseIntents(reply: string, turnedDown: string[] = []): string[]
     const texts = intents.flatMap((intent) => (typeof intent === 'string' && intent.trim() ? [intent.trim()] : []));
     const unique = texts.filter((text) => !seen.has(text.toLowerCase()) && seen.add(text.toLowerCase()));
     // Cheap local guarantee that skipping an ad is offered first, even if the model buried it.
-    const skip = unique.findIndex((text) => SKIP_AD.test(text));
+    const skip = unique.findIndex((text) => isSkipAd(text));
     if (skip > 0) unique.unshift(...unique.splice(skip, 1));
     return unique.slice(0, MAX_INTENTS);
   } catch {
