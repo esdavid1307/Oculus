@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createIntentHistory, emptyIntentHistory, parseIntentRanker, readIntentHistory } from './intent-history';
+import { createIntentHistory, emptyIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from './intent-history';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -155,5 +155,34 @@ describe('neural ranker', () => {
     const history = createIntentHistory();
     for (let i = 0; i < 5; i++) history.learn('Notes', 'a', i);
     expect(history.model().ranker).toEqual(emptyIntentHistory().ranker);
+  });
+});
+
+describe('historyContext', () => {
+  it('is the app plus the domain in a browser', () => {
+    expect(historyContext('Google Chrome', 'https://www.youtube.com/watch?v=1')).toBe('Google Chrome · youtube.com');
+    expect(historyContext('Safari', 'https://mail.google.com/mail/u/0/#inbox')).toBe('Safari · mail.google.com');
+    expect(historyContext('Safari', 'http://Example.com:8080/x')).toBe('Safari · example.com');
+  });
+
+  it('is the app alone when the site can not be read', () => {
+    for (const url of [undefined, null, '', 'not a url', 'chrome://newtab/', 'file:///Users/a/b.html', 'about:blank']) {
+      expect(historyContext('Google Chrome', url)).toBe('Google Chrome');
+    }
+  });
+
+  it('is the app alone outside Chrome and Safari', () => {
+    expect(historyContext('Mail', 'https://www.youtube.com')).toBe('Mail');
+  });
+
+  it('keeps app plus site and the app alone as separate histories', () => {
+    const history = createIntentHistory();
+    history.learn(historyContext('Google Chrome', 'https://youtube.com/watch'), 'Pause', 1);
+    history.learn(historyContext('Google Chrome', 'https://mail.google.com'), 'Reply', 1);
+    history.learn(historyContext('Google Chrome', null), 'Scroll down', 1);
+    expect(history.suggest(historyContext('Google Chrome', 'https://www.youtube.com/'))).toEqual(['Pause']);
+    expect(history.suggest(historyContext('Google Chrome', 'https://mail.google.com/x'))).toEqual(['Reply']);
+    expect(history.suggest(historyContext('Google Chrome', null))).toEqual(['Scroll down']);
+    expect(history.suggest(historyContext('Google Chrome', 'https://example.com'))).toEqual([]);
   });
 });

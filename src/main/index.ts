@@ -3,7 +3,7 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
-import { createIntentHistory, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
+import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
 import { createCapture } from './agent/capture';
@@ -260,13 +260,26 @@ function createHistory(ranker: unknown) {
   };
 }
 
-// The app in front. The overlay never takes focus, so this is the app the user is looking at.
-// shortcut: System Events through osascript. Any failure gives '', which means no history for this request.
-function readContext(): Promise<string> {
-  const script = 'Application("System Events").processes.whose({frontmost: true})[0].name()';
+// Runs a JXA one-liner. Any failure, including a denied Automation permission, gives '' and never reaches the user.
+function jxa(script: string): Promise<string> {
   return new Promise((resolve) => {
     execFile('osascript', ['-l', 'JavaScript', '-e', script], { timeout: 3000 }, (error, stdout) => resolve(error ? '' : stdout.trim()));
   });
+}
+
+// How to read the URL of the front tab, per browser.
+const FRONT_TAB_URL: Record<string, string> = {
+  'Google Chrome': 'Application("Google Chrome").windows[0].activeTab.url()',
+  Safari: 'Application("Safari").documents[0].url()',
+};
+
+// The app in front, plus the site in a browser. The overlay never takes focus, so this is what the user is looking at.
+// shortcut: System Events and the browsers through osascript. A site that can't be read gives the app alone, and an
+// app that can't be read gives '', which means no history for this request.
+async function readContext(): Promise<string> {
+  const name = await jxa('Application("System Events").processes.whose({frontmost: true})[0].name()');
+  const script = FRONT_TAB_URL[name];
+  return historyContext(name, script ? await jxa(script) : undefined);
 }
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.

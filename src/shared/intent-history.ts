@@ -59,6 +59,22 @@ function freshRanker(seed = 11): Ranker {
   };
 }
 
+// The history context: the app, plus ` · <domain>` for a browser whose front tab's URL could be read.
+// A missing, odd or non-web URL gives the app alone, so history keeps working without the site.
+export function historyContext(app: string, url?: string | null): string {
+  if (!BROWSERS.includes(app) || !url) return app;
+  try {
+    const { protocol, hostname } = new URL(url);
+    const domain = hostname.toLowerCase().replace(/^www\./, '');
+    return (protocol === 'https:' || protocol === 'http:') && domain !== '' ? `${app} · ${domain}` : app;
+  } catch {
+    return app;
+  }
+}
+
+// The browsers whose front tab Oculus knows how to read.
+export const BROWSERS = ['Google Chrome', 'Safari'];
+
 export function emptyIntentHistory(): IntentHistoryModel {
   return { version: 1, contexts: table(), ranker: freshRanker() };
 }
