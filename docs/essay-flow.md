@@ -34,7 +34,7 @@ Write down how long it took and whether any characters were dropped.
 
 ## Stopping a run
 
-Look away from the screen for 5 seconds. The run is aborted and the agent goes straight to sleep. In a dev run, Cmd+Shift+L toggles Look Away.
+Look away from the screen for 5 seconds (the Stop Gesture). The run stops and the agent goes straight to sleep. In a dev run, Cmd+Shift+L toggles Look Away.
 
 ## What to look for in the log
 
