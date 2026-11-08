@@ -192,8 +192,10 @@ Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13
 Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000 }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "wordPrediction": true }
 ```
+
+The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.
 
 ## Hackathon Demo
 

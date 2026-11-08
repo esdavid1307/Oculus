@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
+import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type SessionInput } from '../shared/session';
+import spokenEnglish from './words/spoken-english.json';
 
 const TICK_MS = 100;
 const MOUSE_SAMPLE_MS = 33;
@@ -21,6 +23,26 @@ function readTimingsFile(): unknown {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Ignoring ${file}:`, error);
   }
+}
+
+// The user's own words and the ranker's weights. Typed words only, kept on this machine.
+function createWordPrediction(enabled: boolean) {
+  const file = join(app.getPath('userData'), 'word-model.json');
+  let saved: unknown;
+  try {
+    saved = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Starting word prediction fresh, ignoring ${file}:`, error);
+  }
+  const predictor = createPredictor(spokenEnglish as BaseWords, readWordModel(saved));
+  return {
+    suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
+    learn(text: string) {
+      if (!enabled) return;
+      predictor.learn(text);
+      writeFileSync(file, JSON.stringify(predictor.model()));
+    },
+  };
 }
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
@@ -59,7 +81,15 @@ function createOverlay() {
   if (process.env.ELECTRON_RENDERER_URL) overlay.loadURL(process.env.ELECTRON_RENDERER_URL + search);
   else overlay.loadFile(join(__dirname, '../renderer/index.html'), { search });
 
-  const session = createSession({ screen: bounds, timings: readTimingsFile(), act: perform });
+  const settings = readTimingsFile();
+  // On unless config.json says "wordPrediction": false.
+  const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
+  // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
+  const act = (action: AgentAction) => {
+    words.learn(action.text);
+    perform(action);
+  };
+  const session = createSession({ screen: bounds, timings: settings, act, suggest: words.suggest });
   const advance = (input: SessionInput) => overlay.webContents.send('overlay-state', session(input));
 
   const timers = [setInterval(() => advance({ type: 'tick', t: Date.now() }), TICK_MS)];

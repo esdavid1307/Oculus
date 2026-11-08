@@ -1,6 +1,6 @@
 import type { Rect, Screen } from './geometry';
 
-// A letter, a group such as 'abcde', or one of 'space', 'delete', 'done' and 'back'.
+// A letter, a group such as 'abcde', a suggested word such as 'word:water', or one of 'space', 'delete', 'done' and 'back'.
 export type KeyId = string;
 
 export type Key = { id: KeyId; label: string; rect: Rect };
@@ -8,6 +8,9 @@ export type Key = { id: KeyId; label: string; rect: Rect };
 export type KeyboardLayout = { text: Rect; keys: Key[] };
 
 export const GROUPS = ['abcde', 'fghij', 'klmno', 'pqrst', 'uvwxyz'];
+
+export const SUGGESTION_KEY = 'word:';
+export const MAX_SUGGESTIONS = 3;
 
 const GAP = 16;
 const COLUMNS = 3;
@@ -20,10 +23,15 @@ const TEXT_HEIGHT = 120;
 //   groups:  ABCDE  FGHIJ   KLMNO        letters:  A  B  C
 //            PQRST  UVWXYZ  Delete                 D  E  .
 //            Space -------  Done                   .  .  Back
-export function layoutKeyboard({ width, height }: Screen, group: string | null): KeyboardLayout {
+//
+// Suggested words take a row of their own above the groups. They come first, so the scan reaches them first.
+export function layoutKeyboard({ width, height }: Screen, group: string | null, suggestions: string[] = []): KeyboardLayout {
+  const shown = group === null ? suggestions.slice(0, MAX_SUGGESTIONS) : [];
+  const offset = shown.length ? COLUMNS : 0;
+  const rows = ROWS + (shown.length ? 1 : 0);
   const top = TEXT_HEIGHT + GAP;
   const cellWidth = (width - (COLUMNS - 1) * GAP) / COLUMNS;
-  const cellHeight = (height - top - (ROWS - 1) * GAP) / ROWS;
+  const cellHeight = (height - top - (rows - 1) * GAP) / rows;
   const cell = (index: number, span = 1) => ({
     x: (index % COLUMNS) * (cellWidth + GAP),
     y: top + Math.floor(index / COLUMNS) * (cellHeight + GAP),
@@ -34,10 +42,11 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null):
   const keys =
     group === null
       ? [
-          ...GROUPS.map((id, i) => ({ id, label: id.toUpperCase(), rect: cell(i) })),
-          { id: 'delete', label: 'Delete', rect: cell(5) },
-          { id: 'space', label: 'Space', rect: cell(6, 2) },
-          { id: 'done', label: 'Done', rect: cell(8) },
+          ...shown.map((word, i) => ({ id: SUGGESTION_KEY + word, label: word, rect: cell(i) })),
+          ...GROUPS.map((id, i) => ({ id, label: id.toUpperCase(), rect: cell(offset + i) })),
+          { id: 'delete', label: 'Delete', rect: cell(offset + 5) },
+          { id: 'space', label: 'Space', rect: cell(offset + 6, 2) },
+          { id: 'done', label: 'Done', rect: cell(offset + 8) },
         ]
       : [
           ...[...group].map((letter, i) => ({ id: letter, label: letter.toUpperCase(), rect: cell(i) })),

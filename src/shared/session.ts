@@ -1,16 +1,19 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Screen } from './geometry';
-import { GROUPS, layoutKeyboard, type KeyId } from './keyboard';
+import { GROUPS, layoutKeyboard, MAX_SUGGESTIONS, SUGGESTION_KEY, type KeyId } from './keyboard';
 
 export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId };
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] };
 
 // A select comes from a Select Blink, which real tracking detects outside the GazeEvent format.
 export type SessionInput = GazeEvent | { type: 'tick' | 'open-keyboard' | 'select'; t: number };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction = { type: 'type-text'; text: string };
+
+// Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
+export type Suggest = (text: string) => string[];
 
 const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000 };
 
@@ -40,10 +43,12 @@ export function createSession({
   screen,
   timings,
   act = () => {},
+  suggest = () => [],
 }: {
   screen: Screen;
   timings?: unknown;
   act?: (action: AgentAction) => void;
+  suggest?: Suggest;
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs } = parseTimings(timings);
   let phase: OverlayState['phase'] = 'idle';
@@ -55,9 +60,12 @@ export function createSession({
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
   let scanStart = 0;
   let highlight: KeyId = '';
+  let suggestions: string[] = [];
+
+  const keyboard = () => layoutKeyboard(screen, group, suggestions);
 
   function scan(t: number) {
-    const { keys } = layoutKeyboard(screen, group);
+    const { keys } = keyboard();
     highlight = keys[Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % keys.length].id;
   }
 
@@ -67,12 +75,17 @@ export function createSession({
     wakeProgress = 0;
     text = '';
     group = null;
+    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
     scanStart = t;
     scan(t);
   }
 
   function press(key: KeyId) {
-    if (GROUPS.includes(key)) group = key;
+    if (key.startsWith(SUGGESTION_KEY)) {
+      // The word replaces the letters typed so far, and the space after it is free.
+      text = text.replace(/[a-z]*$/, '') + key.slice(SUGGESTION_KEY.length) + ' ';
+      group = null;
+    } else if (GROUPS.includes(key)) group = key;
     else if (key === 'back') group = null;
     else if (key === 'delete') text = text.slice(0, -1);
     else if (key === 'space') text += ' ';
@@ -87,7 +100,7 @@ export function createSession({
 
   function state(): OverlayState {
     if (phase !== 'typing') return { phase, wakeProgress };
-    return { phase, wakeProgress, text, group, highlight };
+    return { phase, wakeProgress, text, group, highlight, suggestions };
   }
 
   return (input: SessionInput): OverlayState => {
@@ -103,6 +116,7 @@ export function createSession({
         scan(input.t);
         if (input.type === 'select') {
           press(highlight);
+          if (phase === 'typing') suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
           scanStart = input.t;
           scan(input.t);
         }

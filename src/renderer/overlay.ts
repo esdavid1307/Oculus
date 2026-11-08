@@ -36,13 +36,13 @@ function place(element: HTMLElement, { x, y, width, height }: Rect) {
 const screenSize = { width: innerWidth, height: innerHeight };
 place(typed, layoutKeyboard(screenSize, null).text);
 
-let shownGroup: string | null | undefined;
+let shownKeys: string | undefined;
 let keyElements = new Map<string, HTMLElement>();
 
-function showKeys(group: string | null) {
+function showKeys(group: string | null, suggestions: string[]) {
   keyElements.forEach((element) => element.remove());
   keyElements = new Map(
-    layoutKeyboard(screenSize, group).keys.map(({ id, label, rect }) => {
+    layoutKeyboard(screenSize, group, suggestions).keys.map(({ id, label, rect }) => {
       const element = document.createElement('div');
       element.className = 'key';
       element.dataset.key = id;
@@ -52,18 +52,18 @@ function showKeys(group: string | null) {
       return [id, element];
     }),
   );
-  shownGroup = group;
+  shownKeys = JSON.stringify([group, suggestions]);
 }
 
 let lastPhase: OverlayState['phase'] = 'idle';
 let litKey: HTMLElement | undefined;
 
-function showKeyboard({ text, group, highlight }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  if (group !== shownGroup) showKeys(group);
+  if (JSON.stringify([group, suggestions]) !== shownKeys) showKeys(group, suggestions);
   litKey?.classList.remove('highlighted');
   litKey = keyElements.get(highlight);
   litKey?.classList.add('highlighted');

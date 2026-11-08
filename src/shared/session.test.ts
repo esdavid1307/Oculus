@@ -178,7 +178,7 @@ describe('Gaze Keyboard', () => {
 
   it('opens on the group screen with no text, highlighting the first key', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde' });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [] });
   });
 
   it('moves the highlight to the next key every 2 seconds, and wraps round', () => {
@@ -282,6 +282,73 @@ describe('Gaze Keyboard', () => {
   });
 });
 
+describe('Gaze Keyboard word suggestions', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  // A fake predictor: finishes 'wa' as water, and suggests 'please' after 'water '.
+  const suggest = (text: string) => (text.endsWith('wa') ? ['water', 'want', 'was'] : text.endsWith('water ') ? ['please', 'now'] : ['i', 'you', 'the']);
+
+  const typing = () => {
+    const actions: AgentAction[] = [];
+    const asked: string[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), suggest: (text) => (asked.push(text), suggest(text)) });
+    let state = session({ type: 'open-keyboard', t: 0 });
+    let t = 0;
+    const press = (id: string) => {
+      const start = t;
+      while (state.phase === 'typing' && state.highlight !== id) {
+        if (t - start > 60_000) throw new Error(`the scan never reached ${id}`);
+        state = session(tick((t += 100)));
+      }
+      return (state = session(select(t)));
+    };
+    const type = (...ids: string[]) => {
+      for (const id of ids) {
+        if (id.length === 1) press(GROUPS.find((group) => group.includes(id))!);
+        press(id);
+      }
+      return state;
+    };
+    return { session, actions, asked, press, type, state: () => state };
+  };
+
+  it('shows suggestions for the text so far, and scans them first', () => {
+    const { state } = typing();
+    expect(state()).toMatchObject({ suggestions: ['i', 'you', 'the'], highlight: 'word:i' });
+  });
+
+  it('finishes the word being typed with a suggestion, adding the space', () => {
+    const { type, press } = typing();
+    type('w', 'a');
+    expect(press('word:water')).toMatchObject({ text: 'water ', suggestions: ['please', 'now'], group: null });
+  });
+
+  it('predicts the next word after a suggestion', () => {
+    const { type, press } = typing();
+    type('w', 'a');
+    press('word:water');
+    expect(press('word:please')).toMatchObject({ text: 'water please ' });
+  });
+
+  it('asks on opening and after each press, never on a tick', () => {
+    const { type, asked } = typing();
+    type('w', 'a');
+    expect(asked).toEqual(['', '', 'w', 'w', 'wa']);
+  });
+
+  it('types the finished text on Done, which is what teaches the predictor', () => {
+    const { type, press, actions } = typing();
+    type('w', 'a');
+    press('word:water');
+    press('done');
+    expect(actions).toEqual([{ type: 'type-text', text: 'water ' }]);
+  });
+
+  it('keeps suggestions off the letter screens, so letters scan as before', () => {
+    const { press } = typing();
+    expect(press('fghij')).toMatchObject({ group: 'fghij', highlight: 'f' });
+  });
+});
+
 describe('Gaze Keyboard layout', () => {
   const area = (r: Rect) => r.width * r.height;
   const intersect = (a: Rect, b: Rect) =>
@@ -299,6 +366,14 @@ describe('Gaze Keyboard layout', () => {
         }
         // 240 px is near the low end of #5's usable key size, 263 to 703 px.
         for (const { rect } of keys) expect(Math.min(rect.width, rect.height)).toBeGreaterThanOrEqual(240);
+      }
+      // Suggestions add a row, so the keys get shorter. Keys are chosen by the scan since #26, not by gaze, so they only need to stay readable.
+      const suggested = layoutKeyboard(size, null, ['water', 'want', 'was']).keys;
+      expect(suggested.slice(0, 3).map(({ id }) => id)).toEqual(['word:water', 'word:want', 'word:was']);
+      for (const { rect } of suggested) {
+        expect(rect.x >= 0 && rect.y >= 120 && rect.x + rect.width <= size.width && rect.y + rect.height <= size.height).toBe(true);
+        expect(Math.min(rect.width, rect.height)).toBeGreaterThanOrEqual(170);
+        for (const other of suggested) if (other.rect !== rect) expect(intersect(rect, other.rect)).toBe(false);
       }
       const groupScreen = layoutKeyboard(size, null).keys;
       expect(groupScreen.reduce((sum, key) => sum + area(key.rect), 0) / area({ x: 0, y: 0, ...size })).toBeGreaterThan(0.6);

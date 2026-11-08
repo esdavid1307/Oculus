@@ -218,3 +218,10 @@ body {
   background: var(--fill);
   outline: 8px solid #38bdf8;
 }
+
+/* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
+.key[data-key^='word:'] {
+  --rest: #134e4a;
+  font-size: 56px;
+  font-weight: 500;
+}
