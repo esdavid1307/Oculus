@@ -6,12 +6,12 @@ WebGazer was compared first and removed once MediaPipe won. Its results are on #
 
 1. Run `npm run gaze-check` and open the printed `localhost` address in Chrome.
 2. Allow the camera. Sit as you will for the demo and centre your face in the box.
-3. Press Start and follow the dot with your eyes. Calibration covers the corners, then 3 Centre Box holds and 9 key trials follow. It takes about 75 seconds.
+3. Press Start and follow the dot with your eyes. Calibration covers the corners, then 3 Centre Box holds and 9 key trials follow. It takes about 85 seconds.
 4. Press Copy results and paste them into a comment on #5.
 
 Repeat a few times, ideally with more than one person and in the demo room's lighting, because one run says little.
 
-The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. The Centre Box hold uses a 50 vmin square centred on screen, the same box the app shows for the Start Gesture.
+The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. The Centre Box hold uses a 50 vmin square centred on screen and the 3 second Start Gesture, the same box and hold the app uses.
 
 The tracker uses every frame of the calibration dwell.
 
@@ -79,7 +79,7 @@ The target is a key of about 189 px, so that 29 keys fit at 1512 x 949. WebGazer
 
 The original runs on #5 measured corner holds. Those results are on #5 and stay as the historical record. New runs score Centre Box holds instead (see the Centre Box line in the report).
 
-- **Adopt MediaPipe** if the smallest usable key, including steady offset, reaches the target on most runs and corner holds are clearly better than 4 of 18.
+- **Adopt MediaPipe** if the smallest usable key, including steady offset, reaches the target on most runs and most Centre Box holds succeed.
 - **Qualified pass** if only the key size with steady offset removed reaches the target, and the median error shows the gaze still follows the dots. The remaining error is then a calibration or Gaze Correction problem.
 - **Otherwise** the webcam can't support a full keyboard. Record that and design for larger targets, such as grouped letters or Suggested Intents.
 

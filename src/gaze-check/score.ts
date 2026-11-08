@@ -9,7 +9,8 @@ export type Sample = { t: number; estimate: Position | null; eyesClosed?: boolea
 export type Target = Position & { kind: 'centre' | 'key' };
 export type Trial = { target: Target; samples: Sample[] };
 
-const HOLD_MS = 2000;
+// The Start Gesture, as wakeHoldMs in session.ts.
+const HOLD_MS = 3000;
 const SMOOTHING_MS = 300;
 // 26 letters, space, delete and done.
 export const KEYS_NEEDED = 29;
@@ -47,8 +48,7 @@ function longestHoldMs(trial: Trial, halfPx: number) {
   let start: number | null = null;
   let longest = 0;
   for (const { t, estimate } of trial.samples) {
-    const inside = !!estimate && chebyshev(estimate, trial.target) <= halfPx;
-    if (inside) {
+    if (estimate && chebyshev(estimate, trial.target) <= halfPx) {
       start ??= t;
       longest = Math.max(longest, t - start);
     } else {
@@ -111,8 +111,8 @@ export function scoreGazeCheck(rawTrials: Trial[], screen: Screen) {
 
   const centreBoxHalfPx = (Math.min(screen.width, screen.height) * CENTRE_BOX_VMIN) / 2;
 
-  const allSamples = trials.flatMap((trial) => trial.samples);
-  const lostCount = allSamples.filter(({ estimate }) => !estimate).length;
+  const samples = trials.flatMap((trial) => trial.samples);
+  const lostCount = samples.filter(({ estimate }) => !estimate).length;
   const gaps = trials.reduce((sum, trial) => sum + Math.max(trial.samples.length - 1, 0), 0);
   const durationMs = trials.reduce((sum, { samples }) => sum + (samples.length ? samples.at(-1)!.t - samples[0].t : 0), 0);
   const samplesPerSecond = durationMs > 0 ? (gaps * 1000) / durationMs : 0;
@@ -126,7 +126,7 @@ export function scoreGazeCheck(rawTrials: Trial[], screen: Screen) {
     keys,
     targets: scoreTargets(trials),
     samplesPerSecond,
-    lostShare: allSamples.length > 0 ? lostCount / allSamples.length : 0,
+    lostShare: samples.length > 0 ? lostCount / samples.length : 0,
     verdict: !tracked
       ? 'no gaze data'
       : tooJittery || tooSlow
