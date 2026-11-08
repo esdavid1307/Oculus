@@ -410,6 +410,15 @@ describe('Dock', () => {
     expect(session(gaze(4100, nearDock)).phase).toBe('icons');
   });
 
+  it('passes an icon\'s label through to the overlay', () => {
+    const labelled = [{ name: '["Finder",0,2]', label: 'File', rect: items[0].rect }];
+    const session = createSession({ screen, dock: () => labelled });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, nearDock));
+    expect(session(gaze(6100, nearDock))).toMatchObject({ phase: 'icons', highlight: { name: '["Finder",0,2]', label: 'File' } });
+  });
+
   it('steps through the icons every 2 seconds and opens the highlighted one on a Select Blink', () => {
     const { session, actions } = onDock();
     expect(session(tick(8100))).toMatchObject({ highlight: items[1] });

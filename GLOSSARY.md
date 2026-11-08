@@ -67,3 +67,11 @@ _Avoid_: Look away (for leaving a key)
 **Move Off**:
 Gaze leaving a target, such as the Centre Box, while staying on the screen, which restarts that hold.
 _Avoid_: Look away
+
+**Large View**:
+The mode, on by default, that makes what Oculus does not draw itself big enough to see: a larger Dock, the Icon Magnifier, and a UI Scale on the overlay's own text, Gaze Dot and outlines. Turned off with `"largeView": false`.
+_Avoid_: Zoom, accessibility mode
+
+**Icon Magnifier**:
+The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small icon is also grown to a minimum size.
+_Avoid_: Tooltip, zoom

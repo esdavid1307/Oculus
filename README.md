@@ -200,6 +200,12 @@ Timings live in `~/Library/Application Support/oculus-agent/config.json`. All ar
 { "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "iconHoldMs": 3000, "finishedMs": 3000, "wordPrediction": true }
 ```
 
+Large View is on by default. It makes the Dock icons big while Oculus runs (`dockIconSize`, 48 to 128, default 96), shows the highlighted icon's name in a large panel during an Icon Scan, and scales the overlay's own text, Gaze Dot and outlines (`uiScale`, 1 to 2, default 1.25). Set `"largeView": false` to turn it all off. Bad values fall back to the defaults. The Dock's original size is saved to `dock-size.json` next to `config.json` and put back on quit, or on the next start after a crash. Dock magnification is left alone.
+
+```json
+{ "largeView": true, "uiScale": 1.25, "dockIconSize": 96 }
+```
+
 The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.
 
 ## Hackathon Demo
