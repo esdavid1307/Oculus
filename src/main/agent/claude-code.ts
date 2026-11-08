@@ -3,10 +3,11 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createHands } from './hands';
-import { LOG_PREFIX, type AgentCheckResult, type AgentRunOptions, type Capture, type Execute } from './types';
+import { LOG_PREFIX, STOPPED_ERROR, type AgentCheckResult, type AgentRunOptions, type Capture, type Execute } from './types';
 
 // shortcut: one whole run, several turns. The API backend counts steps instead.
 const RUN_TIMEOUT_MS = 180_000;
+const KILL_GRACE_MS = 2000;
 // Tools that could reach past the hands: the network, the file system and other agents.
 export const DENIED_TOOLS = ['WebFetch', 'WebSearch', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task'];
 
@@ -40,7 +41,7 @@ export function claudeArgs(options: Pick<AgentRunOptions, 'goal' | 'model'>, han
   ];
 }
 
-type ClaudeCodeDeps = {
+export type ClaudeCodeDeps = {
   capture: Capture;
   execute: Execute;
   log: (line: string) => void;
@@ -48,6 +49,10 @@ type ClaudeCodeDeps = {
   now: () => number;
   hands: string;
   cwd: string;
+  // Aborted by the Stop Gesture: kills claude, and the hands refuse every further action. The error is STOPPED_ERROR.
+  signal?: AbortSignal;
+  // Defaults to RUN_TIMEOUT_MS.
+  timeoutMs?: number;
 };
 
 const readBody = (request: IncomingMessage) =>
@@ -67,6 +72,7 @@ export async function runClaudeCode(options: AgentRunOptions, deps: ClaudeCodeDe
   const calls: AgentCheckResult['calls'] = [];
   let hands: ReturnType<typeof createHands> | null = null;
   const server = createServer();
+  let cleanup = () => {};
 
   try {
     log(`${LOG_PREFIX} goal: "${goal}" backend=claude-code model=${model}`);
@@ -83,6 +89,7 @@ export async function runClaudeCode(options: AgentRunOptions, deps: ClaudeCodeDe
         const { name, input } = JSON.parse(await readBody(request));
         return run.handle(String(name), input);
       };
+      if (deps.signal?.aborted) return void response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: STOPPED_ERROR }));
       const body = await reply().catch((cause: Error) => ({ ok: false, error: cause.message }));
       response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
     });
@@ -93,25 +100,47 @@ export async function runClaudeCode(options: AgentRunOptions, deps: ClaudeCodeDe
     // Without the API key in its environment, Claude Code uses the user's own login.
     const { ANTHROPIC_API_KEY: _key, ...env } = process.env;
     const started = deps.now();
+    const { signal } = deps;
     const output = await new Promise<string>((resolve, reject) => {
+      if (signal?.aborted) return reject(new Error(STOPPED_ERROR));
+      // Own process group, so killing it also takes the bash and node hands child.
       const child = spawn('claude', args, {
         cwd: deps.cwd,
         env: { ...env, OCULUS_HANDS_URL: `http://127.0.0.1:${port}`, OCULUS_HANDS_TOKEN: token },
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
       });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk) => (stdout += chunk));
       child.stderr.on('data', (chunk) => (stderr += chunk));
       let timedOut = false;
+      let escalation: NodeJS.Timeout | undefined;
+      const signalGroup = (name: NodeJS.Signals) => {
+        try {
+          if (child.pid) process.kill(-child.pid, name);
+        } catch {
+          // ESRCH: already gone.
+        }
+      };
+      // A child that ignores SIGTERM would keep the run, and the cursor, busy.
+      const kill = () => {
+        signalGroup('SIGTERM');
+        escalation ??= setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS);
+      };
+      const timeoutMs = deps.timeoutMs ?? RUN_TIMEOUT_MS;
       const timer = setTimeout(() => {
         timedOut = true;
-        child.kill();
-      }, RUN_TIMEOUT_MS);
+        kill();
+      }, timeoutMs);
+      signal?.addEventListener('abort', kill, { once: true });
+      cleanup = () => signal?.removeEventListener('abort', kill);
       child.on('error', (cause) => reject(new Error(`Could not start claude, is Claude Code installed? (${cause.message})`)));
       child.on('close', (code) => {
         clearTimeout(timer);
-        if (timedOut) reject(new Error(`claude timed out after ${RUN_TIMEOUT_MS / 1000} s`));
+        clearTimeout(escalation);
+        if (signal?.aborted) reject(new Error(STOPPED_ERROR));
+        else if (timedOut) reject(new Error(`Timed out after ${Math.round(timeoutMs / 1000)} s`));
         else if (stdout.trim()) resolve(stdout);
         else reject(new Error(`claude exited ${code}: ${stderr.trim() || 'no output'}`));
       });
@@ -136,7 +165,9 @@ export async function runClaudeCode(options: AgentRunOptions, deps: ClaudeCodeDe
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
   } finally {
+    cleanup();
     server.close();
+    server.closeAllConnections();
   }
 
   const actions = hands?.actions ?? [];
