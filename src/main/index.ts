@@ -118,7 +118,10 @@ function releaseDock() {
 const READ_MENU_BAR = `const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
-  const items = events.processes.byName(process).menuBars[0].menuBarItems;
+  // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
+  const bars = events.processes.byName(process).menuBars;
+  if (bars.length === 0) return [];
+  const items = bars[0].menuBarItems;
   const sizes = items.size();
   return items.position().map(([x, y], i) => ({ path: [process, 0, i], x, y, width: sizes[i][0], height: sizes[i][1] }));
 }))`;
@@ -197,6 +200,8 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
     };
     // Dock separators have no name, and a Desktop icon under a window can't be seen.
     const icons = names.flatMap((name, i) => {
+      // The three lists are read one after another, so an icon added in between (the app's own, at launch) has no place yet.
+      if (!positions[i] || !sizes[i]) return [];
       const [x, y] = positions[i];
       const [width, height] = sizes[i];
       const rect = { x, y, width, height };
