@@ -4,12 +4,25 @@ import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { GazeEvent } from '../shared/gaze';
 import { createSession, type AgentAction, type SessionInput } from '../shared/session';
+import { runAgentCheckInElectron } from './agent/check';
+import { readAgentConfig } from './agent/config';
+
+// Holds ANTHROPIC_API_KEY and the OCULUS_AGENT_* settings. Loaded before anything reads process.env.
+try {
+  process.loadEnvFile(join(app.getAppPath(), '.env'));
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Ignoring .env:', error);
+}
 
 const TICK_MS = 100;
 const MOUSE_SAMPLE_MS = 33;
 const MOUSE_REGION_RADIUS = 60;
 // shortcut: opens the Gaze Keyboard until #13 opens it from a text box target.
 const DEV_OPEN_KEYBOARD_SHORTCUT = 'CommandOrControl+Shift+K';
+// shortcut: runs one agent check on Chrome until the Intent flow exists.
+const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
+// Time for the Centre Box to be drawn before the first screenshot.
+const OVERLAY_DRAW_MS = 1000;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 
@@ -32,6 +45,20 @@ function perform(action: AgentAction) {
     clipboard.writeText(action.text);
     console.error('Could not type the Gaze Keyboard text, so it is on the clipboard:', error.message);
   });
+}
+
+// Runs never overlap: two would fight over the same cursor.
+let running = false;
+async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'shortcut') {
+  const config = readAgentConfig(process.env, trigger);
+  if (!config || running) return;
+  running = true;
+  try {
+    const result = await runAgentCheckInElectron(overlay, config);
+    if (config.quitWhenDone) app.exit(result.ok ? 0 : 1);
+  } finally {
+    running = false;
+  }
 }
 
 function createOverlay() {
@@ -75,11 +102,15 @@ function createOverlay() {
   }
   if (!app.isPackaged) globalShortcut.register(DEV_OPEN_KEYBOARD_SHORTCUT, () => advance({ type: 'open-keyboard', t: Date.now() }));
   overlay.on('closed', () => timers.forEach(clearInterval));
+  return overlay;
 }
 
 app.whenReady().then(async () => {
   // A refusal shows up as a camera error on the overlay.
   if (!useMouse) await systemPreferences.askForMediaAccess('camera');
-  createOverlay();
+  const overlay = createOverlay();
+  if (app.isPackaged) return;
+  globalShortcut.register(DEV_AGENT_CHECK_SHORTCUT, () => void runAgentCheckOnce(overlay, 'shortcut'));
+  overlay.webContents.once('did-finish-load', () => setTimeout(() => void runAgentCheckOnce(overlay, 'env'), OVERLAY_DRAW_MS));
 });
 app.on('will-quit', () => globalShortcut.unregisterAll());

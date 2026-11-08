@@ -181,6 +181,7 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 npm install
 npm run dev        # overlay with the dev-only mouse input
 npm run dev:gaze   # overlay with real gaze from the webcam
+OCULUS_AGENT_CHECK="<goal>" npm run dev  # one Claude computer-use run in Chrome, see docs/agent-check.md
 npm test
 npm run typecheck
 ```
