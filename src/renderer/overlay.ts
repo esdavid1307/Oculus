@@ -27,6 +27,7 @@ function chime(frequencies = [660, 880]) {
 const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
+const iconHighlight = document.getElementById('icon-highlight')!;
 const status = document.getElementById('status')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
@@ -93,6 +94,7 @@ function showStatus(state: OverlayState) {
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
+  if (state.phase === 'icons') place(iconHighlight, state.highlight.rect);
   if (state.phase === 'choosing') {
     showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
     highlightKey(state.highlight);
