@@ -5,6 +5,7 @@ import {
   COMPUTER_TOOLSET_NAME,
   HALT_TEXT,
   LOG_PREFIX,
+  STOPPED_ERROR,
   type ActionRecord,
   type AgentCheckResult,
   type AgentDeps,
@@ -63,8 +64,12 @@ export async function runAgentCheck(options: AgentRunOptions, deps: AgentDeps): 
     let lastWasInput = false;
 
     for (let step = 1; step <= maxSteps; step++) {
+      if (deps.signal?.aborted) {
+        error = STOPPED_ERROR;
+        break;
+      }
       const started = deps.now();
-      const response = await deps.messages.create(buildRequest({ model, effort }, messages));
+      const response = await deps.messages.create(buildRequest({ model, effort }, messages), { signal: deps.signal });
       const ms = deps.now() - started;
       const toolUses = response.content.filter((block): block is Anthropic.Beta.Messages.BetaToolUseBlock => block.type === 'tool_use');
       const text = response.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join(' ').trim();
@@ -115,6 +120,11 @@ export async function runAgentCheck(options: AgentRunOptions, deps: AgentDeps): 
           log(`${LOG_PREFIX} action ${step}.${i} ${block.name} ${JSON.stringify(block.input)} -> not run error: ${HALT_TEXT}`);
           continue;
         }
+        if (deps.signal?.aborted) {
+          error = STOPPED_ERROR;
+          record.error = STOPPED_ERROR;
+          break;
+        }
         try {
           if (block.toolset_name !== COMPUTER_TOOLSET_NAME) throw new Error(`Unsupported toolset: ${block.toolset_name}`);
           const action = toComputerAction(block.name, block.input, frame);
@@ -143,11 +153,13 @@ export async function runAgentCheck(options: AgentRunOptions, deps: AgentDeps): 
           log(`${LOG_PREFIX} action ${step}.${i} ${block.name} ${JSON.stringify(block.input)} -> ${describe(record.action)} error: ${record.error}`);
         }
       }
+      if (error) break;
       messages.push({ role: 'user', content: results });
       if (step === maxSteps) log(`${LOG_PREFIX} max steps reached`);
     }
   } catch (cause) {
-    if (cause instanceof Anthropic.APIError) error = `API ${cause.status}: ${cause.message}`;
+    if (deps.signal?.aborted || cause instanceof Anthropic.APIUserAbortError) error = STOPPED_ERROR;
+    else if (cause instanceof Anthropic.APIError) error = `API ${cause.status}: ${cause.message}`;
     else error = cause instanceof Error ? cause.message : String(cause);
   }
 

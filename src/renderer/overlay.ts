@@ -10,8 +10,8 @@ declare global {
 
 const audio = new AudioContext();
 
-function chime() {
-  [660, 880].forEach((frequency, i) => {
+function chime(frequencies = [660, 880]) {
+  frequencies.forEach((frequency, i) => {
     const start = audio.currentTime + i * 0.15;
     const tone = audio.createOscillator();
     const volume = audio.createGain();
@@ -27,6 +27,7 @@ function chime() {
 const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
+const iconHighlight = document.getElementById('icon-highlight')!;
 const status = document.getElementById('status')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
@@ -76,17 +77,32 @@ function highlightKey(id: KeyId) {
   litKey?.classList.add('highlighted');
 }
 
+// textContent and text nodes only: the summary comes from a web page Claude read.
+function showStatus(state: OverlayState) {
+  status.hidden = state.phase !== 'thinking' && state.phase !== 'running' && state.phase !== 'finished';
+  if (status.hidden) return;
+  if (state.phase === 'running') {
+    const hint = document.createElement('small');
+    hint.textContent = 'Look away to stop';
+    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), hint);
+  } else if (state.phase === 'finished') {
+    status.textContent = `${state.ok ? 'Done' : "Couldn't finish"}: ${state.summary}`;
+    root.dataset.ok = String(state.ok);
+  } else status.textContent = 'Thinking…';
+}
+
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
+  if (state.phase === 'icons') place(iconHighlight, state.highlight.rect);
   if (state.phase === 'choosing') {
     showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
     highlightKey(state.highlight);
   }
-  status.hidden = state.phase !== 'thinking' && state.phase !== 'running';
-  status.textContent = state.phase === 'running' ? `Running: ${state.intent}` : 'Thinking…';
+  showStatus(state);
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
+  if (state.phase === 'finished') chime(state.ok ? [660, 880] : [440, 330]);
   root.dataset.phase = state.phase;
   lastPhase = state.phase;
 });

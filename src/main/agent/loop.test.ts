@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it } from 'vitest';
 import { runAgentCheck } from './loop';
-import { AGENT_MAX_STEPS, HALT_TEXT, type AgentDeps, type InputAction, type ScreenFrame } from './types';
+import { AGENT_MAX_STEPS, HALT_TEXT, STOPPED_ERROR, type AgentDeps, type InputAction, type ScreenFrame } from './types';
 
 type Message = Anthropic.Beta.Messages.BetaMessage;
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
@@ -192,5 +192,42 @@ describe('runAgentCheck', () => {
     expect(sent.map((p) => p.messages.length)).toEqual([1, 3, 5]);
     expect(sent[2].messages.slice(0, 1)).toEqual(sent[0].messages);
     expect(sent[2].messages.slice(0, 3)).toEqual(sent[1].messages);
+  });
+
+  it('stops with STOPPED_ERROR when aborted between calls, with no further create or execute', async () => {
+    const controller = new AbortController();
+    const { deps, sent, executed } = setup(
+      [reply([use('a', 'left_click', { coordinate: [10, 10] })]), reply([use('b', 'left_click', { coordinate: [20, 20] })])],
+      { signal: controller.signal },
+    );
+    const execute = deps.execute;
+    deps.execute = async (action) => {
+      await execute(action);
+      controller.abort();
+    };
+    const result = await runAgentCheck(options, deps);
+    expect(result.error).toBe(STOPPED_ERROR);
+    expect(sent).toHaveLength(1);
+    expect(executed).toHaveLength(1);
+  });
+
+  it('stops before an action when aborted during a model call, and passes the signal', async () => {
+    const controller = new AbortController();
+    let received: AbortSignal | undefined;
+    const { deps, executed } = setup([() => (controller.abort(), reply([use('a', 'left_click', { coordinate: [10, 10] })]))], { signal: controller.signal });
+    const create = deps.messages.create;
+    deps.messages.create = (params, opts) => ((received = opts?.signal), create(params, opts));
+    const result = await runAgentCheck(options, deps);
+    expect(received).toBe(controller.signal);
+    expect(executed).toHaveLength(0);
+    expect(result.error).toBe(STOPPED_ERROR);
+  });
+
+  it('maps an abort error from the SDK to STOPPED_ERROR', async () => {
+    const controller = new AbortController();
+    const { deps } = setup([new Error('Request was aborted.')], { signal: controller.signal });
+    controller.abort();
+    const result = await runAgentCheck(options, deps);
+    expect(result.error).toBe(STOPPED_ERROR);
   });
 });
