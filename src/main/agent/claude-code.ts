@@ -35,6 +35,8 @@ export function claudeArgs(options: Pick<AgentRunOptions, 'goal' | 'model'>, han
     // The user's own settings, plugins, hooks and MCP servers stay out of the run.
     '--setting-sources', 'project',
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+    // No transcript, so no copy of the screenshots is left in ~/.claude.
+    '--no-session-persistence',
   ];
 }
 

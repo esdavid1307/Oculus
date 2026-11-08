@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
 import type { GazeRegion } from '../../shared/gaze';
 import { DENIED_TOOLS } from './claude-code';
 import { AGENT_MAX_TOKENS, FALLBACK_BETA, LOG_PREFIX, type AgentConfig, type Capture, type ScreenFrame, type Screenshot } from './types';
@@ -29,13 +30,15 @@ const INTENTS_SCHEMA = {
 };
 
 // The Gaze Region is in display points; the model sees a smaller image, so it gets the region in that image's pixels.
-export function intentsPrompt(region: GazeRegion, frame: ScreenFrame) {
+// turnedDown are the Suggested Intents passed over with Something else for this target.
+export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown: string[]) {
   const scale = frame.imageWidth / frame.width;
   const [x, y, radius] = [region.x, region.y, region.radius].map((value) => Math.round(value * scale));
   return (
     `The user is looking at about (${x}, ${y}), within about ${radius} pixels, in this ${frame.imageWidth} x ${frame.imageHeight} screenshot. ` +
     `Suggest up to ${MAX_INTENTS} things they most likely want done with what is there, most likely first. ` +
     VIDEO_RULES +
+    (turnedDown.length ? `They turned down ${JSON.stringify(turnedDown)}, so suggest different ones. ` : '') +
     'Each is one short action of at most 6 words. ' +
     'Reply with only JSON: {"intents": ["..."]}'
   );
@@ -86,6 +89,9 @@ async function askApi(config: AgentConfig, shot: Screenshot, prompt: string) {
 
 // Claude Code can only Read the screenshot: no other tools, and none of the user's own settings, plugins or MCP servers.
 function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
+  if (!shot.savedTo) throw new Error('Screenshot was not saved');
+  // Beside the screenshot, like the agent check's run folder, so the repo's own Claude Code settings stay out.
+  const cwd = dirname(shot.savedTo);
   const args = [
     '-p', `${prompt}\n\nThe screenshot is ${shot.savedTo}. Read it first.`,
     '--model', config.model,
@@ -95,11 +101,13 @@ function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
     '--disallowedTools', 'Bash', ...DENIED_TOOLS,
     '--setting-sources', 'project',
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+    // No transcript, so no copy of the screenshot is left in ~/.claude.
+    '--no-session-persistence',
   ];
   // Without the API key in its environment, Claude Code uses the user's own login.
   const { ANTHROPIC_API_KEY: _key, ...env } = process.env;
   return new Promise<string>((resolve, reject) => {
-    const child = spawn('claude', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('claude', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => (stdout += chunk));
@@ -122,6 +130,7 @@ function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
 // A screenshot is taken here and only here, after the user has asked. Never throws: a failure gives no intents.
 export async function suggestIntents(
   region: GazeRegion,
+  turnedDown: string[],
   config: AgentConfig,
   capture: Capture,
   log: (line: string) => void = console.log,
@@ -130,7 +139,7 @@ export async function suggestIntents(
   try {
     if (config.backend === 'api' && !process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing: copy .env.example to .env');
     const shot = await capture();
-    const prompt = intentsPrompt(region, shot.frame);
+    const prompt = intentsPrompt(region, shot.frame, turnedDown);
     const reply = config.backend === 'api' ? await askApi(config, shot, prompt) : await askClaudeCode(config, shot, prompt);
     const intents = parseIntents(reply);
     log(`${LOG_PREFIX} suggested intents in ${Date.now() - started} ms (${config.backend}, ${config.model}): ${JSON.stringify(intents)}`);

@@ -22,7 +22,8 @@ export type SessionInput =
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
   | { type: 'type-text'; text: string }
-  | { type: 'suggest-intents'; region: GazeRegion; request: number }
+  // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
+  | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
   | { type: 'run-intent'; intent: string; region: GazeRegion; request: number }
   // The Stop Gesture during a run: the agent must stop acting at once.
@@ -77,6 +78,8 @@ export function createSession({
   let awaySince: number | null = null;
   // The Gaze Region where the user started holding on a target after waking.
   let target: { region: GazeRegion; start: number } | null = null;
+  // The wake hold ends on the Centre Box, so a target hold only starts after a Move Off from it.
+  let movedOffCentreBox = false;
   let text = '';
   let group: string | null = null;
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
@@ -84,8 +87,9 @@ export function createSession({
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let intents: string[] = [];
-  // The target the model was asked about, so Something else can ask again.
+  // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
+  let turnedDown: string[] = [];
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
@@ -129,14 +133,15 @@ export function createSession({
     }
   }
 
-  function suggestIntents(region: GazeRegion) {
+  function suggestIntents(region: GazeRegion, passedOver: string[]) {
     asked = region;
-    act({ type: 'suggest-intents', region, request: ++request });
+    turnedDown = passedOver;
+    act({ type: 'suggest-intents', region, request: ++request, turnedDown });
     phase = 'thinking';
   }
 
   function choose(key: KeyId) {
-    if (key === 'something-else') return suggestIntents(asked!);
+    if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
     phase = 'running';
     act({ type: 'run-intent', intent, region: asked!, request: ++request });
@@ -147,11 +152,13 @@ export function createSession({
       target = null;
       return;
     }
+    if (!onCentreBox(region, screen)) movedOffCentreBox = true;
+    if (!movedOffCentreBox) return;
     // Jitter inside the first Gaze Region still counts as the same target.
     const moved = target && Math.hypot(region.x - target.region.x, region.y - target.region.y) > target.region.radius;
     if (target === null || moved) target = { region, start: t };
     if (t - target.start >= targetHoldMs) {
-      suggestIntents(target.region);
+      suggestIntents(target.region, []);
       target = null;
     }
   }
@@ -217,6 +224,7 @@ export function createSession({
         wakeProgress = 0;
         // A target hold cut short last time, for example by the Gaze Keyboard, must not carry over.
         target = null;
+        movedOffCentreBox = false;
       }
     }
     return state();
