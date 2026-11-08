@@ -334,8 +334,9 @@ function createOverlay() {
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
   const history = createHistory();
-  // The context of each suggest-intents request, read when it starts since the front app can change during a run.
-  const contexts = new Map<number, Promise<string>>();
+  // The context of the latest suggest-intents request, read when it starts since the front app can change during a run.
+  // A run is always chosen from the latest picker, so it learns into this context.
+  let askedContext: Promise<string> = Promise.resolve('');
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       typeText(action.text);
@@ -347,9 +348,7 @@ function createOverlay() {
         console.warn('Could not save word prediction:', error);
       }
     } else if (action.type === 'suggest-intents') {
-      const context = readContext();
-      contexts.set(action.request, context);
-      for (const old of contexts.keys()) if (old < action.request - 10) contexts.delete(old);
+      const context = (askedContext = readContext());
       // Not after Something else: those are the ones the user just turned down. The answer comes after this session
       // call has returned, because osascript is asynchronous.
       if (action.turnedDown.length === 0)
@@ -370,6 +369,8 @@ function createOverlay() {
         });
     } else if (action.type === 'run-intent') {
       const { intent, region, request, sinceWakeMs } = action;
+      // Taken now: by the time the run ends, Something else could have asked about a new target.
+      const context = askedContext;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
       // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
       if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
@@ -381,9 +382,8 @@ function createOverlay() {
       void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
         currentRun = null;
         running = false;
-        // The run's request number follows the suggest-intents request it was chosen from.
         if (outcome.ok)
-          void contexts.get(request - 1)?.then((name) => {
+          void context.then((name) => {
             try {
               history.learn(name, intent);
             } catch (error) {
