@@ -2,40 +2,37 @@ import { describe, expect, it } from 'vitest';
 import { scoreGazeCheck, smoother, type Sample, type Trial } from './score';
 
 const screen = { width: 1600, height: 1000 };
-const wake = { kind: 'wake', x: 1480, y: 120 } as const;
+// Centre Box half-size: 25 vmin = 250 px on this screen.
+const centre = { kind: 'centre', x: 800, y: 500 } as const;
 
 // One sample every 100 ms, the first at t = 0.
 const samples = (estimates: (Sample['estimate'])[]): Sample[] => estimates.map((estimate, i) => ({ t: i * 100, estimate }));
 const repeat = (estimate: Sample['estimate'], count: number) => Array<Sample['estimate']>(count).fill(estimate);
 
-describe('corner targets', () => {
-  it('counts a trial as a hit when the gaze holds the target for 2 seconds', () => {
-    const trial: Trial = { target: wake, samples: samples(repeat({ x: 1480, y: 120 }, 21)) };
-    expect(scoreGazeCheck([trial], screen).corners.wake).toMatchObject({ hits: 1, trials: 1 });
+describe('Centre Box', () => {
+  it('counts a trial as a hit when gaze holds the Centre Box for 2 seconds', () => {
+    const trial: Trial = { target: centre, samples: samples(repeat({ x: 800, y: 500 }, 21)) };
+    expect(scoreGazeCheck([trial], screen).centre).toMatchObject({ hits: 1, trials: 1 });
   });
 
-  it('restarts the hold when tracking is lost', () => {
-    const on = { x: 1480, y: 120 };
-    const trial: Trial = { target: wake, samples: samples([...repeat(on, 15), null, ...repeat(on, 15)]) };
-    expect(scoreGazeCheck([trial], screen).corners.wake.hits).toBe(0);
+  it('counts a miss when tracking is lost mid-hold', () => {
+    const on = { x: 800, y: 500 };
+    const trial: Trial = { target: centre, samples: samples([...repeat(on, 15), null, ...repeat(on, 15)]) };
+    expect(scoreGazeCheck([trial], screen).centre.hits).toBe(0);
   });
 
-  it('smooths the gaze, as a real gaze source must, so one stray sample does not restart the hold', () => {
-    const on = { x: 1480, y: 120 };
-    const trial: Trial = { target: wake, samples: samples([...repeat(on, 15), { x: 1480, y: 500 }, ...repeat(on, 15)]) };
-    expect(scoreGazeCheck([trial], screen).corners.wake.hits).toBe(1);
+  it('smooths gaze so one stray sample does not restart the hold', () => {
+    const on = { x: 800, y: 500 };
+    const trial: Trial = { target: centre, samples: samples([...repeat(on, 15), { x: 800, y: 900 }, ...repeat(on, 15)]) };
+    expect(scoreGazeCheck([trial], screen).centre.hits).toBe(1);
   });
 
-  it('sizes a target centred on the gaze dot so 95% of the gaze lands inside it', () => {
-    const near = repeat({ x: 1400, y: 150 }, 19);
-    const trial: Trial = { target: wake, samples: samples([...near, { x: 1300, y: 150 }]) };
-    expect(scoreGazeCheck([trial], screen).corners.wake.targetSize).toBe(160);
-  });
-
-  it('scores the stop target from the bottom-left corner', () => {
-    const stop = { kind: 'stop', x: 120, y: 880 } as const;
-    const trial: Trial = { target: stop, samples: samples(repeat({ x: 100, y: 850 }, 21)) };
-    expect(scoreGazeCheck([trial], screen).corners.stop).toMatchObject({ hits: 1, targetSize: 60 });
+  it('sizes a target so 95% of gaze falls inside it', () => {
+    // 1000 ms between samples so smoothing does not blend them.
+    const near = Array.from({ length: 9 }, (_, i): Sample => ({ t: i * 1000, estimate: { x: 820, y: 540 } }));
+    const trial: Trial = { target: centre, samples: [...near, { t: 9000, estimate: { x: 940, y: 540 } }] };
+    // 9 at Chebyshev distance 40, 1 at 140. 95th percentile is 140, targetSize = 280.
+    expect(scoreGazeCheck([trial], screen).centre.targetSize).toBe(280);
   });
 });
 
@@ -47,10 +44,10 @@ describe('Gaze Keyboard keys', () => {
     expect(scoreGazeCheck([trial], screen).keys.keySize).toBe(120);
   });
 
-  it('counts how many keys of that size fit around both corner targets', () => {
-    // 200 px keys: an 8 x 5 grid, with 2 x 2 cells taken by each corner target.
+  it('counts how many keys of that size fit on screen', () => {
+    // 200 px keys: an 8 x 5 grid = 40 keys.
     const trial: Trial = { target: key, samples: samples(repeat({ x: 900, y: 500 }, 20)) };
-    expect(scoreGazeCheck([trial], screen).keys.keysThatFit).toBe(32);
+    expect(scoreGazeCheck([trial], screen).keys.keysThatFit).toBe(40);
   });
 
   it('separates a steady offset from jitter', () => {
@@ -83,14 +80,15 @@ describe('offset per target', () => {
     expect(scoreGazeCheck(trials, screen).targets).toEqual([{ ...target, offset: { x: 40, y: -30 } }]);
   });
 
-  it('keeps targets apart and ignores lost samples', () => {
-    const other = { kind: 'wake', x: 1480, y: 120 } as const;
+  it('keeps targets apart by kind and position, and ignores lost samples', () => {
+    const other = { kind: 'centre', x: 800, y: 500 } as const;
+    const keyAt = { kind: 'key', x: 400, y: 300 } as const;
     const trials: Trial[] = [
-      { target, samples: samples([{ x: 810, y: 500 }, null]) },
-      { target: other, samples: samples(repeat({ x: 1480, y: 140 }, 3)) },
+      { target: keyAt, samples: samples([{ x: 410, y: 300 }, null]) },
+      { target: other, samples: samples(repeat({ x: 800, y: 520 }, 3)) },
     ];
     expect(scoreGazeCheck(trials, screen).targets).toEqual([
-      { ...target, offset: { x: 10, y: 0 } },
+      { ...keyAt, offset: { x: 10, y: 0 } },
       { ...other, offset: { x: 0, y: 20 } },
     ]);
   });
@@ -102,11 +100,6 @@ describe('offset per target', () => {
 });
 
 describe('suggested verdict', () => {
-  const hold = (kind: 'wake' | 'stop', x: number, y: number): Trial => ({
-    target: { kind, x, y },
-    samples: samples(repeat({ x, y }, 21)),
-  });
-  const corners = [hold('wake', 1480, 120), hold('stop', 120, 880)];
   const key = { kind: 'key', x: 800, y: 500 } as const;
   const keyTrial = (offset: number): Trial => ({ target: key, samples: samples(repeat({ x: 800 + offset, y: 500 }, 20)) });
   // Each swing lasts longer than the smoothing window, so smoothing leaves most of it intact.
@@ -119,29 +112,29 @@ describe('suggested verdict', () => {
   };
 
   it('passes when the gaze is steady', () => {
-    expect(scoreGazeCheck([...corners, keyTrial(100)], screen).verdict).toBe('steady enough for a full keyboard');
+    expect(scoreGazeCheck([keyTrial(100)], screen).verdict).toBe('steady enough for a full keyboard');
   });
 
   it('passes a steady offset, which calibration can fix', () => {
-    const report = scoreGazeCheck([...corners, keyTrial(150)], screen);
-    expect(report.keys.keysThatFit).toBe(13);
+    const report = scoreGazeCheck([keyTrial(150)], screen);
+    expect(report.keys.keysThatFit).toBe(15);
     expect(report.verdict).toBe('steady enough for a full keyboard');
   });
 
   it('fails when jitter alone stops a full keyboard fitting', () => {
-    const report = scoreGazeCheck([...corners, shakyTrial], screen);
+    const report = scoreGazeCheck([shakyTrial], screen);
     expect(report.keys.steadyKeySize).toBeGreaterThan(200);
     expect(report.verdict).toBe('too jittery or slow for a full keyboard');
   });
 
   it('fails when tracking is slower than the gaze event format allows', () => {
     const slow = (trial: Trial): Trial => ({ ...trial, samples: trial.samples.map((s) => ({ ...s, t: s.t * 2 })) });
-    expect(scoreGazeCheck([...corners, keyTrial(100)].map(slow), screen).verdict).toBe('too jittery or slow for a full keyboard');
+    expect(scoreGazeCheck([keyTrial(100)].map(slow), screen).verdict).toBe('too jittery or slow for a full keyboard');
   });
 
   it('draws no conclusion when no key was ever tracked', () => {
     const lost: Trial = { target: key, samples: samples(repeat(null, 20)) };
-    expect(scoreGazeCheck([...corners, lost], screen).verdict).toBe('no gaze data');
+    expect(scoreGazeCheck([lost], screen).verdict).toBe('no gaze data');
   });
 
   it('draws no conclusion when a trial received no samples at all', () => {

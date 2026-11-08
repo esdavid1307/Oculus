@@ -6,18 +6,18 @@ WebGazer was compared first and removed once MediaPipe won. Its results are on #
 
 1. Run `npm run gaze-check` and open the printed `localhost` address in Chrome.
 2. Allow the camera. Sit as you will for the demo and centre your face in the box.
-3. Press Start and follow the dot with your eyes. Calibration covers the corners, then 15 test points follow. It takes about 90 seconds.
+3. Press Start and follow the dot with your eyes. Calibration covers the corners, then 3 Centre Box holds and 9 key trials follow. It takes about 75 seconds.
 4. Press Copy results and paste them into a comment on #5.
 
 Repeat a few times, ideally with more than one person and in the demo room's lighting, because one run says little.
 
-The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. Corner targets use a Gaze Region radius of 0, so they are a worst case.
+The scores are for gaze smoothed over 300 ms, as a real gaze source must send it. The Centre Box hold uses a 50 vmin square centred on screen, the same box the app shows for the Start Gesture.
 
 The tracker uses every frame of the calibration dwell.
 
 The page's Content-Security-Policy blocks all network access beyond `localhost`, because MediaPipe otherwise posts usage logs to Google. The face model `src/gaze-check/face_landmarker.task` is stored in the repo, because it isn't part of the npm package.
 
-The suggested verdict ignores steady offsets. It's "too jittery or slow for a full keyboard" when jitter alone stops the 29 keys a keyboard needs from fitting on screen, or gaze arrives at under 10 samples per second. Otherwise it's "steady enough for a full keyboard", even if corner holds failed: then read the corner lines, because the target may need to grow or calibration may need redoing. If `lost` is high, fix the lighting or face position and run again before trusting the verdict.
+The suggested verdict ignores steady offsets. It's "too jittery or slow for a full keyboard" when jitter alone stops the 29 keys a keyboard needs from fitting on screen, or gaze arrives at under 10 samples per second. Otherwise it's "steady enough for a full keyboard". Then read the Centre Box line: if the smallest target is larger than the box, the Centre Box may need to grow or calibration may need redoing. If `lost` is high, fix the lighting or face position and run again before trusting the verdict.
 
 "Steady" doesn't mean "accurate": a tracker that ignores your eyes and always reports the screen centre is perfectly steady. Always read the verdict alongside the median error.
 
@@ -76,6 +76,8 @@ Use the same laptop, tester, lighting and sitting position as the WebGazer runs.
 ## Decision rule
 
 The target is a key of about 189 px, so that 29 keys fit at 1512 x 949. WebGazer managed 4 of 18 corner holds at 240 px.
+
+The original runs on #5 measured corner holds. Those results are on #5 and stay as the historical record. New runs score Centre Box holds instead (see the Centre Box line in the report).
 
 - **Adopt MediaPipe** if the smallest usable key, including steady offset, reaches the target on most runs and corner holds are clearly better than 4 of 18.
 - **Qualified pass** if only the key size with steady offset removed reaches the target, and the median error shows the gaze still follows the dots. The remaining error is then a calibration or Gaze Correction problem.
