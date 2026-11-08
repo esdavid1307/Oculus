@@ -192,8 +192,10 @@ Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13
 Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "keyDwellMs": 1000 }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "keyDwellMs": 1000, "gazeCorrection": true }
 ```
+
+Gaze Correction learns your tracking error from confirmed Gaze Keyboard presses, see `docs/gaze-correction.md`.
 
 ## Hackathon Demo
 

@@ -1,6 +1,6 @@
 import type { Rect, Screen } from './geometry';
 
-// A letter, a group such as 'abcde', or one of 'space', 'delete', 'done' and 'back'.
+// A letter, a group such as 'abcde', or one of 'space', 'delete', 'reset', 'done' and 'back'.
 export type KeyId = string;
 
 export type Key = { id: KeyId; label: string; rect: Rect };
@@ -19,7 +19,9 @@ const TEXT_HEIGHT = 120;
 //
 //   groups:  ABCDE  FGHIJ   KLMNO        letters:  A  B  C
 //            PQRST  UVWXYZ  Delete                 D  E  .
-//            Space -------  Done                   .  .  Back
+//            Space  Reset   Done                   .  .  Back
+//
+// Reset clears Gaze Correction, see docs/gaze-correction.md.
 export function layoutKeyboard({ width, height }: Screen, group: string | null): KeyboardLayout {
   const top = TEXT_HEIGHT + GAP;
   const cellWidth = (width - (COLUMNS - 1) * GAP) / COLUMNS;
@@ -36,7 +38,8 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null):
       ? [
           ...GROUPS.map((id, i) => ({ id, label: id.toUpperCase(), rect: cell(i) })),
           { id: 'delete', label: 'Delete', rect: cell(5) },
-          { id: 'space', label: 'Space', rect: cell(6, 2) },
+          { id: 'space', label: 'Space', rect: cell(6) },
+          { id: 'reset', label: 'Reset gaze', rect: cell(7) },
           { id: 'done', label: 'Done', rect: cell(8) },
         ]
       : [

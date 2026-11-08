@@ -193,7 +193,8 @@ body {
 .key[data-key='space'],
 .key[data-key='done'],
 .key[data-key='delete'],
-.key[data-key='back'] {
+.key[data-key='back'],
+.key[data-key='reset'] {
   font-size: 44px;
 }
 
@@ -206,4 +207,9 @@ body {
 .key[data-key='back'] {
   --fill: #d97706;
   --rest: #78350f;
+}
+
+.key[data-key='reset'] {
+  --fill: #7c3aed;
+  --rest: #3b0764;
 }

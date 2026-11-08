@@ -245,13 +245,13 @@ describe('Gaze Keyboard', () => {
     const { type, actions } = typing();
     type('o', 'k');
     expect(type('done')).toEqual({ phase: 'idle', wakeProgress: 0 });
-    expect(actions).toEqual([{ type: 'type-text', text: 'ok' }]);
+    expect(actions.filter(({ type }) => type === 'type-text')).toEqual([{ type: 'type-text', text: 'ok' }]);
   });
 
   it('requests no typing when Done is pressed with no text', () => {
     const { type, actions } = typing();
     expect(type('done').phase).toBe('idle');
-    expect(actions).toEqual([]);
+    expect(actions.filter(({ type }) => type === 'type-text')).toEqual([]);
   });
 
   it('starts with no text when opened again', () => {
@@ -317,5 +317,127 @@ describe('Gaze Keyboard layout', () => {
 
   it('puts every letter in exactly one group', () => {
     expect(GROUPS.join('')).toBe('abcdefghijklmnopqrstuvwxyz');
+  });
+});
+
+describe('Gaze Correction examples', () => {
+  const keyCentre = (id: string, group: string | null = null) => {
+    const { x, y, width, height } = layoutKeyboard(screen, group).keys.find((key) => key.id === id)!.rect;
+    return { x: x + width / 2, y: y + height / 2 };
+  };
+  const groupOf = (letter: string) => GROUPS.find((group) => group.includes(letter))!;
+
+  // Like the Gaze Keyboard helper, but the tracker reads every look `shift` px off, and the session corrects it back.
+  const typing = (shift = { x: 0, y: 0 }) => {
+    const actions: AgentAction[] = [];
+    const correct = (region: GazeEvent['region'] & {}) => ({ ...region, x: region.x - shift.x, y: region.y - shift.y });
+    const session = createSession({ screen, act: (action) => actions.push(action), correct });
+    session({ type: 'open-keyboard', t: 0 });
+    let t = 0;
+    let group: string | null = null;
+    const look = (at: { x: number; y: number }) => session(gaze((t += 100), { x: at.x + shift.x, y: at.y + shift.y, radius: 120 }));
+    const hold = (id: string, ms = 1000) => {
+      const at = keyCentre(id, group);
+      look(at);
+      session(gaze((t += ms), { x: at.x + shift.x, y: at.y + shift.y, radius: 120 }));
+      const state = look({ x: 800, y: 60 });
+      if (state.phase === 'typing') group = state.group;
+      return state;
+    };
+    const type = (...ids: string[]) => {
+      for (const id of ids) {
+        if (id.length === 1) hold(groupOf(id));
+        hold(id);
+      }
+    };
+    const learned = () => actions.flatMap((action) => (action.type === 'learn-gaze' ? [action.examples] : []));
+    return { session, actions, hold, type, learned, at: () => t };
+  };
+
+  it('teaches every confirmed press on Done, with where the gaze was and the key it meant', () => {
+    const { type, learned } = typing();
+    type('h', 'i', 'done');
+    expect(learned()).toEqual([
+      [
+        { gaze: keyCentre('fghij'), target: keyCentre('fghij') },
+        { gaze: keyCentre('h', 'fghij'), target: keyCentre('h', 'fghij') },
+        { gaze: keyCentre('fghij'), target: keyCentre('fghij') },
+        { gaze: keyCentre('i', 'fghij'), target: keyCentre('i', 'fghij') },
+        { gaze: keyCentre('done'), target: keyCentre('done') },
+      ],
+    ]);
+  });
+
+  it('records the uncorrected gaze, so the network learns the tracker error itself', () => {
+    const { type, learned } = typing({ x: -90, y: 50 });
+    type('a', 'done');
+    const [examples] = learned();
+    expect(examples).toHaveLength(3);
+    for (const { gaze, target } of examples) expect([gaze.x - target.x, gaze.y - target.y]).toEqual([-90, 50]);
+  });
+
+  it('drops both presses of a character that Delete removes', () => {
+    const { type, learned } = typing();
+    type('c', 'x', 'delete', 'done');
+    const targets = learned()[0].map(({ target }) => target);
+    expect(targets).toHaveLength(4);
+    expect(targets).not.toContainEqual(keyCentre('uvwxyz'));
+    expect(targets).toContainEqual(keyCentre('delete'));
+  });
+
+  it('drops the group that Back backs out of', () => {
+    const { hold, type, learned } = typing();
+    hold('klmno');
+    hold('back');
+    type('a', 'done');
+    expect(learned()[0].map(({ target }) => target)).not.toContainEqual(keyCentre('klmno'));
+  });
+
+  it('teaches nothing when the Stop Gesture closes the keyboard', () => {
+    const { session, type, learned, at } = typing();
+    type('h', 'i');
+    session(gaze(at() + 100, offScreen));
+    session(gaze(at() + 5100, offScreen));
+    expect(learned()).toEqual([]);
+  });
+
+  it('stops on recalibration, discards the text and resets Gaze Correction', () => {
+    const { session, type, actions, learned, at } = typing();
+    type('h', 'i');
+    expect(session({ type: 'recalibrated', t: at() + 1 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([{ type: 'reset-gaze-correction' }]);
+    expect(learned()).toEqual([]);
+  });
+
+  it('resets Gaze Correction from the keyboard, after twice the key dwell', () => {
+    const { hold, actions } = typing();
+    hold('reset', 1000);
+    expect(actions).toEqual([]);
+    hold('reset', 2000);
+    expect(actions).toEqual([{ type: 'reset-gaze-correction' }]);
+  });
+
+  it('does not teach presses made before a reset', () => {
+    const { hold, type, learned } = typing();
+    type('a');
+    hold('reset', 2000);
+    type('b', 'done');
+    expect(learned()[0].map(({ target }) => target)).toEqual([keyCentre('abcde'), keyCentre('b', 'abcde'), keyCentre('done')]);
+  });
+
+  it('wakes on the corrected gaze', () => {
+    const correct = (region: { x: number; y: number; radius: number }) => ({ ...region, x: region.x + 400 });
+    const session = createSession({ screen, correct });
+    session(gaze(0, { x: 400, y: 500, radius: 120 }));
+    expect(session(gaze(3000, { x: 400, y: 500, radius: 120 })).phase).toBe('waiting-for-target');
+  });
+
+  it('judges Look Away on the uncorrected gaze, so a learned shift cannot hide it', () => {
+    const correct = (region: { x: number; y: number; radius: number }) => ({ ...region, y: 500 });
+    const session = createSession({ screen, correct });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(4000, offScreen));
+    expect(session(gaze(9000, offScreen)).phase).toBe('idle');
   });
 });

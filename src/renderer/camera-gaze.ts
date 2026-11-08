@@ -17,7 +17,13 @@ function placeDot(x: number, y: number) {
   dot.style.top = `${y}px`;
 }
 
-export async function startCameraGaze(send: (event: GazeEvent) => void) {
+type Overlay = {
+  sendGaze(event: GazeEvent): void;
+  sendRecalibrated(): void;
+  onGazeDot(listener: (position: { x: number; y: number } | null) => void): void;
+};
+
+export async function startCameraGaze({ sendGaze: send, sendRecalibrated, onGazeDot }: Overlay) {
   let onSample: (sample: Sample) => void = () => {};
   let lastSampleAt = Date.now();
   const tracker = await createTracker((sample) => {
@@ -31,8 +37,17 @@ export async function startCameraGaze(send: (event: GazeEvent) => void) {
     if (t - lastSampleAt > STALL_MS) onSample({ t, estimate: null });
   }, STALL_CHECK_MS);
 
+  // The main process sends the dot back with Gaze Correction applied. The calibration dot is placed here instead.
+  onGazeDot((position) => {
+    if (root.dataset.calibrating !== undefined) return;
+    dot.hidden = !position;
+    if (position) placeDot(position.x, position.y);
+  });
+
   // No click starts this, so the user gets a moment to get in frame before the dots begin.
   const runCalibration = async () => {
+    // Every calibration, the first included, starts Gaze Correction from nothing.
+    sendRecalibrated();
     // Null, so calibrating can't count towards a hold, and it stops the agent as a Look Away.
     onSample = ({ t }) => send({ type: 'gaze', t, region: null });
     root.dataset.calibrating = '';
@@ -47,10 +62,7 @@ export async function startCameraGaze(send: (event: GazeEvent) => void) {
     await calibrate(tracker, { width: window.innerWidth, height: window.innerHeight }, placeDot);
     dot.hidden = true;
     delete root.dataset.calibrating;
-    onSample = createGazeSource(send, runCalibration, (position) => {
-      dot.hidden = !position;
-      if (position) placeDot(position.x, position.y);
-    });
+    onSample = createGazeSource(send, runCalibration, () => {});
   };
   await runCalibration();
 }

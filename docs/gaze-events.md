@@ -24,6 +24,6 @@ Rules for a gaze source:
 
 A Gaze Region is on the centre box when its centre is inside the box, and off screen when its centre is off screen or it's `null`. Keep `radius` honest, because it goes to the model as a hint.
 
-The session core detects the Start Gesture and Look Away, so they can be tested with scripted gaze events. A gaze source only reports where the user is looking. The Recalibrate Gesture is handled inside real tracking, outside this format, and tracking sends `region: null` while calibrating and until the Start Gesture.
+The session core detects the Start Gesture and Look Away, so they can be tested with scripted gaze events. A gaze source only reports where the user is looking. The Recalibrate Gesture is handled inside real tracking, and tracking sends `region: null` while calibrating and until the Start Gesture. When a calibration starts, the first included, tracking also sends `{ type: 'recalibrated', t }`. The session stops, discards typed text and resets Gaze Correction, see [gaze-correction.md](gaze-correction.md).
 
 The session core also takes timer ticks, `{ type: 'tick', t }`, so Look Away still fires if gaze events stop.
