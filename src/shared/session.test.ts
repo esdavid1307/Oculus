@@ -822,7 +822,31 @@ describe('Suggested Intents', () => {
     session(tick(9000));
     expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
     expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2 });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2, sinceWakeMs: 6100 });
+  });
+
+  it('counts Time to Action from the Start Gesture through every wait, including after Something else', () => {
+    const { session, actions } = choosing();
+    session(select(11_000));
+    session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] });
+    session(select(12_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Mute', sinceWakeMs: 9100 });
+  });
+
+  it('counts Time to Action from the last icon opened when the agent stayed awake after it', () => {
+    const actions: AgentAction[] = [];
+    const dock = ['Finder', 'Safari'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
+    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => dock });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, { x: 700, y: 820, radius: 120 }));
+    expect(session(gaze(6100, { x: 700, y: 820, radius: 120 })).phase).toBe('icons');
+    expect(session(select(6200)).phase).toBe('waiting-for-target');
+    session(gaze(60_000, target));
+    expect(session(gaze(61_000, target)).phase).toBe('thinking');
+    session({ type: 'intents', t: 62_000, request: 1, intents: ['Pause'] });
+    session(select(62_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Pause', sinceWakeMs: 62_100 - 6200 });
   });
 
   it('presses nothing by looking at a choice', () => {
@@ -941,7 +965,7 @@ describe('Running an Intent', () => {
   it('asks the agent to run the chosen Intent on its target, with the next request number', () => {
     const { session, actions } = reach('choosing');
     expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad', activity: '' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2 });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2, sinceWakeMs: 2100 });
   });
 
   it('shows what the agent is doing during its run', () => {
