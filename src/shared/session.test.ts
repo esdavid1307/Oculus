@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import type { Rect } from './geometry';
 import { GROUPS, layoutIntents, layoutKeyboard } from './keyboard';
-import { createSession, type AgentAction, type OverlayState } from './session';
+import { createSession, type AgentAction, type OverlayState, type SessionInput } from './session';
 
 const screen = { width: 1600, height: 1000 };
 const inBox = { x: 800, y: 500, radius: 120 };
@@ -1295,5 +1295,165 @@ describe('Gaze Keyboard layout', () => {
 
   it('puts every letter in exactly one group', () => {
     expect(GROUPS.join('')).toBe('abcdefghijklmnopqrstuvwxyz');
+  });
+});
+
+describe('Stop Gesture in every state', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const target = { x: 300, y: 300, radius: 120 };
+  const nearDock = { x: 700, y: 820, radius: 120 };
+  const dock = [{ name: 'Finder', rect: { x: 600, y: 910, width: 66, height: 82 } }];
+  const commands = [{ name: 'Copy', rect: { x: 100, y: 40, width: 200, height: 22 } }];
+
+  type Until = 'waiting-for-target' | 'thinking' | 'choosing' | 'running' | 'typing' | 'dock' | 'menu';
+
+  // Woken at 3 s. Every state is reached by 6.2 s, so looking away from 7 s stops it at 12 s.
+  const reach = (until: Until) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), suggest: () => [], dock: () => dock });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    if (until === 'typing') session({ type: 'open-keyboard', t: 3100 });
+    if (until === 'dock') {
+      session(gaze(3100, nearDock));
+      session(gaze(6100, nearDock));
+    }
+    if (until === 'menu') {
+      // A menu bar item opened a menu, which is scanned next.
+      session({ type: 'menu-opened', t: 3100, icons: commands });
+    }
+    if (until === 'thinking' || until === 'choosing' || until === 'running') {
+      session(gaze(3100, target));
+      session(gaze(4100, target));
+    }
+    if (until === 'choosing' || until === 'running') session({ type: 'intents', t: 5000, request: 1, intents: ['Skip the ad', 'Pause'] });
+    if (until === 'running') session(select(5100));
+    return { session, actions };
+  };
+
+  const states: Until[] = ['waiting-for-target', 'thinking', 'choosing', 'running', 'typing', 'dock'];
+
+  it.each(states)('counts down and goes idle after 5 seconds off screen while %s', (until) => {
+    const { session } = reach(until);
+    expect(session(gaze(7000, offScreen))).not.toHaveProperty('stopInMs');
+    expect(session(gaze(8000, offScreen)).stopInMs).toBe(4000);
+    expect(session(gaze(9000, offScreen)).stopInMs).toBe(3000);
+    expect(session(tick(11_999)).stopInMs).toBe(1);
+    expect(session(tick(12_000))).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it.each(states)('has no countdown while the gaze is on the screen, or after it comes back, while %s', (until) => {
+    const { session } = reach(until);
+    expect(session(gaze(7000, target))).not.toHaveProperty('stopInMs');
+    session(gaze(7100, offScreen));
+    expect(session(gaze(8000, target))).not.toHaveProperty('stopInMs');
+  });
+
+  it.each(states)('shows no countdown for a moment off the screen, such as a lost camera frame, while %s', (until) => {
+    const { session } = reach(until);
+    expect(session(gaze(7000, offScreen))).not.toHaveProperty('stopInMs');
+    expect(session(gaze(7900, offScreen))).not.toHaveProperty('stopInMs');
+    expect(session(gaze(7950, target))).not.toHaveProperty('stopInMs');
+  });
+
+  it('releases the Dock when recalibrating during a Dock hold', () => {
+    const { session, actions } = reach('waiting-for-target');
+    session(gaze(3100, nearDock));
+    expect(actions).toEqual([{ type: 'show-dock' }]);
+    session({ type: 'recalibrate', t: 3500 });
+    expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }]);
+    // Waking again doesn't carry the old hold over into an icon scan.
+    session(gaze(4000, inBox));
+    expect(session(gaze(7000, inBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(7100, target)).phase).toBe('waiting-for-target');
+  });
+
+  it.each(states)('stops at once on recalibrating while %s', (until) => {
+    const { session } = reach(until);
+    expect(session({ type: 'recalibrate', t: 7000 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it('shows no countdown while asleep, or on the result of a finished run', () => {
+    const asleep = createSession({ screen });
+    expect(asleep(gaze(0, offScreen))).not.toHaveProperty('stopInMs');
+    const { session } = reach('running');
+    session({ type: 'run-finished', t: 6000, request: 2, ok: true, summary: 'Done.' });
+    expect(session(gaze(6100, offScreen))).not.toHaveProperty('stopInMs');
+  });
+
+  it('closes the Gaze Keyboard without typing the text, on the Stop Gesture and on recalibrating', () => {
+    for (const stopIt of [(s: ReturnType<typeof reach>['session']) => s(gaze(12_000, offScreen)), (s: ReturnType<typeof reach>['session']) => s({ type: 'recalibrate', t: 7000 })]) {
+      const { session, actions } = reach('typing');
+      session(select(3200));
+      session(gaze(7000, offScreen));
+      expect(stopIt(session).phase).toBe('idle');
+      expect(actions.filter((action) => action.type === 'type-text')).toEqual([]);
+    }
+  });
+
+  it('discards typed text on recalibrating, so the next keyboard starts empty', () => {
+    const { session } = reach('typing');
+    session(select(3200));
+    session({ type: 'recalibrate', t: 7000 });
+    expect(session({ type: 'open-keyboard', t: 8000 })).toMatchObject({ phase: 'typing', text: '' });
+  });
+
+  it('opens nothing from an icon scan on the Stop Gesture or recalibrating', () => {
+    for (const stopIt of [(s: ReturnType<typeof reach>['session']) => s(gaze(12_000, offScreen)), (s: ReturnType<typeof reach>['session']) => s({ type: 'recalibrate', t: 7000 })]) {
+      const { session, actions } = reach('dock');
+      session(gaze(7000, offScreen));
+      stopIt(session);
+      expect(actions.filter((action) => action.type === 'open-icon')).toEqual([]);
+    }
+  });
+
+  it('closes the open menu on the Stop Gesture and on recalibrating', () => {
+    const { session, actions } = reach('menu');
+    session(gaze(7000, offScreen));
+    session(gaze(12_000, offScreen));
+    expect(actions.filter((action) => action.type === 'close-menu')).toHaveLength(1);
+    const other = reach('menu');
+    other.session({ type: 'recalibrate', t: 7000 });
+    expect(other.actions.filter((action) => action.type === 'close-menu')).toHaveLength(1);
+  });
+
+  it('stops a run once on recalibrating, and asks for nothing after it', () => {
+    const { session, actions } = reach('running');
+    const before = actions.length;
+    session({ type: 'recalibrate', t: 7000 });
+    expect(actions.slice(before)).toEqual([{ type: 'stop-run', request: 2 }]);
+    for (const input of [gaze(7100, offScreen), gaze(12_100, offScreen), tick(20_000), select(21_000), { type: 'recalibrate', t: 22_000 } as const]) session(input);
+    expect(actions).toHaveLength(before + 1);
+  });
+
+  it('asks for nothing after the stop-run of the Stop Gesture, whatever arrives next', () => {
+    const { session, actions } = reach('running');
+    session(gaze(6000, offScreen));
+    session(gaze(11_000, offScreen));
+    const after = actions.length;
+    const inputs = [
+      gaze(11_100, target),
+      tick(12_000),
+      select(12_100),
+      { type: 'run-finished', t: 12_200, request: 2, ok: true, summary: 'Late.' } as const,
+      { type: 'intents', t: 12_300, request: 2, intents: ['Pause'] } satisfies SessionInput,
+      gaze(13_000, offScreen),
+      gaze(18_000, offScreen),
+    ];
+    for (const input of inputs) expect(session(input).phase).toBe('idle');
+    expect(actions).toHaveLength(after);
+  });
+
+  it('does nothing on recalibrating while asleep', () => {
+    const { actions } = reach('waiting-for-target');
+    const session = createSession({ screen, act: (action) => actions.push(action) });
+    expect(session({ type: 'recalibrate', t: 100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([]);
+  });
+
+  it('lets the Dock go on recalibrating, as it does on the Stop Gesture', () => {
+    const { session, actions } = reach('dock');
+    session({ type: 'recalibrate', t: 7000 });
+    expect(actions.filter((action) => action.type === 'release-dock')).toHaveLength(1);
   });
 });

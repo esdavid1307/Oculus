@@ -65,7 +65,7 @@ The run of quick, deliberate blinks that restarts calibration.
 _Avoid_: Reset, blink command
 
 **Stop Gesture**:
-Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts.
+Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts. A countdown ("Stopping in 3…") shows while it runs, and recalibrating counts as a Stop at once, discarding any typed text.
 _Avoid_: Cancel, abort
 
 **Look Away**:
