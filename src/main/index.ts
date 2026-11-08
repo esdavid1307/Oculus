@@ -399,8 +399,9 @@ function createOverlay() {
   // Off unless config.json says "historyPerSite": true, since it needs a one-time Automation permission for Chrome.
   const perSite = (settings as { historyPerSite?: unknown } | undefined)?.historyPerSite === true;
   if (perSite) execFile('osascript', ['-l', 'JavaScript', '-e', ASK_CHROME], () => {});
-  // The context of each suggest-intents request, read when it starts since the front app can change during a run.
-  const contexts = new Map<number, Promise<string>>();
+  // The context of the latest suggest-intents request, read when it starts since the front app can change during a run.
+  // A run is always chosen from the latest picker, so it learns into this context.
+  let askedContext: Promise<string> = Promise.resolve('');
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
@@ -420,9 +421,7 @@ function createOverlay() {
         }
       });
     } else if (action.type === 'suggest-intents') {
-      const context = readContext(perSite);
-      contexts.set(action.request, context);
-      for (const old of contexts.keys()) if (old < action.request - 10) contexts.delete(old);
+      const context = (askedContext = readContext(perSite));
       // Not after Something else: those are the ones the user just turned down. The answer comes after this session
       // call has returned, because osascript is asynchronous.
       if (action.turnedDown.length === 0)
@@ -443,6 +442,8 @@ function createOverlay() {
         });
     } else if (action.type === 'run-intent') {
       const { intent, region, request, sinceWakeMs } = action;
+      // Taken now: by the time the run ends, Something else could have asked about a new target.
+      const context = askedContext;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
       // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
       // starts, so a run that fails at once, or is turned away because another is going, is still counted. Only logged, never shown.
@@ -456,9 +457,8 @@ function createOverlay() {
       void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
-        // The run's request number follows the suggest-intents request it was chosen from.
         if (outcome.ok)
-          void contexts.get(request - 1)?.then((name) => {
+          void context.then((name) => {
             try {
               history.learn(name, intent);
             } catch (error) {
