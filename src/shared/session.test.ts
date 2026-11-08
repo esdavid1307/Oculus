@@ -393,6 +393,14 @@ describe('Suggested Intents', () => {
     expect(moved.session(gaze(4600, { ...target, x: target.x + 400 })).phase).toBe('thinking');
   });
 
+  it('asks about where the gaze settled, not where the hold began', () => {
+    const { session, actions } = awake();
+    const settled = { ...target, x: target.x + 40 };
+    session(gaze(3100, target));
+    session(gaze(4100, settled));
+    expect(actions).toEqual([{ type: 'suggest-intents', region: settled, request: 1, turnedDown: [] }]);
+  });
+
   it('needs a full new hold after waking again, even if the last hold was cut short by the Gaze Keyboard', () => {
     const { session, actions } = awake();
     session(gaze(3100, target));

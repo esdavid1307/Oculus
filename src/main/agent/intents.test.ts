@@ -46,6 +46,10 @@ describe('parseIntents', () => {
     expect(parseIntents('{"intents": ["Pause", "pause", "Mute", "Like", "Skip the ad"]}')).toEqual(['Skip the ad', 'Pause', 'Mute']);
   });
 
+  it('never offers an intent the user already turned down', () => {
+    expect(parseIntents('{"intents": ["open this issue", "Show closed issues"]}', ['Open this issue'])).toEqual(['Show closed issues']);
+  });
+
   it('finds the JSON inside a reply with words around it', () => {
     expect(parseIntents('Here you go:\n```json\n{"intents": ["Open the first result"]}\n```')).toEqual(['Open the first result']);
   });

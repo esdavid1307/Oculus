@@ -47,13 +47,14 @@ export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown
 const SKIP_AD = /\bskip\b.*\bads?\b/i;
 
 // Anything unreadable gives no intents, and the user can still choose Something else.
-export function parseIntents(reply: string): string[] {
+export function parseIntents(reply: string, turnedDown: string[] = []): string[] {
   const json = reply.match(/\{[\s\S]*\}/)?.[0];
   if (!json) return [];
   try {
     const { intents } = JSON.parse(json);
     if (!Array.isArray(intents)) return [];
-    const seen = new Set<string>();
+    // Turned-down intents count as seen, so the model can't offer them again word for word.
+    const seen = new Set(turnedDown.map((text) => text.toLowerCase()));
     const texts = intents.flatMap((intent) => (typeof intent === 'string' && intent.trim() ? [intent.trim()] : []));
     const unique = texts.filter((text) => !seen.has(text.toLowerCase()) && seen.add(text.toLowerCase()));
     // Cheap local guarantee that skipping an ad is offered first, even if the model buried it.
@@ -65,7 +66,7 @@ export function parseIntents(reply: string): string[] {
   }
 }
 
-async function askApi(config: AgentConfig, shot: Screenshot, prompt: string) {
+async function askApi(config: AgentConfig, shot: Screenshot, prompt: string, signal?: AbortSignal) {
   const response = await new Anthropic().beta.messages.create({
     model: config.model,
     max_tokens: AGENT_MAX_TOKENS,
@@ -82,19 +83,20 @@ async function askApi(config: AgentConfig, shot: Screenshot, prompt: string) {
         ],
       },
     ],
-  });
+  }, { signal });
   if (response.stop_reason === 'refusal') throw new Error(`refused: ${response.stop_details?.category}`);
   return response.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
 }
 
 // Claude Code can only Read the screenshot: no other tools, and none of the user's own settings, plugins or MCP servers.
-function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
+function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string, signal?: AbortSignal) {
   if (!shot.savedTo) throw new Error('Screenshot was not saved');
   // Beside the screenshot, like the agent check's run folder, so the repo's own Claude Code settings stay out.
   const cwd = dirname(shot.savedTo);
   const args = [
     '-p', `${prompt}\n\nThe screenshot is ${shot.savedTo}. Read it first.`,
     '--model', config.model,
+    '--effort', config.effort,
     '--output-format', 'json',
     '--append-system-prompt', SYSTEM_PROMPT,
     // Read only beside the screenshot: screen text could ask for files elsewhere, like credentials.
@@ -118,9 +120,14 @@ function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
       timedOut = true;
       child.kill();
     }, CLAUDE_CODE_TIMEOUT_MS);
+    // A dropped request (a newer one, or the Stop Gesture) must not keep Claude running.
+    const stop = () => child.kill();
+    signal?.addEventListener('abort', stop, { once: true });
     child.on('error', (cause) => reject(new Error(`Could not start claude, is Claude Code installed? (${cause.message})`)));
     child.on('close', (code) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      if (signal?.aborted) return reject(new Error('cancelled'));
       if (timedOut) return reject(new Error(`claude timed out after ${CLAUDE_CODE_TIMEOUT_MS / 1000} s`));
       try {
         const result = JSON.parse(stdout);
@@ -140,14 +147,15 @@ export async function suggestIntents(
   config: AgentConfig,
   capture: Capture,
   log: (line: string) => void = console.log,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const started = Date.now();
   try {
     if (config.backend === 'api' && !process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing: copy .env.example to .env');
     const shot = await capture();
     const prompt = intentsPrompt(region, shot.frame, turnedDown);
-    const reply = config.backend === 'api' ? await askApi(config, shot, prompt) : await askClaudeCode(config, shot, prompt);
-    const intents = parseIntents(reply);
+    const reply = config.backend === 'api' ? await askApi(config, shot, prompt, signal) : await askClaudeCode(config, shot, prompt, signal);
+    const intents = parseIntents(reply, turnedDown);
     log(`${LOG_PREFIX} suggested intents in ${Date.now() - started} ms (${config.backend}, ${config.model}): ${JSON.stringify(intents)}`);
     return intents;
   } catch (error) {

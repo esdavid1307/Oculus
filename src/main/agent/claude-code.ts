@@ -23,11 +23,12 @@ export function systemPrompt(hands: string, width: number, height: number) {
   ].join('\n');
 }
 
-export function claudeArgs(options: Pick<AgentRunOptions, 'goal' | 'model'>, hands: string, firstShot: string, width: number, height: number) {
+export function claudeArgs(options: Pick<AgentRunOptions, 'goal' | 'model' | 'effort'>, hands: string, firstShot: string, width: number, height: number) {
   return [
     '-p',
     `${options.goal}\n\nThe current screen is in ${firstShot}.`,
     '--model', options.model,
+    '--effort', options.effort,
     '--output-format', 'json',
     '--append-system-prompt', systemPrompt(hands, width, height),
     // Read only inside the run folder: screen text could ask for files elsewhere, like credentials.

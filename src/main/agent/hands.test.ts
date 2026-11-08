@@ -37,7 +37,7 @@ describe('hands', () => {
 });
 
 describe('claudeArgs', () => {
-  const args = claudeArgs({ goal: 'Open example.com', model: 'claude-sonnet-5-5' }, '/repo/scripts/oculus-hands.mjs', '/runs/shot-1.png', 1280, 832);
+  const args = claudeArgs({ goal: 'Open example.com', model: 'claude-sonnet-5-5', effort: 'low' }, '/repo/scripts/oculus-hands.mjs', '/runs/shot-1.png', 1280, 832);
   const after = (flag: string) => args[args.indexOf(flag) + 1];
 
   it('runs headless with the goal and the first screenshot', () => {
@@ -46,6 +46,7 @@ describe('claudeArgs', () => {
     expect(args[1]).toContain('/runs/shot-1.png');
     expect(after('--output-format')).toBe('json');
     expect(after('--model')).toBe('claude-sonnet-5-5');
+    expect(after('--effort')).toBe('low');
   });
 
   it('allows only the hands script and Read, and keeps the user settings and MCP servers out', () => {

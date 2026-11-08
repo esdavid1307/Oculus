@@ -125,6 +125,19 @@ body {
   display: block;
 }
 
+#no-intents {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  text-align: center;
+}
+
+#no-intents[hidden] {
+  display: none;
+}
+
 /* Suggested Intents reuse the keyboard's keys, without the typed text. */
 [data-phase='choosing'] #typed {
   display: none;
