@@ -2,10 +2,14 @@ import { execFile } from 'node:child_process';
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
+import { mouseRegion } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
+import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
+import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
 import { execute } from './agent/executor';
+import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
@@ -37,6 +41,8 @@ const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
 const DEV_LOOK_AWAY_SHORTCUT = 'CommandOrControl+Shift+L';
 // Time for the Centre Box to be drawn before the first screenshot.
 const OVERLAY_DRAW_MS = 1000;
+// Time for the Dock to come back up after it restarts with a new icon size.
+const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 
@@ -119,9 +125,14 @@ function releaseDock() {
 const READ_MENU_BAR = `const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
-  const items = events.processes.byName(process).menuBars[0].menuBarItems;
+  // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
+  const bars = events.processes.byName(process).menuBars;
+  if (bars.length === 0) return [];
+  const items = bars[0].menuBarItems;
   const sizes = items.size();
-  return items.position().map(([x, y], i) => ({ path: [process, 0, i], x, y, width: sizes[i][0], height: sizes[i][1] }));
+  const titles = items.name();
+  const descriptions = items.description();
+  return items.position().map(([x, y], i) => ({ path: [process, 0, i], label: titles[i] || descriptions[i] || 'Menu bar item', x, y, width: sizes[i][0], height: sizes[i][1] }));
 }))`;
 
 // Prints the commands of the menu the item opened, leaving out separators and disabled commands. A status item that
@@ -138,7 +149,7 @@ const OPEN_MENU_BAR_ITEM = `function run([path]) {
   const enabled = commands.enabled();
   const sizes = commands.size();
   return JSON.stringify(commands.position().flatMap(([x, y], i) =>
-    names[i] && enabled[i] ? [{ path: [process, bar, item, i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
+    names[i] && enabled[i] ? [{ path: [process, bar, item, i], label: names[i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
 }`;
 
 const PRESS_MENU_COMMAND = `function run([path]) {
@@ -151,10 +162,10 @@ const CLOSE_MENU = `function run([path]) {
   Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
 }`;
 
-type PlacedPath = { path: unknown[]; x: number; y: number; width: number; height: number };
+type PlacedPath = { path: unknown[]; label: string; x: number; y: number; width: number; height: number };
 
 const toIcons = (placed: PlacedPath[], origin: Rect): Icon[] =>
-  placed.map(({ path, x, y, width, height }) => ({ name: JSON.stringify(path), rect: { x: x - origin.x, y: y - origin.y, width, height } }));
+  placed.map(({ path, label, x, y, width, height }) => ({ name: JSON.stringify(path), label, rect: { x: x - origin.x, y: y - origin.y, width, height } }));
 
 function readMenuBar(origin: Rect, done: (icons: Icon[]) => void) {
   execFile('osascript', ['-l', 'JavaScript', '-e', READ_MENU_BAR], (error, stdout) => {
@@ -259,11 +270,13 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
     };
     // Dock separators have no name, and a Desktop icon under a window can't be seen.
     const icons = names.flatMap((name, i) => {
+      // The three lists are read one after another, so an icon added in between (the app's own, at launch) has no place yet.
+      if (!positions[i] || !sizes[i]) return [];
       const [x, y] = positions[i];
       const [width, height] = sizes[i];
       const rect = { x, y, width, height };
       if (name === null || windows.some((window) => overlaps(rect, window))) return [];
-      return [{ name, rect: { ...rect, x: x - origin.x, y: y - origin.y } }];
+      return [{ name, label: name, rect: { ...rect, x: x - origin.x, y: y - origin.y } }];
     });
     done(icons);
   });
@@ -289,7 +302,9 @@ function createWordPrediction(enabled: boolean) {
   }
   const predictor = createPredictor(spokenEnglish as BaseWords, readWordModel(saved));
   return {
+    enabled,
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
+    suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
@@ -298,6 +313,58 @@ function createWordPrediction(enabled: boolean) {
       renameSync(`${file}.tmp`, file);
     },
   };
+}
+
+// What the user ran before, per app. Chosen Intents only, kept on this machine.
+function createHistory(ranker: unknown) {
+  const file = join(app.getPath('userData'), 'intent-history.json');
+  let saved: unknown;
+  try {
+    saved = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Starting Intent History fresh, ignoring ${file}:`, error);
+  }
+  const history = createIntentHistory(readIntentHistory(saved), parseIntentRanker(ranker));
+  return {
+    suggest: history.suggest,
+    learn(context: string, intent: string) {
+      history.learn(context, intent);
+      // Write then rename, so a crash mid-write never leaves a half file that would start the history fresh.
+      writeFileSync(`${file}.tmp`, JSON.stringify(history.model()));
+      renameSync(`${file}.tmp`, file);
+    },
+  };
+}
+
+// The app in front, and with "per-site" the URL of Chrome's front tab. One osascript, so a browser costs no extra
+// launch. An Incognito window gives no URL, so private browsing is never written to the history file.
+const READ_FRONT = `function run(argv) {
+  const name = Application("System Events").processes.whose({frontmost: true})[0].name();
+  let url = "";
+  if (argv[0] === "per-site" && name === "Google Chrome") {
+    try {
+      const front = Application("Google Chrome").windows[0];
+      if (front.mode() !== "incognito") url = front.activeTab.url();
+    } catch (error) {}
+  }
+  return name + "\\n" + url;
+}`;
+
+// Asks macOS once, at start, to let Oculus read Chrome, so the Automation dialog never shows up in the middle of a run.
+// running() doesn't launch Chrome. If Chrome isn't open yet, the dialog comes the first time Oculus reads it.
+const ASK_CHROME = 'const chrome = Application("Google Chrome"); chrome.running() ? chrome.windows.length : 0';
+
+// The app in front, plus the site in Chrome when perSite is on. The overlay never takes focus, so this is what the user
+// is looking at. shortcut: System Events and Chrome through osascript. Any failure, including a denied Automation
+// permission, never reaches the user: a site that can't be read gives the app alone, and an app that can't be read
+// gives '', which means no history for this request.
+function readContext(perSite: boolean): Promise<string> {
+  return new Promise((resolve) => {
+    execFile('osascript', ['-l', 'JavaScript', '-e', READ_FRONT, perSite ? 'per-site' : ''], { timeout: 3000 }, (error, stdout) => {
+      const [name = '', url = ''] = error ? [] : stdout.split('\n').map((line) => line.trim());
+      resolve(historyContext(name, url));
+    });
+  });
 }
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
@@ -309,6 +376,25 @@ function typeText(text: string) {
     // The keyboard has already closed, so the clipboard is the only copy of the text left.
     clipboard.writeText(text);
     console.error('Could not type the Gaze Keyboard text, so it is on the clipboard:', error.message);
+  });
+}
+
+// Whether the box the text is about to go into is a password field, whose text must never be remembered. Checked on
+// the focused element's subrole. If there is no focused element or it can't be read, the script throws and that
+// counts as secure: not learning is the safe mistake. A field with no subrole is an ordinary field.
+const FOCUSED_SUBROLE = `const events = Application('System Events');
+const focused = events.processes.whose({ frontmost: true })[0].attributes.byName('AXFocusedUIElement').value();
+if (!focused) throw new Error('No focused element');
+let subrole = '';
+try { subrole = focused.attributes.byName('AXSubrole').value() || ''; } catch (error) {}
+subrole`;
+
+// Typing waits on this, so a hung osascript is cut off and, like any other failure, counts as secure: the text is
+// still typed, only not learned.
+function isSecureField(done: (secure: boolean) => void) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], { timeout: 2000 }, (error, stdout) => {
+    if (error) console.warn('Could not tell whether the field is a password field, so not learning:', error.message);
+    done(error !== null || stdout.trim() === 'AXSecureTextField');
   });
 }
 
@@ -366,21 +452,51 @@ function createOverlay() {
       textBoxByName = new Map(read.map(({ name, rect }) => [name, rect]));
     });
   };
-  refreshIcons();
   const settings = readTimingsFile();
+  const largeView = readLargeView(settings);
+  // The renderer has no file access, so it gets the settings once the page has loaded.
+  overlay.webContents.once('did-finish-load', () => overlay.webContents.send('large-view', largeView));
+  // A bigger Dock moves its icons, so they are read again once it has restarted.
+  const dockChanged = applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
+  if (dockChanged) setTimeout(refreshIcons, DOCK_RESTART_MS);
+  refreshIcons();
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
+  // Count and recency unless config.json says "intentRanker": "neural".
+  const history = createHistory((settings as { intentRanker?: unknown } | undefined)?.intentRanker);
+  // Off unless config.json says "historyPerSite": true, since it needs a one-time Automation permission for Chrome.
+  const perSite = (settings as { historyPerSite?: unknown } | undefined)?.historyPerSite === true;
+  if (perSite) execFile('osascript', ['-l', 'JavaScript', '-e', ASK_CHROME], () => {});
+  // The context of the latest suggest-intents request, read when it starts since the front app can change during a run.
+  // A run is always chosen from the latest picker, so it learns into this context.
+  let askedContext: Promise<string> = Promise.resolve('');
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
-      typeText(action.text);
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
-      // A failed save must not stop the text being typed, so it only warns.
-      try {
-        words.learn(action.text);
-      } catch (error) {
-        console.warn('Could not save word prediction:', error);
+      if (!words.enabled) {
+        typeText(action.text);
+        return;
       }
+      // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
+      isSecureField((secure) => {
+        typeText(action.text);
+        if (secure) return;
+        // A failed save must not stop the text being typed, so it only warns.
+        try {
+          words.learn(action.text);
+        } catch (error) {
+          console.warn('Could not save word prediction:', error);
+        }
+      });
     } else if (action.type === 'suggest-intents') {
+      const context = (askedContext = readContext(perSite));
+      // Not after Something else: those are the ones the user just turned down. The answer comes after this session
+      // call has returned, because osascript is asynchronous.
+      if (action.turnedDown.length === 0)
+        void context.then((name) => {
+          const past = name === '' ? [] : history.suggest(name);
+          if (past.length > 0) advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
+        });
       // A folder per request, so overlapping requests never share a screenshot. It's deleted once answered.
       const saveDir = join(app.getPath('userData'), 'intents', String(action.request));
       const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
@@ -393,16 +509,30 @@ function createOverlay() {
           rmSync(saveDir, { recursive: true, force: true });
         });
     } else if (action.type === 'run-intent') {
-      const { intent, region, request } = action;
+      const { intent, region, request, sinceWakeMs } = action;
+      // Taken now: by the time the run ends, Something else could have asked about a new target.
+      const context = askedContext;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
+      // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
+      // starts, so a run that fails at once, or is turned away because another is going, is still counted. Only logged, never shown.
+      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
       // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
       if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
+      const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
+      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
+        if (outcome.ok)
+          void context.then((name) => {
+            try {
+              history.learn(name, intent);
+            } catch (error) {
+              console.warn('Could not save Intent History:', error);
+            }
+          });
         finish(outcome.ok, outcome.summary);
       });
     } else if (action.type === 'stop-run') {
@@ -437,6 +567,7 @@ function createOverlay() {
     timings: settings,
     act: perform,
     suggest: words.suggest,
+    suggestPhrase: words.suggestPhrase,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
@@ -444,8 +575,9 @@ function createOverlay() {
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
-    // The Stop Gesture or the Gaze Keyboard ended the wait, so the answer would be dropped anyway.
-    if (state.phase !== 'thinking') pendingIntents?.abort();
+    // The Stop Gesture, the Gaze Keyboard or a run ended the wait, so the answer would be dropped anyway.
+    // The picker can be up already, with past Intents, while Claude is still answering.
+    if (state.phase !== 'thinking' && state.phase !== 'choosing') pendingIntents?.abort();
     overlay.webContents.send('overlay-state', state);
   };
 
@@ -454,15 +586,14 @@ function createOverlay() {
   if (useMouse) {
     timers.push(
       setInterval(() => {
-        const { x, y } = screen.getCursorScreenPoint();
-        const region = lookingAway ? null : { x: x - bounds.x, y: y - bounds.y, radius: MOUSE_REGION_RADIUS };
+        const region = mouseRegion(screen.getCursorScreenPoint(), bounds, MOUSE_REGION_RADIUS, lookingAway);
         advance({ type: 'gaze', t: Date.now(), region });
       }, MOUSE_SAMPLE_MS),
     );
   } else {
-    // The overlay page only sends gaze and Select Blinks. A model answer must never come from it.
+    // The overlay page only sends gaze, Select Blinks and recalibrating. A model answer must never come from it.
     ipcMain.on('gaze', (_event, input: SessionInput) => {
-      if (input?.type === 'gaze' || input?.type === 'select') advance(input);
+      if (input?.type === 'gaze' || input?.type === 'select' || input?.type === 'recalibrate') advance(input);
     });
   }
   if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);
@@ -490,5 +621,6 @@ app.whenReady().then(async () => {
 });
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  restoreDock(app.getPath('userData'));
   currentRun?.controller.abort();
 });

@@ -155,7 +155,11 @@ export async function runAgentCheck(options: AgentRunOptions, deps: AgentDeps): 
       }
       if (error) break;
       messages.push({ role: 'user', content: results });
-      if (step === maxSteps) log(`${LOG_PREFIX} max steps reached`);
+      if (step === maxSteps) {
+        log(`${LOG_PREFIX} max steps reached`);
+        // Still acting at the last step, so the goal isn't done, whatever the earlier actions did.
+        error = 'Ran out of steps';
+      }
     }
   } catch (cause) {
     if (deps.signal?.aborted || cause instanceof Anthropic.APIUserAbortError) error = STOPPED_ERROR;

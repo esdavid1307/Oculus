@@ -136,11 +136,12 @@ describe('runAgentCheck', () => {
     expect(result).toMatchObject({ finalText: 'All set.', ok: false, error: null });
   });
 
-  it('bounds the model calls by maxSteps', async () => {
+  // A run still acting at its last step hasn't finished, so it must not be reported as done.
+  it('bounds the model calls by maxSteps, and fails when they run out', async () => {
     const { deps, sent, logs } = setup([reply([use('a', 'type', { text: 'x' })])]);
     const result = await runAgentCheck({ ...options, maxSteps: 3 }, deps);
     expect(sent).toHaveLength(3);
-    expect(result).toMatchObject({ ok: true, error: null });
+    expect(result).toMatchObject({ ok: false, error: 'Ran out of steps' });
     expect(logs).toContain('[agent-check] max steps reached');
     expect(AGENT_MAX_STEPS).toBe(5);
   });

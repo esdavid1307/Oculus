@@ -188,7 +188,7 @@ npm run typecheck
 
 Hold the mouse on the centre box to perform the Start Gesture. Press Cmd+Option+Q to quit, because the overlay ignores clicks.
 
-After the chime, move off the Centre Box, then hold the mouse still on something for 1 second to pick it as the target. Something under the Centre Box needs that move off first, so staying on the box after waking picks nothing. The overlay hides for a moment while it takes a screenshot, then shows "Thinking…" while Claude suggests up to 3 Suggested Intents for that spot. They scan like the Gaze Keyboard: press Cmd+Shift+Space (or do a Select Blink) on the one you want, or on Something else for different suggestions, which tells Claude what you turned down. Choosing one runs it on whatever is on screen, and the overlay shows a banner while it runs and the result after. Look away for 5 seconds to stop a run, or press Cmd+Shift+L in a dev run to toggle Look Away with the mouse. See `docs/youtube-flow.md`. Suggestions use the same backend and settings as the agent check (`OCULUS_AGENT_BACKEND`, see `docs/agent-check.md`), and the terminal needs the Screen Recording permission. If anything fails, the overlay says there are no suggestions, only Something else is shown, and the log says why.
+After the chime, move off the Centre Box, then hold the mouse still on something for 1 second to pick it as the target. Something under the Centre Box needs that move off first, so staying on the box after waking picks nothing. The overlay hides for a moment while it takes a screenshot, then shows "Thinking…" while Claude suggests up to 3 Suggested Intents for that spot. They scan like the Gaze Keyboard: press Cmd+Shift+Space (or do a Select Blink) on the one you want, or on Something else for different suggestions, which tells Claude what you turned down. Choosing one runs it on whatever is on screen, and the overlay shows a banner while it runs and the result after. Look away for 5 seconds to stop a run (a "Stopping in 3…" countdown shows), or move the mouse off the display or press Cmd+Shift+L in a dev run to test Look Away. Recalibrating stops everything at once. See `docs/youtube-flow.md` and, for continuing an essay in Google Docs, `docs/essay-flow.md`. Suggestions use the same backend and settings as the agent check (`OCULUS_AGENT_BACKEND`, see `docs/agent-check.md`), and the terminal needs the Screen Recording permission. If anything fails, the overlay says there are no suggestions, only Something else is shown, and the log says why.
 
 Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first. The keyboard scans: the highlight steps through the keys, one every 2 seconds. Press Cmd+Shift+Space when it's on the key you want, first a letter group and then a letter. With the camera (`npm run dev:gaze`), a Select Blink does the same: close both eyes for half a second. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility). If typing fails, the text is left on the clipboard.
 
@@ -199,6 +199,16 @@ Timings live in `~/Library/Application Support/oculus-agent/config.json`. All ar
 ```json
 { "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "iconHoldMs": 3000, "finishedMs": 3000, "wordPrediction": true }
 ```
+
+Large View is on by default. It makes the Dock icons big while Oculus runs (`dockIconSize`, 48 to 128, default 96), shows the highlighted icon's name in a large panel during an Icon Scan, and scales the overlay's own text, Gaze Dot and outlines (`uiScale`, 1 to 2, default 1.25). Set `"largeView": false` to turn it all off. Bad values fall back to the defaults. The Dock's original size is saved to `dock-size.json` next to `config.json` and put back on quit, or on the next start after a crash. Dock magnification is left alone.
+
+```json
+{ "largeView": true, "uiScale": 1.25, "dockIconSize": 96 }
+```
+
+Add `"historyPerSite": true` to keep Intent History per site in Google Chrome, for example "Pause" on youtube.com but not on mail.google.com. A site with fewer than 2 past Intents is topped up from Chrome's own history. Incognito windows are never read, and Safari always uses the app alone, since it can't tell a script which windows are private. It needs macOS to let Oculus control Chrome: the dialog shows when Oculus starts if Chrome is open, otherwise the first time Oculus reads Chrome, so turn it on while someone can answer the dialog. Until it is allowed, history is kept for Chrome as a whole.
+
+Add `"intentRanker": "neural"` to rank the user's past Intents with a small ranker that learns from each confirmed Intent. Without it, or with any other value, they are ranked by count and recency.
 
 The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.
 

@@ -11,6 +11,8 @@ export const GROUPS = ['abcde', 'fghij', 'klmno', 'pqrst', 'uvwxyz'];
 
 export const SUGGESTION_KEY = 'word:';
 export const MAX_SUGGESTIONS = 3;
+// The Suggested Phrase key.
+export const PHRASE_KEY = 'phrase';
 
 const GAP = 16;
 const COLUMNS = 3;
@@ -24,11 +26,14 @@ const TEXT_HEIGHT = 120;
 //            PQRST  UVWXYZ  Delete                 D  E  .
 //            Space -------  Done                   .  .  Back
 //
-// Suggested words take a row of their own above the groups. They come first, so the scan reaches them first.
-export function layoutKeyboard({ width, height }: Screen, group: string | null, suggestions: string[] = []): KeyboardLayout {
+// Suggested words take a row of their own above the groups, and a Suggested Phrase one wide row above them. They
+// come first, so the scan reaches them first. With neither, the layout is the 3 x 3 grid.
+export function layoutKeyboard({ width, height }: Screen, group: string | null, suggestions: string[] = [], phrase?: string): KeyboardLayout {
   const shown = group === null ? suggestions.slice(0, MAX_SUGGESTIONS) : [];
-  const offset = shown.length ? COLUMNS : 0;
-  const rows = ROWS + (shown.length ? 1 : 0);
+  const phraseShown = group === null && phrase !== undefined && phrase !== '';
+  const wordsOffset = phraseShown ? COLUMNS : 0;
+  const offset = wordsOffset + (shown.length ? COLUMNS : 0);
+  const rows = ROWS + (shown.length ? 1 : 0) + (phraseShown ? 1 : 0);
   const top = TEXT_HEIGHT + GAP;
   const cellWidth = (width - (COLUMNS - 1) * GAP) / COLUMNS;
   const cellHeight = (height - top - (rows - 1) * GAP) / rows;
@@ -42,7 +47,8 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null, 
   const keys =
     group === null
       ? [
-          ...shown.map((word, i) => ({ id: SUGGESTION_KEY + word, label: word, rect: cell(i) })),
+          ...(phraseShown ? [{ id: PHRASE_KEY, label: phrase, rect: cell(0, COLUMNS) }] : []),
+          ...shown.map((word, i) => ({ id: SUGGESTION_KEY + word, label: word, rect: cell(wordsOffset + i) })),
           ...GROUPS.map((id, i) => ({ id, label: id.toUpperCase(), rect: cell(offset + i) })),
           { id: 'delete', label: 'Delete', rect: cell(offset + 5) },
           { id: 'space', label: 'Space', rect: cell(offset + 6, 2) },
@@ -57,9 +63,12 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null, 
 
 // Suggested Intents fill a 2 x 2 grid over the whole screen. Something else always takes the last cell,
 // so it stays put when fresh suggestions arrive.
-export function layoutIntents({ width, height }: Screen, intents: string[]): Key[] {
+// With past Intents the grid is 2 x 3 from the start, since 2 past plus 3 from Claude need 5 cells and a grid
+// that grew later would move everything on screen.
+export function layoutIntents({ width, height }: Screen, intents: string[], cells: 4 | 6 = 4): Key[] {
+  const rows = cells / 2;
   const cellWidth = (width - GAP) / 2;
-  const cellHeight = (height - GAP) / 2;
+  const cellHeight = (height - (rows - 1) * GAP) / rows;
   const cell = (index: number) => ({
     x: (index % 2) * (cellWidth + GAP),
     y: Math.floor(index / 2) * (cellHeight + GAP),
@@ -68,6 +77,6 @@ export function layoutIntents({ width, height }: Screen, intents: string[]): Key
   });
   return [
     ...intents.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
-    { id: 'something-else', label: 'Something else', rect: cell(3) },
+    { id: 'something-else', label: 'Something else', rect: cell(cells - 1) },
   ];
 }

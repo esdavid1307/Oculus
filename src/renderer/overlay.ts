@@ -1,10 +1,11 @@
 import type { Rect } from '../shared/geometry';
 import { layoutIntents, layoutKeyboard, type Key, type KeyId } from '../shared/keyboard';
+import { magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
   interface Window {
-    overlay: { onState(listener: (state: OverlayState) => void): void; sendGaze(input: SessionInput): void };
+    overlay: { onState(listener: (state: OverlayState) => void): void; onLargeView(listener: (settings: LargeView) => void): void; sendGaze(input: SessionInput): void };
   }
 }
 
@@ -28,7 +29,9 @@ const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
 const iconHighlight = document.getElementById('icon-highlight')!;
+const iconMagnifier = document.getElementById('icon-magnifier')!;
 const status = document.getElementById('status')!;
+const stopHint = document.getElementById('stop-hint')!;
 const noIntents = document.getElementById('no-intents')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
@@ -65,12 +68,12 @@ function showKeys(name: string, keys: Key[]) {
 let lastPhase: OverlayState['phase'] = 'idle';
 let litKey: HTMLElement | undefined;
 
-function showKeyboard({ text, group, highlight, suggestions }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions, phrase }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  showKeys(`typing ${JSON.stringify([group, suggestions])}`, layoutKeyboard(screenSize, group, suggestions).keys);
+  showKeys(`typing ${JSON.stringify([group, suggestions, phrase])}`, layoutKeyboard(screenSize, group, suggestions, phrase).keys);
   highlightKey(highlight);
 }
 
@@ -80,30 +83,71 @@ function highlightKey(id: KeyId) {
   litKey?.classList.add('highlighted');
 }
 
+const stopping = (ms: number) => `Stopping in ${Math.ceil(ms / 1000)}…`;
+
+// The countdown on every screen but the run banner, which has its own. Shown only while the gaze is off the screen.
+function showStopHint(state: OverlayState) {
+  stopHint.hidden = state.stopInMs === undefined || state.phase === 'running';
+  if (stopHint.hidden) return;
+  stopHint.textContent = stopping(state.stopInMs!);
+  stopHint.dataset.at = stopHintPlace(state);
+}
+
+// Where the countdown covers nothing the user picks from: over the typed text on the Gaze Keyboard, on the gap between
+// the Suggested Intents in the middle, away from the edge being scanned, and at the bottom over the app otherwise
+// (the "Thinking…" banner is in the middle).
+function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
+  if (state.phase === 'typing') return 'top';
+  if (state.phase === 'choosing') return 'middle';
+  if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
+  return 'bottom';
+}
+
 // textContent and text nodes only: the summary comes from a web page Claude read.
 function showStatus(state: OverlayState) {
   status.hidden = state.phase !== 'thinking' && state.phase !== 'running' && state.phase !== 'finished';
   if (status.hidden) return;
   if (state.phase === 'running') {
+    const activity = document.createElement('span');
+    activity.textContent = state.activity ? `${state.activity}…` : 'Starting…';
     const hint = document.createElement('small');
-    hint.textContent = 'Look away to stop';
-    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), hint);
+    hint.textContent = state.stopInMs === undefined ? 'Look away to stop' : stopping(state.stopInMs);
+    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), activity, hint);
   } else if (state.phase === 'finished') {
     status.textContent = `${state.ok ? 'Done' : "Couldn't finish"}: ${state.summary}`;
     root.dataset.ok = String(state.ok);
   } else status.textContent = 'Thinking…';
 }
 
+// Set once main has read config.json. Until then, and when Large View is off, everything is drawn at the standard size.
+let largeView: LargeView | undefined;
+window.overlay.onLargeView((settings) => {
+  largeView = settings.enabled ? settings : undefined;
+  if (largeView) root.style.setProperty('--ui-scale', String(largeView.uiScale));
+  else root.style.removeProperty('--ui-scale');
+});
+
+// textContent only: icon names come from other apps.
+function showIcon({ highlight }: Extract<OverlayState, { phase: 'icons' }>) {
+  iconMagnifier.hidden = largeView === undefined;
+  if (largeView === undefined) return place(iconHighlight, highlight.rect);
+  const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
+  place(iconHighlight, frame);
+  place(iconMagnifier, panel);
+  iconMagnifier.textContent = highlight.label ?? highlight.name;
+}
+
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
-  if (state.phase === 'icons') place(iconHighlight, state.highlight.rect);
+  if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
+    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells));
     highlightKey(state.highlight);
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);
+  showStopHint(state);
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
   if (state.phase === 'finished') chime(state.ok ? [660, 880] : [440, 330]);
