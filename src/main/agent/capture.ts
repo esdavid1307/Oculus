@@ -32,6 +32,9 @@ export function createCapture({ overlay, display, saveDir, hideOverlay }: Captur
         });
       image = pickScreenSource(sources, display.id).thumbnail;
     } finally {
+      // getSources moves the overlay up and makes it taller on macOS, which clips everything the overlay draws.
+      // Put it back before it shows again, so the moved overlay is never seen.
+      overlay.setBounds(display.bounds);
       if (hideOverlay) overlay.setOpacity(1);
     }
     if (image.isEmpty()) throw new Error(SCREEN_RECORDING_HINT);

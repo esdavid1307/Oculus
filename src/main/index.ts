@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
@@ -254,6 +254,8 @@ function typeText(text: string) {
 let running = false;
 // The Intent run in progress, so the Stop Gesture and quitting can abort it.
 let currentRun: { request: number; controller: AbortController } | null = null;
+// The Suggested Intents request in flight, aborted once the session stops waiting for it.
+let pendingIntents: AbortController | null = null;
 async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'shortcut') {
   const config = readAgentConfig(process.env, trigger);
   if (!config || running) return;
@@ -311,16 +313,17 @@ function createOverlay() {
         console.warn('Could not save word prediction:', error);
       }
     } else if (action.type === 'suggest-intents') {
-      // A fresh capture each time, so the one screenshot on disk is always shot-1.png, overwritten by the next request.
-      const capture = createCapture({
-        overlay,
-        display: screen.getPrimaryDisplay(),
-        saveDir: join(app.getPath('userData'), 'intents'),
-        hideOverlay: true,
-      });
-      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture).then((intents) =>
-        advance({ type: 'intents', t: Date.now(), request: action.request, intents }),
-      );
+      // A folder per request, so overlapping requests never share a screenshot. It's deleted once answered.
+      const saveDir = join(app.getPath('userData'), 'intents', String(action.request));
+      const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
+      pendingIntents?.abort();
+      const controller = (pendingIntents = new AbortController());
+      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal)
+        .then((intents) => advance({ type: 'intents', t: Date.now(), request: action.request, intents }))
+        .finally(() => {
+          if (pendingIntents === controller) pendingIntents = null;
+          rmSync(saveDir, { recursive: true, force: true });
+        });
     } else if (action.type === 'run-intent') {
       const { intent, region, request } = action;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
@@ -361,7 +364,12 @@ function createOverlay() {
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
   });
-  const advance = (input: SessionInput) => overlay.webContents.send('overlay-state', session(input));
+  const advance = (input: SessionInput) => {
+    const state = session(input);
+    // The Stop Gesture or the Gaze Keyboard ended the wait, so the answer would be dropped anyway.
+    if (state.phase !== 'thinking') pendingIntents?.abort();
+    overlay.webContents.send('overlay-state', state);
+  };
 
   let lookingAway = false;
   const timers = [setInterval(() => advance({ type: 'tick', t: Date.now() }), TICK_MS), setInterval(refreshIcons, ICON_READ_MS)];

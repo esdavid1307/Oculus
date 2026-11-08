@@ -266,7 +266,8 @@ export function createSession({
     const moved = target && Math.hypot(region.x - target.region.x, region.y - target.region.y) > target.region.radius;
     if (target === null || moved) target = { region, start: t };
     if (t - target.start >= targetHoldMs) {
-      suggestIntents(target.region, []);
+      // Where the gaze settled, not where the hold began: the first sample is often still on the way in.
+      suggestIntents(region, []);
       target = null;
     }
   }

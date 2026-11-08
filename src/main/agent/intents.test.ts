@@ -1,5 +1,23 @@
-import { describe, expect, it } from 'vitest';
-import { intentsPrompt, parseIntents, SYSTEM_PROMPT } from './intents';
+import { describe, expect, it, vi } from 'vitest';
+import { intentsPrompt, parseIntents, suggestIntents, SYSTEM_PROMPT } from './intents';
+import type { AgentConfig, Screenshot } from './types';
+
+const spawn = vi.hoisted(() => vi.fn());
+vi.mock('node:child_process', () => ({ spawn }));
+
+describe('suggestIntents', () => {
+  it('never starts claude when Stop comes during the screenshot', async () => {
+    const config = { backend: 'claude-code', model: 'm', effort: 'low' } as AgentConfig;
+    const controller = new AbortController();
+    const capture = async () => {
+      controller.abort();
+      return { frame: { x: 0, y: 0, width: 1600, height: 1000, imageWidth: 1280, imageHeight: 800 }, savedTo: '/tmp/x/shot.png' } as Screenshot;
+    };
+    const intents = await suggestIntents({ x: 800, y: 250, radius: 120 }, [], config, capture, () => {}, controller.signal);
+    expect(intents).toEqual([]);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
 
 describe('intentsPrompt', () => {
   // A 1600 x 1000 display, sent to the model as a 1280 x 800 screenshot.
@@ -44,6 +62,10 @@ describe('parseIntents', () => {
 
   it('drops case-insensitive duplicates before keeping 3', () => {
     expect(parseIntents('{"intents": ["Pause", "pause", "Mute", "Like", "Skip the ad"]}')).toEqual(['Skip the ad', 'Pause', 'Mute']);
+  });
+
+  it('never offers an intent the user already turned down', () => {
+    expect(parseIntents('{"intents": ["open this issue", "Show closed issues"]}', ['Open this issue'])).toEqual(['Show closed issues']);
   });
 
   it('finds the JSON inside a reply with words around it', () => {

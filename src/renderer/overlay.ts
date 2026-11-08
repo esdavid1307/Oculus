@@ -29,6 +29,7 @@ const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
 const iconHighlight = document.getElementById('icon-highlight')!;
 const status = document.getElementById('status')!;
+const noIntents = document.getElementById('no-intents')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
   Object.assign(element.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` });
@@ -37,6 +38,8 @@ function place(element: HTMLElement, { x, y, width, height }: Rect) {
 // The overlay covers the primary display, so this is the same layout the session core hit-tests against.
 const screenSize = { width: innerWidth, height: innerHeight };
 place(typed, layoutKeyboard(screenSize, null).text);
+// In the first cell, where an intent would be. The reason is in the log.
+place(noIntents, layoutIntents(screenSize, [''])[0].rect);
 
 // Which screen of keys is drawn, so they are only rebuilt when it changes.
 let shownKeys: string | undefined;
@@ -99,6 +102,7 @@ window.overlay.onState((state) => {
     showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
     highlightKey(state.highlight);
   }
+  noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
