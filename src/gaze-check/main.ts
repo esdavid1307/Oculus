@@ -1,6 +1,6 @@
 import { blinkCounter, holdTimer } from './free-look';
 import { createTracker } from './iris-tracker';
-import { CORNER_TARGET_SIZE, KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
+import { CENTRE_BOX_VMIN, KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
 import { calibrate, SETTLE_MS, wait, type Tracker } from './tracker';
 
 // Longer than the 2 second hold, so a slow start can still make it.
@@ -39,13 +39,11 @@ async function showDot(x: number, y: number) {
 
 // All but the centre differ from the calibration points, so this measures more than memorised positions.
 function testTargets({ width, height }: Screen): Target[] {
-  const centre = CORNER_TARGET_SIZE / 2;
-  const wake: Target = { kind: 'wake', x: width - centre, y: centre };
-  const stop: Target = { kind: 'stop', x: centre, y: height - centre };
+  const centreTarget: Target = { kind: 'centre', x: width / 2, y: height / 2 };
   const keys = [0.2, 0.5, 0.8].flatMap((fx) =>
     [0.2, 0.5, 0.8].map((fy): Target => ({ kind: 'key', x: fx * width, y: fy * height })),
   );
-  return [wake, ...keys.slice(0, 3), stop, ...keys.slice(3, 6), wake, ...keys.slice(6), stop, wake, stop];
+  return [centreTarget, ...keys.slice(0, 3), centreTarget, ...keys.slice(3, 6), centreTarget, ...keys.slice(6)];
 }
 
 async function runTrial(target: Target): Promise<Trial> {
@@ -58,8 +56,9 @@ async function runTrial(target: Target): Promise<Trial> {
 }
 
 function formatReport(report: ReturnType<typeof scoreGazeCheck>, trackerName: string, { width, height }: Screen) {
-  const corner = (name: string, { hits, trials, targetSize }: typeof report.corners.wake) =>
-    `- ${name} corner: ${hits}/${trials} holds of 2 s, smallest target ${Math.ceil(targetSize)} px (current: ${CORNER_TARGET_SIZE} px)`;
+  const centreBoxPx = Math.round(Math.min(width, height) * CENTRE_BOX_VMIN);
+  const { hits, trials, targetSize } = report.centre;
+  const centreLine = `- Centre Box: ${hits}/${trials} holds of 2 s, smallest target ${Math.ceil(targetSize)} px (box: ${centreBoxPx} px)`;
   const signed = (value: number) => `${value < 0 ? '' : '+'}${Math.round(value)}`;
   const offsets = report.targets.map(({ kind, x, y, offset }) => {
     const landed = offset ? `${signed(offset.x)}, ${signed(offset.y)}` : 'never tracked';
@@ -67,8 +66,7 @@ function formatReport(report: ReturnType<typeof scoreGazeCheck>, trackerName: st
   });
   return [
     `Gaze check with ${trackerName} on ${width} x ${height}, ${new Date().toISOString()}`,
-    corner('Wake', report.corners.wake),
-    corner('Stop', report.corners.stop),
+    centreLine,
     `- Smallest usable key: ${Math.ceil(report.keys.keySize)} px, ${report.keys.keysThatFit} fit on screen (${KEYS_NEEDED} needed)`,
     `- Smallest key if steady offset is removed: ${Math.ceil(report.keys.steadyKeySize)} px`,
     `- Median error: ${Math.round(report.keys.medianError)} px, jitter: ${Math.round(report.keys.jitter)} px`,
