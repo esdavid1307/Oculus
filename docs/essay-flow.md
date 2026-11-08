@@ -42,6 +42,15 @@ The same lines as `docs/youtube-flow.md`: `[intent-run] start …`, one `[agent-
 
 An API backend run that is still acting at its last step ends as `Couldn't finish: Ran out of steps`. It never ends as Done.
 
+## How "Done" is checked
+
+The agent's "Done:" is its own claim, so the screen has to agree:
+
+- After each typing step, the screenshot's text is read with macOS text recognition (Vision), looking up to 3 times a second apart, since Google Docs draws a long paragraph late. Any 3 words in a row from the last 6 typed must be there. If not, the agent is told the text didn't show up, and the run can't end as Done until a later typing step shows up. The log says `[intent-run] typing check: the typed words are on screen` or `are not`.
+- At the end, a run the agent calls Done whose last screenshot looks the same as its first (fewer than 100 changed pixels) ends as `Couldn't finish: Nothing changed on screen`. The log says `[intent-run] the run changed N pixels`.
+
+Pixels alone can't check typing: on a page that takes no typing, a leading space scrolled the page, so 611 pixels changed while no text landed.
+
 ## Checking the suggestions without a run
 
 Save a screenshot of the Doc as `essay.png` in a folder, and next to it `essay.json`:
@@ -60,6 +69,7 @@ Fill in after each run on the demo laptop.
 |---|---|---|---|---|
 | 2026-11-08 | claude-code, claude-sonnet-5-5 | 0.3 s (Chrome) | Dev laptop, a local essay page in Chrome, not yet Google Docs | Done in 12.8 s, 90 words added at the end, nothing else changed. The Stop Gesture (Look Away) worked. |
 | 2026-11-08 | claude-code, claude-sonnet-5-5 | 0.3 s (Chrome) | Same page, after the fixes. Text started with a new line, so it was pasted | Done in 12.9 s as its own paragraph, clipboard put back. Looking at the margin beside the essay: Done in 10.9 s, clicked after the last word. "Summarize the essay": no clicks or typing, essay unchanged. |
+| 2026-11-08 | claude-code, claude-sonnet-5-5 | under 1 s | With the Done check: Google Doc, then a page that takes no typing | Doc: words found on screen, Done in 17.5 s. Read-only page: both typing tries caught, Couldn't finish, page unchanged. |
 | 2026-11-08 | claude-code, claude-sonnet-5-5 | under 1 s | Dev laptop, a real Google Doc in Chrome | Done in 11.9 s: a 90-word paragraph right after the last one, no empty line, nothing else changed, clipboard put back. |
 
 ## Known limits
@@ -68,5 +78,5 @@ Fill in after each run on the demo laptop.
 - Claude reads the essay from the screenshot, so only what is on screen counts. Earlier pages that are scrolled away are not read.
 - A Stop Gesture during typing ends the run, but the text already being typed still lands. Typing takes well under a second.
 - Something the user copies in the half second of a paste is lost when the clipboard is put back.
-- The summary is Claude's own sentence. Check the Doc. In one run before the fixes, the agent clicked the margin, typed nothing, and still said Done.
+- The summary is still Claude's own sentence, and only typing and "something changed" are checked. Typed words that were already on screen before the run would pass the typing check.
 - Screenshots and `run.json` stay on disk and show the essay. Delete old runs from the folder above.

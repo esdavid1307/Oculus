@@ -79,6 +79,8 @@ function setup(over: Partial<RunIntentDeps> = {}) {
     messages: () => ({ create: async () => ({}) as never }),
     signal: new AbortController().signal,
     onActivity: () => {},
+    changedPixels: () => 10_000,
+    screenText: async () => 'The end.',
     backends: {
       'claude-code': async (options, d) => (calls.push({ api: false, options, deps: d }), result()),
       api: async (options, d) => (calls.push({ api: true, options, deps: d }), result({ finalText: 'Done: via api' })),
@@ -120,6 +122,71 @@ describe('runIntent', () => {
     expect(calls).toHaveLength(0);
     expect(outcome).toMatchObject({ ok: false, stopped: true, summary: 'Stopped' });
     expect(logs.at(-1)).toContain('stopped=true');
+  });
+
+  // Live, the agent typed into a page margin, nothing appeared, and it still said "Done". On a page that takes no typing,
+  // a leading space scrolled it, so the screen changed even though no text landed: the words are what count.
+  const TYPED = 'Trees make every street cooler and calmer.';
+  const typeOnce = async (_options: unknown, d: { execute: RunIntentDeps['execute'] }) => {
+    await d.execute({ type: 'type', text: TYPED });
+    return result({ finalText: 'Done: added a paragraph.' });
+  };
+
+  it.each(['claude-code', 'api'] as const)('fails a %s run whose typed words never show up, whatever the agent says', async (backend) => {
+    const errors: string[] = [];
+    const steps = async (_options: unknown, d: { execute: RunIntentDeps['execute'] }) => {
+      await d.execute({ type: 'type', text: TYPED }).catch((cause: Error) => errors.push(cause.message));
+      return result({ finalText: 'Done: added a paragraph.' });
+    };
+    let looks = 0;
+    const screenText = async () => (looks++, 'Why Cities Should Plant More Trees\nWalk down any street');
+    const { deps } = setup({ screenText, backends: { 'claude-code': steps, api: steps } });
+    const outcome = await runIntent(run, { ...config, backend }, deps);
+    expect(looks).toBe(3);
+    expect(errors).toEqual(["The typed text didn't show up on screen. Take a screenshot: if it isn't there, click into the text and type it again."]);
+    expect(outcome).toMatchObject({ ok: false, stopped: false, summary: "The typed text didn't show up on screen" });
+  });
+
+  // A false miss would make the agent type the paragraph twice, so one misread word mustn't fail it.
+  it('finds the typed words across line breaks and one misread word', async () => {
+    const { deps } = setup({ screenText: async () => 'Walk down any street.\nTrees make every street cooIer and\ncalmer.', backends: { 'claude-code': typeOnce } });
+    expect(await runIntent(run, config, deps)).toMatchObject({ ok: true, summary: 'added a paragraph.' });
+  });
+
+  // Live in Google Docs, the last words of a 500-character paragraph weren't drawn yet when the first look came.
+  it('looks again while a slow app is still drawing the typed words', async () => {
+    const texts = ['Walk down any street.', 'Walk down any street. Trees make', `Walk down any street. ${TYPED}`];
+    const waits: number[] = [];
+    const { deps } = setup({ screenText: async () => texts.shift()!, sleep: async (ms) => void waits.push(ms), backends: { 'claude-code': typeOnce } });
+    expect(await runIntent(run, config, deps)).toMatchObject({ ok: true, summary: 'added a paragraph.' });
+    expect(waits).toEqual([1000, 1000]);
+  });
+
+  it('skips the check when the screen text cannot be read', async () => {
+    const { deps, logs } = setup({ screenText: async () => null, backends: { 'claude-code': typeOnce } });
+    expect(await runIntent(run, config, deps)).toMatchObject({ ok: true });
+    expect(logs).toContain('[intent-run] typing check skipped: could not read the screen text');
+  });
+
+  it('passes a run that typed again after a miss and the text showed up', async () => {
+    const texts = ['', '', '', TYPED];
+    const steps = async (_options: unknown, d: { execute: RunIntentDeps['execute'] }) => {
+      await d.execute({ type: 'type', text: TYPED }).catch(() => {});
+      await d.execute({ type: 'type', text: TYPED });
+      return result({ finalText: 'Done: added a paragraph.' });
+    };
+    const { deps } = setup({ screenText: async () => texts.shift()!, backends: { 'claude-code': steps } });
+    expect(await runIntent(run, config, deps)).toMatchObject({ ok: true, summary: 'added a paragraph.' });
+  });
+
+  it('fails a run that says Done when the screen at the end is the same as at the start', async () => {
+    const steps = async (_options: unknown, d: { capture: RunIntentDeps['capture']; execute: RunIntentDeps['execute'] }) => {
+      await d.capture();
+      await d.execute({ type: 'click', at: { x: 1, y: 2 }, button: 'left', count: 1, modifiers: [] });
+      return result({ finalText: 'Done: opened the video.' });
+    };
+    const { deps } = setup({ changedPixels: () => 3, backends: { 'claude-code': steps } });
+    expect(await runIntent(run, config, deps)).toMatchObject({ ok: false, stopped: false, summary: 'Nothing changed on screen' });
   });
 
   // The model's turn after each input takes most of the run, so the overlay mustn't keep showing the input.

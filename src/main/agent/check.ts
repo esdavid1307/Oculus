@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { execFile } from 'node:child_process';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { app, screen, type BrowserWindow } from 'electron';
+import { app, nativeImage, screen, type BrowserWindow } from 'electron';
 import { createCapture } from './capture';
 import { runClaudeCode } from './claude-code';
 import { readAgentConfig } from './config';
@@ -10,7 +11,39 @@ import { fitScreenshot } from './frame';
 import { runAgentCheck } from './loop';
 import { focusChrome, logPermissions } from './macos';
 import { RUN_LOG_PREFIX, runIntent, type IntentOutcome, type IntentRun } from './run-intent';
-import { LOG_PREFIX, MODEL_MAX_LONG_EDGE, type AgentCheckResult, type AgentConfig } from './types';
+import { LOG_PREFIX, MODEL_MAX_LONG_EDGE, type AgentCheckResult, type AgentConfig, type Screenshot } from './types';
+
+// Pixels whose colour moved more than a little, so PNG resampling noise doesn't count. A size mismatch counts as all.
+function changedPixels(a: Buffer, b: Buffer): number {
+  const [x, y] = [nativeImage.createFromBuffer(a).toBitmap(), nativeImage.createFromBuffer(b).toBitmap()];
+  if (x.length !== y.length) return x.length / 4;
+  let changed = 0;
+  for (let i = 0; i < x.length; i += 4) {
+    if (Math.abs(x[i] - y[i]) + Math.abs(x[i + 1] - y[i + 1]) + Math.abs(x[i + 2] - y[i + 2]) > 24) changed++;
+  }
+  return changed;
+}
+
+// macOS's own text recognition. The accurate level reads Docs text at screenshot size, where the fast one misses it.
+const READ_TEXT = `ObjC.import('Vision');
+function run([path]) {
+  const handler = $.VNImageRequestHandler.alloc.initWithURLOptions($.NSURL.fileURLWithPath(path), $({}));
+  const request = $.VNRecognizeTextRequest.alloc.init;
+  request.recognitionLevel = 0;
+  request.usesLanguageCorrection = false;
+  if (!handler.performRequestsError($([request]), null)) throw new Error('Text recognition failed');
+  const results = request.results, lines = [];
+  for (let i = 0; i < results.count; i++) lines.push(results.objectAtIndex(i).topCandidates(1).firstObject.string.js);
+  return lines.join('\\n');
+}`;
+
+const screenText = (shot: Screenshot) =>
+  new Promise<string | null>((resolve) => {
+    if (!shot.savedTo) return resolve(null);
+    execFile('osascript', ['-l', 'JavaScript', '-e', READ_TEXT, shot.savedTo], { timeout: 10_000 }, (error, stdout) =>
+      resolve(error ? null : String(stdout)),
+    );
+  });
 
 const failed = (config: AgentConfig, error: string): AgentCheckResult => ({
   ok: false,
@@ -102,6 +135,8 @@ export async function runIntentInElectron(
       messages: () => new Anthropic().beta.messages,
       signal,
       onActivity,
+      changedPixels,
+      screenText,
     });
     await writeFile(join(runDir, 'run.json'), JSON.stringify({ run, outcome, config }, null, 2));
     log(`${RUN_LOG_PREFIX} screenshots and run.json in ${runDir}`);
