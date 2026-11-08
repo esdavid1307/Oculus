@@ -1,5 +1,5 @@
 import type { Rect } from '../shared/geometry';
-import { layoutKeyboard } from '../shared/keyboard';
+import { layoutIntents, layoutKeyboard, type Key, type KeyId } from '../shared/keyboard';
 import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
@@ -27,6 +27,7 @@ function chime() {
 const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
+const status = document.getElementById('status')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
   Object.assign(element.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` });
@@ -36,13 +37,15 @@ function place(element: HTMLElement, { x, y, width, height }: Rect) {
 const screenSize = { width: innerWidth, height: innerHeight };
 place(typed, layoutKeyboard(screenSize, null).text);
 
-let shownGroup: string | null | undefined;
+// Which screen of keys is drawn, so they are only rebuilt when it changes.
+let shownKeys: string | undefined;
 let keyElements = new Map<string, HTMLElement>();
 
-function showKeys(group: string | null) {
+function showKeys(name: string, keys: Key[]) {
+  if (name === shownKeys) return;
   keyElements.forEach((element) => element.remove());
   keyElements = new Map(
-    layoutKeyboard(screenSize, group).keys.map(({ id, label, rect }) => {
+    keys.map(({ id, label, rect }) => {
       const element = document.createElement('div');
       element.className = 'key';
       element.dataset.key = id;
@@ -52,26 +55,36 @@ function showKeys(group: string | null) {
       return [id, element];
     }),
   );
-  shownGroup = group;
+  shownKeys = name;
 }
 
 let lastPhase: OverlayState['phase'] = 'idle';
 let litKey: HTMLElement | undefined;
 
-function showKeyboard({ text, group, highlight }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  if (group !== shownGroup) showKeys(group);
+  showKeys(`typing ${JSON.stringify([group, suggestions])}`, layoutKeyboard(screenSize, group, suggestions).keys);
+  highlightKey(highlight);
+}
+
+function highlightKey(id: KeyId) {
   litKey?.classList.remove('highlighted');
-  litKey = keyElements.get(highlight);
+  litKey = keyElements.get(id);
   litKey?.classList.add('highlighted');
 }
 
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
+  if (state.phase === 'choosing') {
+    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
+    highlightKey(state.highlight);
+  }
+  status.hidden = state.phase !== 'thinking' && state.phase !== 'running';
+  status.textContent = state.phase === 'running' ? `Running: ${state.intent}` : 'Thinking…';
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
   root.dataset.phase = state.phase;

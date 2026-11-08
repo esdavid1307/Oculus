@@ -42,8 +42,8 @@ body {
   mask: radial-gradient(closest-side, transparent 78%, #000 80%);
 }
 
-[data-phase='waiting-for-target'] #wake,
-[data-phase='typing'] #wake {
+/* The Centre Box shows only while the agent is asleep. Before the first state arrives there's no data-phase, which is asleep too. */
+[data-phase]:not([data-phase='idle']) #wake {
   visibility: hidden;
 }
 
@@ -52,7 +52,8 @@ body {
 }
 
 /* The scan picks the key, so a dot following the eyes would only distract. */
-[data-phase='typing'] #dot {
+[data-phase='typing'] #dot,
+[data-phase='choosing'] #dot {
   visibility: hidden;
 }
 
@@ -60,7 +61,8 @@ body {
   visibility: hidden;
 }
 
-#gaze-message {
+#gaze-message,
+#status {
   position: fixed;
   top: 50%;
   left: 50%;
@@ -80,7 +82,7 @@ body {
   background: #38bdf8;
 }
 
-/* The Gaze Keyboard sits under the corner targets, which stay visible on top. */
+/* The Centre Box sits above the Gaze Keyboard. */
 .target {
   z-index: 1;
 }
@@ -92,71 +94,21 @@ body {
   background: rgb(15 23 42 / 94%);
 }
 
-[data-phase='typing'] #keyboard {
+[data-phase='typing'] #keyboard,
+[data-phase='choosing'] #keyboard {
   display: block;
 }
 
-#typed,
-.key {
-  position: absolute;
-  box-sizing: border-box;
-}
-
-#typed {
-  display: flex;
-  align-items: center;
-  padding: 0 32px;
-  overflow: hidden;
-  white-space: pre;
-  font-size: 64px;
-  border-bottom: 4px solid #38bdf8;
-}
-
-#typed::after {
-  content: '';
-  flex: none;
-  width: 6px;
-  height: 1.1em;
-  margin-left: 4px;
-  background: #38bdf8;
-}
-
-.key {
-  --fill: #0369a1;
-  --rest: rgb(30 41 59);
-  display: grid;
-  place-items: center;
-  border: 4px solid #fff;
-  border-radius: 16px;
-  font-size: 72px;
-  background: var(--rest);
-}
-
-.key[data-key='space'],
-.key[data-key='done'],
-.key[data-key='delete'] {
-  font-size: 44px;
-}
-
-.key[data-key='done'] {
-  --fill: #16a34a;
-  --rest: #14532d;
-}
-
-.key[data-key='delete'] {
-  --fill: #d97706;
-  --rest: #78350f;
-}
-
-#keyboard {
-  position: fixed;
-  inset: 0;
+/* Suggested Intents reuse the keyboard's keys, without the typed text. */
+[data-phase='choosing'] #typed {
   display: none;
-  background: rgb(15 23 42 / 94%);
 }
 
-[data-phase='typing'] #keyboard {
-  display: block;
+.key[data-key^='intent-'],
+.key[data-key='something-else'] {
+  padding: 32px;
+  font-size: 48px;
+  text-align: center;
 }
 
 #typed,
@@ -217,4 +169,11 @@ body {
 .key.highlighted {
   background: var(--fill);
   outline: 8px solid #38bdf8;
+}
+
+/* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
+.key[data-key^='word:'] {
+  --rest: #134e4a;
+  font-size: 56px;
+  font-weight: 500;
 }
