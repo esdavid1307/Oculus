@@ -15,7 +15,8 @@ const DEV_OPEN_KEYBOARD_SHORTCUT = 'CommandOrControl+Shift+K';
 // The mouse can't blink, so this stands in for the Select Blink.
 const DEV_SELECT_SHORTCUT = 'CommandOrControl+Shift+Space';
 // The overlay ignores clicks and has no menu, so this is the only way to quit besides the terminal.
-const QUIT_SHORTCUT = 'CommandOrControl+Shift+Q';
+// Not Cmd+Shift+Q, which is macOS's Log Out.
+const QUIT_SHORTCUT = 'CommandOrControl+Alt+Q';
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 
@@ -49,33 +50,47 @@ function windows() {
 }`;
 
 // Ctrl+F3 is macOS's "Move focus to the Dock" shortcut. It shows a hidden Dock and keeps it up, wherever the cursor
-// is, until the Dock loses focus. Prints the app in front, which gets the focus back if nothing is opened. A Dock that
-// is already up, as on the Desktop, is left alone and prints nothing.
+// is, until the Dock loses focus. A Dock that is already up, as on the Desktop, is left alone.
 const FOCUS_DOCK = `function run([bottom]) {
   const events = Application('System Events');
-  if (events.processes.byName('Dock').lists[0].position()[1] < Number(bottom)) return '';
-  const front = events.processes.whose({ frontmost: true })[0].bundleIdentifier();
+  if (events.processes.byName('Dock').lists[0].position()[1] < Number(bottom)) return;
   events.keyCode(99, { using: 'control down' });
   delay(0.7);
-  return front;
 }`;
 
-let appBeforeDock: string | null = null;
+// Escape leaves the Dock, which hides it again. It's sent only while the Dock has the focus, so the app in front
+// never gets it. Activating the app in front doesn't reliably take the focus back.
+const UNFOCUS_DOCK = `const events = Application('System Events');
+if (events.processes.byName('Dock').lists[0].focused()) events.keyCode(53);`;
+
+// Opening an app from the Dock hands it the focus. A failed open, or the app already in front, leaves the Dock with it.
+const DOCK_OPEN_SETTLE_MS = 1000;
+
+let focusingDock = false;
+let unfocusWhenFocused = false;
 
 function showDock(display: Rect, done: () => void) {
-  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUS_DOCK, String(display.y + display.height)], (error, stdout) => {
-    if (error) return console.error('Could not show the Dock:', error.message);
-    appBeforeDock = stdout.trim() || null;
-    done();
+  unfocusWhenFocused = false;
+  if (focusingDock) return;
+  focusingDock = true;
+  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUS_DOCK, String(display.y + display.height)], (error) => {
+    focusingDock = false;
+    if (error) console.error('Could not show the Dock:', error.message);
+    // A release asked for while Ctrl+F3 was still on its way would have found nothing to release.
+    if (unfocusWhenFocused) releaseDock();
+    else done();
   });
 }
 
 function releaseDock() {
-  if (appBeforeDock === null) return;
-  execFile('osascript', ['-l', 'JavaScript', '-e', 'function run([id]) { Application(id).activate(); }', appBeforeDock], (error) => {
+  if (focusingDock) {
+    unfocusWhenFocused = true;
+    return;
+  }
+  unfocusWhenFocused = false;
+  execFile('osascript', ['-l', 'JavaScript', '-e', UNFOCUS_DOCK], (error) => {
     if (error) console.error('Could not give the focus back from the Dock:', error.message);
   });
-  appBeforeDock = null;
 }
 
 // Menu bar items are found again by their place in the Accessibility tree, [process, menu bar, item], since status
@@ -178,6 +193,7 @@ function openIcon(source: 'dock' | 'desktop', name: string) {
   const script = `function run([name]) { Application('System Events').${elements}.byName(name).actions.byName('${open}').perform(); }`;
   execFile('osascript', ['-l', 'JavaScript', '-e', script, name], (error) => {
     if (error) console.error(`Could not open ${name} from the ${source}:`, error.message);
+    if (source === 'dock') setTimeout(releaseDock, DOCK_OPEN_SETTLE_MS);
   });
 }
 
@@ -260,7 +276,7 @@ function createOverlay() {
   } else {
     ipcMain.on('gaze', (_event, input: SessionInput) => advance(input));
   }
-  globalShortcut.register(QUIT_SHORTCUT, () => app.quit());
+  if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);
   if (!app.isPackaged) {
     globalShortcut.register(DEV_OPEN_KEYBOARD_SHORTCUT, () => advance({ type: 'open-keyboard', t: Date.now() }));
     if (useMouse) globalShortcut.register(DEV_SELECT_SHORTCUT, () => advance({ type: 'select', t: Date.now() }));

@@ -57,7 +57,7 @@ Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face
 _Avoid_: Cancel, abort
 
 **Look Away**:
-Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture. Only ever means off the screen.
+Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture. Only ever means off the screen. During an Icon Scan, gaze just past the edge next to the scanned icons counts as on them, not as Look Away.
 _Avoid_: Look away (for leaving a key)
 
 **Move Off**:

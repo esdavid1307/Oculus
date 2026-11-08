@@ -320,13 +320,24 @@ describe('Dock', () => {
       return { session, actions };
     };
 
-    it('shows the Dock when the user starts looking at it, and gives it back on looking away', () => {
+    it('shows the Dock when the user starts looking at it, and gives it back when they move off', () => {
       const { session, actions } = awakeWithHiddenDock();
       session(gaze(3100, belowDock));
       session(gaze(3200, belowDock));
       session(gaze(3300, outsideBox));
-      session(gaze(3400, belowDock));
+      session(gaze(3800, outsideBox));
+      session(gaze(3900, belowDock));
       expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }, { type: 'show-dock' }]);
+    });
+
+    it('keeps the Dock up through a shaky moment during the hold', () => {
+      const { session, actions } = awakeWithHiddenDock();
+      session(gaze(3100, belowDock));
+      session(gaze(4000, belowDock));
+      session(gaze(4300, outsideBox));
+      session(gaze(4400, belowDock));
+      expect(session(gaze(6100, belowDock)).phase).toBe('icons');
+      expect(actions).toEqual([{ type: 'show-dock' }]);
     });
 
     it('keeps the Dock up for the whole scan, even when the gaze leaves it', () => {
@@ -364,7 +375,7 @@ describe('Dock', () => {
     });
   });
 
-  it('restarts the hold when the user looks away from the Dock', () => {
+  it('restarts the hold when the user moves off the Dock', () => {
     const { session } = awake();
     session(gaze(3100, nearDock));
     session(gaze(5000, outsideBox));
@@ -432,6 +443,14 @@ describe('Dock', () => {
     session(gaze(7000, offScreen));
     expect(session(gaze(12_000, offScreen)).phase).toBe('idle');
     expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }]);
+  });
+
+  it('still stops the Gaze Keyboard when the user looks down past the Dock', () => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => items });
+    session({ type: 'open-keyboard', t: 0 });
+    session(gaze(100, belowDock));
+    expect(session(gaze(5100, belowDock)).phase).toBe('idle');
   });
 
   it('needs a full new hold after waking again', () => {
@@ -594,6 +613,22 @@ describe('Menu bar', () => {
     const onBar = { x: 1440, y: 10, radius: 60 };
     session(gaze(3100, onBar));
     expect(session(gaze(6100, onBar))).toMatchObject({ phase: 'icons', source: 'menubar' });
+  });
+
+  it('closes a menu that opens after the user has left with the Stop Gesture', () => {
+    const { session, actions } = onMenuBar();
+    session(select(6200));
+    session(gaze(6300, { x: -400, y: 500, radius: 120 }));
+    session(gaze(11_300, { x: -400, y: 500, radius: 120 }));
+    expect(session({ type: 'menu-opened', t: 11_400, icons: commands }).phase).toBe('idle');
+    expect(actions.at(-1)).toEqual({ type: 'close-menu' });
+  });
+
+  it('does not scan a menu that opened with no commands', () => {
+    const { session, actions } = onMenuBar();
+    session(select(6200));
+    expect(session({ type: 'menu-opened', t: 6800, icons: [] }).phase).toBe('waiting-for-target');
+    expect(actions.map(({ type }) => type)).toEqual(['open-icon']);
   });
 
   it('does not count gaze past the top edge as Look Away during the scan', () => {

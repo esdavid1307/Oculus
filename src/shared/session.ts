@@ -24,6 +24,9 @@ export type SessionInput =
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction = { type: 'type-text'; text: string } | { type: 'open-icon'; source: IconSource; name: string } | { type: 'show-dock' } | { type: 'release-dock' } | { type: 'close-menu' };
 
+// Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
+const HOLD_GRACE_MS = 500;
+
 const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, iconHoldMs: 3000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
@@ -113,7 +116,8 @@ export function createSession({
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
   let scanStart = 0;
   let highlight: KeyId = '';
-  let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number } | null = null;
+  // seen is when the gaze was last near the held target.
+  let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
   let dockShown = false;
   // Copied when the icon scan starts, so the icons can't shift under the highlight.
@@ -132,9 +136,11 @@ export function createSession({
 
   // Steps through the icons column by column from the left, top to bottom.
   function scanIcons(from: IconSource, all: Icon[], t: number) {
+    iconHold = null;
+    // A menu bar item that opens a panel, not a menu, reports no commands, and a scan needs something to highlight.
+    if (all.length === 0) return;
     phase = 'icons';
     source = from;
-    iconHold = null;
     icons = [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
     scanStart = t;
     scan(t);
@@ -173,15 +179,17 @@ export function createSession({
   return (input: SessionInput): OverlayState => {
     if (input.type === 'open-keyboard') {
       if (phase !== 'typing') openKeyboard(input.t);
+    } else if (input.type === 'menu-opened') {
+      // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
+      if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
+      else if (input.icons.length > 0) act({ type: 'close-menu' });
     } else if (phase !== 'idle') {
       if (input.type === 'gaze') {
-        // Looking at an icon on a screen edge is often read as off the screen, and it mustn't count as Look Away.
+        // Watching an icon on a screen edge during its scan is often read as off the screen, and it mustn't count as
+        // Look Away. Elsewhere, past the edge is still off the screen, so the Stop Gesture works over the Dock too.
         const onEdgeIcon =
-          phase === 'icons'
-            ? source === 'menubar'
-              ? nearMenuBar(input.region, icons, screen)
-              : nearIcon(input.region, icons, screen)
-            : (['dock', 'desktop', 'menubar'] as const).some((from) => near(input.region, from));
+          phase === 'icons' &&
+          (source === 'menubar' ? nearMenuBar(input.region, icons, screen) : nearIcon(input.region, icons, screen));
         const away = offScreen(input.region, screen) && !onEdgeIcon;
         awaySince = away ? (awaySince ?? input.t) : null;
       }
@@ -201,14 +209,12 @@ export function createSession({
         scan(input.t);
         if (input.type === 'select') {
           act({ type: 'open-icon', source, name: iconHighlight!.name });
-          // The opened app takes the focus, which drops the Dock by itself.
+          // The opened app takes the focus, which drops the Dock. Opening also gives back any focus the Dock kept.
           dockShown = false;
           // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
           // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
         }
-      } else if (input.type === 'menu-opened') {
-        if (input.icons.length > 0) scanIcons('menu', input.icons, input.t);
       } else if (input.type === 'gaze') {
         // Looking near the Dock, the menu bar or a Desktop icon for 3 seconds sticks to it, and the scan steps through
         // all of its icons. Where two are near, as with a Desktop icon just under the menu bar, the closer one wins.
@@ -217,13 +223,13 @@ export function createSession({
           .sort((a, b) => distance(input.region, a) - distance(input.region, b))[0];
         // Other apps can hide the Dock just past the bottom edge, so looking down starts a hold on it. Asks for it to
         // show, as the mouse would. Whether it's hidden right now is checked on the spot, outside the session.
-        if (target === undefined) iconHold = null;
-        else if (iconHold?.source !== target) {
+        if (iconHold !== null && target === iconHold.source) iconHold.seen = input.t;
+        else if (iconHold === null || input.t - iconHold.seen > HOLD_GRACE_MS) {
           if (target === 'dock' && !dockShown) {
             act({ type: 'show-dock' });
             dockShown = true;
           }
-          iconHold = { source: target, start: input.t };
+          iconHold = target === undefined ? null : { source: target, start: input.t, seen: input.t };
         }
         if (iconHold !== null && input.t - iconHold.start >= iconHoldMs) scanIcons(iconHold.source, iconsOf[iconHold.source](), input.t);
       }
@@ -242,7 +248,7 @@ export function createSession({
         wakeProgress = 0;
       }
     }
-    // Leaving the Dock without opening anything gives it back to the app that hid it.
+    // Leaving the Dock without opening anything takes the focus off it, so the app that hid it hides it again.
     const onDock = iconHold?.source === 'dock' || (phase === 'icons' && source === 'dock');
     if (dockShown && !onDock) {
       act({ type: 'release-dock' });
