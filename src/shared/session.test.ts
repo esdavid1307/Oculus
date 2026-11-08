@@ -796,6 +796,7 @@ describe('Suggested Intents', () => {
       wakeProgress: 0,
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
       highlight: 'intent-0',
+      cells: 4,
     });
     expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
       'Skip the ad',
@@ -830,8 +831,32 @@ describe('Suggested Intents', () => {
     const { session, actions } = choosing();
     session(tick(9000));
     expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
-    expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2 });
+    expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2, sinceWakeMs: 6100 });
+  });
+
+  it('counts Time to Action from the Start Gesture through every wait, including after Something else', () => {
+    const { session, actions } = choosing();
+    session(select(11_000));
+    session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] });
+    session(select(12_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Mute', sinceWakeMs: 9100 });
+  });
+
+  it('counts Time to Action from the last icon opened when the agent stayed awake after it', () => {
+    const actions: AgentAction[] = [];
+    const dock = ['Finder', 'Safari'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
+    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => dock });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, { x: 700, y: 820, radius: 120 }));
+    expect(session(gaze(6100, { x: 700, y: 820, radius: 120 })).phase).toBe('icons');
+    expect(session(select(6200)).phase).toBe('waiting-for-target');
+    session(gaze(60_000, target));
+    expect(session(gaze(61_000, target)).phase).toBe('thinking');
+    session({ type: 'intents', t: 62_000, request: 1, intents: ['Pause'] });
+    session(select(62_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Pause', sinceWakeMs: 62_100 - 6200 });
   });
 
   it('presses nothing by looking at a choice', () => {
@@ -924,6 +949,87 @@ describe('Suggested Intents', () => {
     const { session } = awake();
     expect(session({ type: 'intents', t: 3100, request: 1, intents: ['Pause'] }).phase).toBe('waiting-for-target');
   });
+
+  describe('with past Intents', () => {
+    const past = (intents = ['Pause', 'Mute'], t = 4500) => {
+      const woken = thinking();
+      woken.session({ type: 'past-intents', t, request: 1, intents });
+      return woken;
+    };
+    const claude = (t: number, intents: string[]) => ({ type: 'intents', t, request: 1, intents }) as const;
+
+    it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
+      const { session } = past();
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6 });
+      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
+    });
+
+    it('shows at most 2 past Intents, and ignores an empty list or another request', () => {
+      expect(past(['a', 'b', 'c']).session(tick(4500))).toMatchObject({ intents: ['a', 'b'] });
+      expect(past([]).session(tick(4500)).phase).toBe('thinking');
+      const { session } = thinking();
+      expect(session({ type: 'past-intents', t: 4500, request: 9, intents: ['a'] }).phase).toBe('thinking');
+    });
+
+    it("appends up to 3 of Claude's Intents after the past ones, dropping duplicates ignoring case", () => {
+      const { session } = past();
+      expect(session(claude(5000, ['pause', 'Open it', 'Like', 'Share', 'Save']))).toMatchObject({
+        phase: 'choosing',
+        intents: ['Pause', 'Mute', 'Open it', 'Like', 'Share'],
+      });
+    });
+
+    it("keeps the same key highlighted, with the time it had, when Claude's Intents arrive", () => {
+      const { session } = past();
+      session(tick(7000));
+      expect(session(claude(7000, ['Like', 'Share']))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(8499))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-2' });
+    });
+
+    it("keeps Something else highlighted when it is the lit key as Claude's Intents arrive", () => {
+      const { session } = past(['Pause']);
+      expect(session(tick(6600))).toMatchObject({ highlight: 'something-else' });
+      expect(session(claude(6600, ['Like', 'Share']))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(8499))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-0' });
+    });
+
+    it("keeps every cell where it was when Claude's Intents arrive", () => {
+      const before = layoutIntents(screen, ['Pause', 'Mute'], 6);
+      const after = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6);
+      expect(after.slice(0, 2).map((key) => key.rect)).toEqual(before.slice(0, 2).map((key) => key.rect));
+      expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
+      expect(after).toHaveLength(6);
+    });
+
+    it('does nothing when Claude only repeats the past Intents', () => {
+      const { session } = past();
+      session(tick(7000));
+      expect(session(claude(7000, ['PAUSE']))).toMatchObject({ intents: ['Pause', 'Mute'], highlight: 'intent-1' });
+    });
+
+    it('turns down everything shown on Something else, past and new', () => {
+      const { session, actions } = past();
+      session(claude(5000, ['Like']));
+      session(tick(10_500));
+      expect(session(select(10_500)).phase).toBe('thinking');
+      expect(actions.at(-1)).toEqual({ type: 'suggest-intents', region: target, request: 2, turnedDown: ['Pause', 'Mute', 'Like'] });
+    });
+
+    it("ignores Claude's late answer during a run", () => {
+      const { session } = past();
+      expect(session(select(4600)).phase).toBe('running');
+      expect(session(claude(5000, ['Like']))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
+    });
+
+    it('ignores past Intents that arrive after Claude has answered', () => {
+      const { session } = thinking();
+      session(claude(5000, ['Like']));
+      expect(session({ type: 'past-intents', t: 5100, request: 1, intents: ['Pause'] })).toMatchObject({ intents: ['Like'], cells: 4 });
+    });
+  });
 });
 
 describe('Running an Intent', () => {
@@ -949,8 +1055,32 @@ describe('Running an Intent', () => {
 
   it('asks the agent to run the chosen Intent on its target, with the next request number', () => {
     const { session, actions } = reach('choosing');
-    expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2 });
+    expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad', activity: '' });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2, sinceWakeMs: 2100 });
+  });
+
+  it('shows what the agent is doing during its run', () => {
+    const { session } = reach('running');
+    expect(session({ type: 'run-progress', t: 5500, request: 2, activity: 'Typing' })).toEqual({
+      phase: 'running',
+      wakeProgress: 0,
+      intent: 'Skip the ad',
+      activity: 'Typing',
+    });
+    expect(session(tick(5600))).toMatchObject({ phase: 'running', activity: 'Typing' });
+  });
+
+  it('ignores progress from another run, or when none is running', () => {
+    const progress = (t: number, request: number) => ({ type: 'run-progress', t, request, activity: 'Clicking' }) as const;
+    const { session } = reach('running');
+    expect(session(progress(5500, 1))).toMatchObject({ activity: '' });
+    expect(session(progress(5600, 3))).toMatchObject({ activity: '' });
+    session(finish(6000));
+    expect(session(progress(6100, 2))).toEqual({ phase: 'finished', wakeProgress: 0, intent: 'Skip the ad', ok: true, summary: 'Skipped the ad.' });
+    const stopped = reach('running');
+    stopped.session(gaze(6000, offScreen));
+    stopped.session(gaze(11_000, offScreen));
+    expect(stopped.session(progress(11_100, 2))).toEqual({ phase: 'idle', wakeProgress: 0 });
   });
 
   it('shows the result when the run finishes', () => {

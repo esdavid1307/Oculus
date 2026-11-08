@@ -63,7 +63,7 @@ function keepMostUsed(entries: Record<string, { count: number; last: number }>, 
 // Keyed by typed words, so no inherited keys: a plain {} already has 'constructor', which poisons the counts.
 const table = <T>(entries: Record<string, T> = {}): Record<string, T> => Object.assign(Object.create(null), entries);
 
-function seededRandom(seed: number) {
+export function seededRandom(seed: number) {
   let state = seed >>> 0;
   return () => {
     state = (state * 1664525 + 1013904223) >>> 0;

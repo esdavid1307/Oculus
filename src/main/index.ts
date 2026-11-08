@@ -3,6 +3,7 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
+import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
@@ -122,7 +123,10 @@ function releaseDock() {
 const READ_MENU_BAR = `const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
-  const items = events.processes.byName(process).menuBars[0].menuBarItems;
+  // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
+  const bars = events.processes.byName(process).menuBars;
+  if (bars.length === 0) return [];
+  const items = bars[0].menuBarItems;
   const sizes = items.size();
   const titles = items.name();
   const descriptions = items.description();
@@ -203,6 +207,8 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
     };
     // Dock separators have no name, and a Desktop icon under a window can't be seen.
     const icons = names.flatMap((name, i) => {
+      // The three lists are read one after another, so an icon added in between (the app's own, at launch) has no place yet.
+      if (!positions[i] || !sizes[i]) return [];
       const [x, y] = positions[i];
       const [width, height] = sizes[i];
       const rect = { x, y, width, height };
@@ -244,6 +250,58 @@ function createWordPrediction(enabled: boolean) {
       renameSync(`${file}.tmp`, file);
     },
   };
+}
+
+// What the user ran before, per app. Chosen Intents only, kept on this machine.
+function createHistory(ranker: unknown) {
+  const file = join(app.getPath('userData'), 'intent-history.json');
+  let saved: unknown;
+  try {
+    saved = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Starting Intent History fresh, ignoring ${file}:`, error);
+  }
+  const history = createIntentHistory(readIntentHistory(saved), parseIntentRanker(ranker));
+  return {
+    suggest: history.suggest,
+    learn(context: string, intent: string) {
+      history.learn(context, intent);
+      // Write then rename, so a crash mid-write never leaves a half file that would start the history fresh.
+      writeFileSync(`${file}.tmp`, JSON.stringify(history.model()));
+      renameSync(`${file}.tmp`, file);
+    },
+  };
+}
+
+// The app in front, and with "per-site" the URL of Chrome's front tab. One osascript, so a browser costs no extra
+// launch. An Incognito window gives no URL, so private browsing is never written to the history file.
+const READ_FRONT = `function run(argv) {
+  const name = Application("System Events").processes.whose({frontmost: true})[0].name();
+  let url = "";
+  if (argv[0] === "per-site" && name === "Google Chrome") {
+    try {
+      const front = Application("Google Chrome").windows[0];
+      if (front.mode() !== "incognito") url = front.activeTab.url();
+    } catch (error) {}
+  }
+  return name + "\\n" + url;
+}`;
+
+// Asks macOS once, at start, to let Oculus read Chrome, so the Automation dialog never shows up in the middle of a run.
+// running() doesn't launch Chrome. If Chrome isn't open yet, the dialog comes the first time Oculus reads it.
+const ASK_CHROME = 'const chrome = Application("Google Chrome"); chrome.running() ? chrome.windows.length : 0';
+
+// The app in front, plus the site in Chrome when perSite is on. The overlay never takes focus, so this is what the user
+// is looking at. shortcut: System Events and Chrome through osascript. Any failure, including a denied Automation
+// permission, never reaches the user: a site that can't be read gives the app alone, and an app that can't be read
+// gives '', which means no history for this request.
+function readContext(perSite: boolean): Promise<string> {
+  return new Promise((resolve) => {
+    execFile('osascript', ['-l', 'JavaScript', '-e', READ_FRONT, perSite ? 'per-site' : ''], { timeout: 3000 }, (error, stdout) => {
+      const [name = '', url = ''] = error ? [] : stdout.split('\n').map((line) => line.trim());
+      resolve(historyContext(name, url));
+    });
+  });
 }
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
@@ -335,6 +393,13 @@ function createOverlay() {
   refreshIcons();
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
+  // Count and recency unless config.json says "intentRanker": "neural".
+  const history = createHistory((settings as { intentRanker?: unknown } | undefined)?.intentRanker);
+  // Off unless config.json says "historyPerSite": true, since it needs a one-time Automation permission for Chrome.
+  const perSite = (settings as { historyPerSite?: unknown } | undefined)?.historyPerSite === true;
+  if (perSite) execFile('osascript', ['-l', 'JavaScript', '-e', ASK_CHROME], () => {});
+  // The context of each suggest-intents request, read when it starts since the front app can change during a run.
+  const contexts = new Map<number, Promise<string>>();
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
@@ -354,6 +419,16 @@ function createOverlay() {
         }
       });
     } else if (action.type === 'suggest-intents') {
+      const context = readContext(perSite);
+      contexts.set(action.request, context);
+      for (const old of contexts.keys()) if (old < action.request - 10) contexts.delete(old);
+      // Not after Something else: those are the ones the user just turned down. The answer comes after this session
+      // call has returned, because osascript is asynchronous.
+      if (action.turnedDown.length === 0)
+        void context.then((name) => {
+          const past = name === '' ? [] : history.suggest(name);
+          if (past.length > 0) advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
+        });
       // A folder per request, so overlapping requests never share a screenshot. It's deleted once answered.
       const saveDir = join(app.getPath('userData'), 'intents', String(action.request));
       const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
@@ -366,16 +441,29 @@ function createOverlay() {
           rmSync(saveDir, { recursive: true, force: true });
         });
     } else if (action.type === 'run-intent') {
-      const { intent, region, request } = action;
+      const { intent, region, request, sinceWakeMs } = action;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
+      // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
+      // starts, so a run that fails at once, or is turned away because another is going, is still counted. Only logged, never shown.
+      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
       // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
       if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
+      const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
+      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
+        // The run's request number follows the suggest-intents request it was chosen from.
+        if (outcome.ok)
+          void contexts.get(request - 1)?.then((name) => {
+            try {
+              history.learn(name, intent);
+            } catch (error) {
+              console.warn('Could not save Intent History:', error);
+            }
+          });
         finish(outcome.ok, outcome.summary);
       });
     } else if (action.type === 'stop-run') {
@@ -408,8 +496,9 @@ function createOverlay() {
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
-    // The Stop Gesture or the Gaze Keyboard ended the wait, so the answer would be dropped anyway.
-    if (state.phase !== 'thinking') pendingIntents?.abort();
+    // The Stop Gesture, the Gaze Keyboard or a run ended the wait, so the answer would be dropped anyway.
+    // The picker can be up already, with past Intents, while Claude is still answering.
+    if (state.phase !== 'thinking' && state.phase !== 'choosing') pendingIntents?.abort();
     overlay.webContents.send('overlay-state', state);
   };
 

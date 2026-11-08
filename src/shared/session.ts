@@ -5,8 +5,10 @@ import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUG
 export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
-  | { phase: 'running'; wakeProgress: number; intent: string }
+  // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
+  // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
+  | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
   | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
@@ -26,9 +28,13 @@ export type SessionInput =
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
   // The model's answer to the suggest-intents request with the same number.
   | { type: 'intents'; t: number; request: number; intents: string[] }
+  // The user's own past Intents for the target of the suggest-intents request with the same number, best first.
+  | { type: 'past-intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] }
   // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
-  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string };
+  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string }
+  // A step of the run-intent request with the same number, in a few words for the overlay.
+  | { type: 'run-progress'; t: number; request: number; activity: string };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
@@ -36,7 +42,9 @@ export type AgentAction =
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
-  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number }
+  // sinceWakeMs is the time from the Start Gesture waking the agent (or the last icon opened) to the Select Blink that
+  // chose this Intent, for Time to Action.
+  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number }
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   | { type: 'open-icon'; source: IconSource; name: string }
@@ -51,6 +59,7 @@ export type Suggest = (text: string) => string[];
 export type SuggestPhrase = (text: string) => string | undefined;
 
 const MAX_INTENTS = 3;
+const MAX_PAST_INTENTS = 2;
 
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
 const HOLD_GRACE_MS = 500;
@@ -157,12 +166,16 @@ export function createSession({
   let suggestions: string[] = [];
   let phrase: string | undefined;
   let intents: string[] = [];
+  let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
   let turnedDown: string[] = [];
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
+  // When the Start Gesture finished waking the agent, or the last icon was opened. Time to Action counts from here.
+  let wokeAt = 0;
+  let activity = '';
   // seen is when the gaze was last near the held icon target.
   let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
@@ -180,7 +193,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents) : layoutKeyboard(screen, group, suggestions, phrase).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrase).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -234,8 +247,8 @@ export function createSession({
     scan(t);
   }
 
-  function press(key: KeyId) {
-    if (phase === 'choosing') choose(key);
+  function press(key: KeyId, t: number) {
+    if (phase === 'choosing') choose(key, t);
     else if (key === PHRASE_KEY) {
       // The phrase starts with what was typed, so it replaces all of it.
       text = phrase ?? text;
@@ -264,11 +277,12 @@ export function createSession({
     phase = 'thinking';
   }
 
-  function choose(key: KeyId) {
+  function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
+    activity = '';
     phase = 'running';
-    act({ type: 'run-intent', intent, region: asked!, request: ++request });
+    act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt });
   }
 
   function holdTarget(region: GazeRegion | null, t: number) {
@@ -290,8 +304,8 @@ export function createSession({
 
   function state(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
-    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
-    if (phase === 'running') return { phase, wakeProgress, intent };
+    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
+    if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
@@ -301,12 +315,37 @@ export function createSession({
     if (input.type === 'open-keyboard') {
       // The agent owns the mouse and keys while it runs, so typing would collide with it.
       if (phase !== 'typing' && phase !== 'running') openKeyboard(input.t);
+    } else if (input.type === 'past-intents') {
+      // Only before Claude has answered: after that the picker is already up and the past ones would be reordering it.
+      if (phase === 'thinking' && input.request === request && input.intents.length > 0) {
+        phase = 'choosing';
+        intents = input.intents.slice(0, MAX_PAST_INTENTS);
+        cells = 6;
+        scanStart = input.t;
+        scan(input.t);
+      }
     } else if (input.type === 'intents') {
       if (phase === 'thinking' && input.request === request) {
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
+        cells = 4;
         scanStart = input.t;
         scan(input.t);
+      } else if (phase === 'choosing' && input.request === request) {
+        // Claude's Suggested Intents join the end of what the user is already scanning. Nothing moves.
+        const shown = new Set(intents.map((text) => text.toLowerCase()));
+        const added = input.intents.filter((text) => !shown.has(text.toLowerCase()) && shown.add(text.toLowerCase())).slice(0, MAX_INTENTS);
+        if (added.length > 0) {
+          scan(input.t);
+          const before = highlight;
+          const spent = Math.max(input.t - scanStart, 0) % scanStepMs;
+          intents = [...intents, ...added];
+          // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
+          // where it was, so the same key stays lit and keeps the time it already had.
+          const at = layoutIntents(screen, intents, cells).findIndex((key) => key.id === before);
+          scanStart = input.t - at * scanStepMs - spent;
+          scan(input.t);
+        }
       }
     } else if (input.type === 'run-finished') {
       if (phase === 'running' && input.request === request) {
@@ -315,6 +354,8 @@ export function createSession({
         summary = input.summary;
         finishedAt = input.t;
       }
+    } else if (input.type === 'run-progress') {
+      if (phase === 'running' && input.request === request) activity = input.activity;
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
@@ -352,11 +393,13 @@ export function createSession({
           // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
           // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
+          // Staying awake stands in for a new Start Gesture, so Time to Action counts from here, not the first wake.
+          wokeAt = input.t;
         }
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
         if (input.type === 'select') {
-          press(highlight);
+          press(highlight, input.t);
           if (phase === 'typing') refreshSuggestions();
           scanStart = input.t;
           scan(input.t);
@@ -372,6 +415,7 @@ export function createSession({
       }
       if (wakeProgress === 1) {
         phase = 'waiting-for-target';
+        wokeAt = input.t;
         iconHold = null;
         holdStart = null;
         wakeProgress = 0;
