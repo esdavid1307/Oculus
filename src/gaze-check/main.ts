@@ -1,10 +1,10 @@
 import { blinkCounter, holdTimer } from './free-look';
 import { createTracker } from './iris-tracker';
-import { CENTRE_BOX_VMIN, KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
+import { CENTRE_BOX_VMIN, HOLD_MS, KEYS_NEEDED, scoreGazeCheck, smoother, type Sample, type Screen, type Target, type Trial } from './score';
 import { calibrate, SETTLE_MS, wait, type Tracker } from './tracker';
 
-// Longer than the 2 second hold, so a slow start can still make it.
-const TRIAL_MS = 3000;
+// Longer than the 3 second Start Gesture, so a slow start can still make it.
+const TRIAL_MS = 4000;
 
 const panel = document.getElementById('panel')!;
 const status = document.getElementById('status')!;
@@ -58,7 +58,7 @@ async function runTrial(target: Target): Promise<Trial> {
 function formatReport(report: ReturnType<typeof scoreGazeCheck>, trackerName: string, { width, height }: Screen) {
   const centreBoxPx = Math.round(Math.min(width, height) * CENTRE_BOX_VMIN);
   const { hits, trials, targetSize } = report.centre;
-  const centreLine = `- Centre Box: ${hits}/${trials} holds of 2 s, smallest target ${Math.ceil(targetSize)} px (box: ${centreBoxPx} px)`;
+  const centreLine = `- Centre Box: ${hits}/${trials} holds of ${HOLD_MS / 1000} s, smallest target ${Math.ceil(targetSize)} px (box: ${centreBoxPx} px)`;
   const signed = (value: number) => `${value < 0 ? '' : '+'}${Math.round(value)}`;
   const offsets = report.targets.map(({ kind, x, y, offset }) => {
     const landed = offset ? `${signed(offset.x)}, ${signed(offset.y)}` : 'never tracked';

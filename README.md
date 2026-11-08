@@ -186,16 +186,18 @@ npm test
 npm run typecheck
 ```
 
-Hold the mouse on the centre box to perform the Start Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
+Hold the mouse on the centre box to perform the Start Gesture. Press Cmd+Option+Q to quit, because the overlay ignores clicks.
 
 After the chime, move off the Centre Box, then hold the mouse still on something for 1 second to pick it as the target. Something under the Centre Box needs that move off first, so staying on the box after waking picks nothing. The overlay hides for a moment while it takes a screenshot, then shows "Thinking…" while Claude suggests up to 3 Suggested Intents for that spot. They scan like the Gaze Keyboard: press Cmd+Shift+Space (or do a Select Blink) on the one you want, or on Something else for different suggestions, which tells Claude what you turned down. Choosing one runs it on whatever is on screen, and the overlay shows a banner while it runs and the result after. Look away for 5 seconds to stop a run, or press Cmd+Shift+L in a dev run to toggle Look Away with the mouse. See `docs/youtube-flow.md`. Suggestions use the same backend and settings as the agent check (`OCULUS_AGENT_BACKEND`, see `docs/agent-check.md`), and the terminal needs the Screen Recording permission. If anything fails, the overlay says there are no suggestions, only Something else is shown, and the log says why.
 
 Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first. The keyboard scans: the highlight steps through the keys, one every 2 seconds. Press Cmd+Shift+Space when it's on the key you want, first a letter group and then a letter. With the camera (`npm run dev:gaze`), a Select Blink does the same: close both eyes for half a second. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility). If typing fails, the text is left on the clipboard.
 
+Once awake, look at the Dock, anywhere along the menu bar, or at a Desktop icon that no window covers, for 3 seconds to stick to it. Opening a menu from the menu bar scans its commands next. The highlight then steps through its icons, one every 2 seconds, and a Select Blink (or Cmd+Shift+Space) opens the highlighted one. The agent stays awake afterwards. If the app in front hides the Dock, looking down brings it up with macOS's Ctrl+F3 (Move focus to the Dock) shortcut, which must stay on in Keyboard Shortcuts.
+
 Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "finishedMs": 3000, "wordPrediction": true }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "iconHoldMs": 3000, "finishedMs": 3000, "wordPrediction": true }
 ```
 
 The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.

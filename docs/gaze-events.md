@@ -22,7 +22,7 @@ Rules for a gaze source:
 - Send `region: null` when tracking is lost. Don't repeat the last region. Without it, a gap between two samples on a target counts as part of the hold, and the session can't see a Look Away.
 - Smooth the gaze before sending it. One sample off a target restarts the hold.
 
-A Gaze Region is on the centre box when its centre is inside the box, and off screen when its centre is off screen or it's `null`. Keep `radius` honest, because it goes to the model as a hint.
+A Gaze Region is on the centre box when its centre is inside the box, and off screen when its centre is off screen or it's `null`. One exception: during an Icon Scan, a centre past a screen edge but within `radius` of the scanned icons counts as on them, because looking at the Dock or the menu bar puts the estimate past the edge. Keep `radius` honest, because it goes to the model as a hint.
 
 The session core detects the Start Gesture and Look Away, so they can be tested with scripted gaze events. A gaze source only reports where the user is looking. The Recalibrate Gesture is handled inside real tracking, outside this format, and tracking sends `region: null` while calibrating and until the Start Gesture.
 

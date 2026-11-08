@@ -53,7 +53,8 @@ body {
 
 /* The scan picks the key, so a dot following the eyes would only distract. */
 [data-phase='typing'] #dot,
-[data-phase='choosing'] #dot {
+[data-phase='choosing'] #dot,
+[data-phase='icons'] #dot {
   visibility: hidden;
 }
 
@@ -202,6 +203,19 @@ body {
 .key[data-key='back'] {
   --fill: #d97706;
   --rest: #78350f;
+}
+
+/* The Dock or Desktop icon the scan is on. */
+#icon-highlight {
+  position: fixed;
+  display: none;
+  box-sizing: border-box;
+  border: 8px solid #38bdf8;
+  border-radius: 16px;
+}
+
+[data-phase='icons'] #icon-highlight {
+  display: block;
 }
 
 /* The key the scan is on. */

@@ -10,9 +10,24 @@ const samples = (estimates: (Sample['estimate'])[]): Sample[] => estimates.map((
 const repeat = (estimate: Sample['estimate'], count: number) => Array<Sample['estimate']>(count).fill(estimate);
 
 describe('Centre Box', () => {
-  it('counts a trial as a hit when gaze holds the Centre Box for 2 seconds', () => {
-    const trial: Trial = { target: centre, samples: samples(repeat({ x: 800, y: 500 }, 21)) };
+  it('counts a trial as a hit when gaze holds the Centre Box for 3 seconds, as the Start Gesture needs', () => {
+    const trial: Trial = { target: centre, samples: samples(repeat({ x: 800, y: 500 }, 31)) };
     expect(scoreGazeCheck([trial], screen).centre).toMatchObject({ hits: 1, trials: 1 });
+  });
+
+  it('counts a miss when the hold is shorter than the Start Gesture', () => {
+    const trial: Trial = { target: centre, samples: samples(repeat({ x: 800, y: 500 }, 26)) };
+    expect(scoreGazeCheck([trial], screen).centre.hits).toBe(0);
+  });
+
+  it('counts gaze on the Centre Box edge as inside, as the app does', () => {
+    const trial: Trial = { target: centre, samples: samples(repeat({ x: 1050, y: 250 }, 31)) };
+    expect(scoreGazeCheck([trial], screen).centre.hits).toBe(1);
+  });
+
+  it('counts a miss when gaze holds just outside the Centre Box', () => {
+    const trial: Trial = { target: centre, samples: samples(repeat({ x: 1051, y: 500 }, 31)) };
+    expect(scoreGazeCheck([trial], screen).centre.hits).toBe(0);
   });
 
   it('counts a miss when tracking is lost mid-hold', () => {

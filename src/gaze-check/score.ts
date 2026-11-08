@@ -9,7 +9,8 @@ export type Sample = { t: number; estimate: Position | null; eyesClosed?: boolea
 export type Target = Position & { kind: 'centre' | 'key' };
 export type Trial = { target: Target; samples: Sample[] };
 
-const HOLD_MS = 2000;
+// The Start Gesture, as wakeHoldMs in session.ts.
+export const HOLD_MS = 3000;
 const SMOOTHING_MS = 300;
 // 26 letters, space, delete and done.
 export const KEYS_NEEDED = 29;
@@ -47,8 +48,7 @@ function longestHoldMs(trial: Trial, halfPx: number) {
   let start: number | null = null;
   let longest = 0;
   for (const { t, estimate } of trial.samples) {
-    const inside = !!estimate && chebyshev(estimate, trial.target) <= halfPx;
-    if (inside) {
+    if (estimate && chebyshev(estimate, trial.target) <= halfPx) {
       start ??= t;
       longest = Math.max(longest, t - start);
     } else {
