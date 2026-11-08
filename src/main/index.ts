@@ -271,26 +271,35 @@ function createHistory(ranker: unknown) {
   };
 }
 
-// Runs a JXA one-liner. Any failure, including a denied Automation permission, gives '' and never reaches the user.
-function jxa(script: string): Promise<string> {
+// The app in front, and with "per-site" the URL of Chrome's front tab. One osascript, so a browser costs no extra
+// launch. An Incognito window gives no URL, so private browsing is never written to the history file.
+const READ_FRONT = `function run(argv) {
+  const name = Application("System Events").processes.whose({frontmost: true})[0].name();
+  let url = "";
+  if (argv[0] === "per-site" && name === "Google Chrome") {
+    try {
+      const front = Application("Google Chrome").windows[0];
+      if (front.mode() !== "incognito") url = front.activeTab.url();
+    } catch (error) {}
+  }
+  return name + "\\n" + url;
+}`;
+
+// Asks macOS once, at start, to let Oculus read Chrome, so the Automation dialog never shows up in the middle of a run.
+// running() doesn't launch Chrome. If Chrome isn't open yet, the dialog comes the first time Oculus reads it.
+const ASK_CHROME = 'const chrome = Application("Google Chrome"); chrome.running() ? chrome.windows.length : 0';
+
+// The app in front, plus the site in Chrome when perSite is on. The overlay never takes focus, so this is what the user
+// is looking at. shortcut: System Events and Chrome through osascript. Any failure, including a denied Automation
+// permission, never reaches the user: a site that can't be read gives the app alone, and an app that can't be read
+// gives '', which means no history for this request.
+function readContext(perSite: boolean): Promise<string> {
   return new Promise((resolve) => {
-    execFile('osascript', ['-l', 'JavaScript', '-e', script], { timeout: 3000 }, (error, stdout) => resolve(error ? '' : stdout.trim()));
+    execFile('osascript', ['-l', 'JavaScript', '-e', READ_FRONT, perSite ? 'per-site' : ''], { timeout: 3000 }, (error, stdout) => {
+      const [name = '', url = ''] = error ? [] : stdout.split('\n').map((line) => line.trim());
+      resolve(historyContext(name, url));
+    });
   });
-}
-
-// How to read the URL of the front tab, per browser.
-const FRONT_TAB_URL: Record<string, string> = {
-  'Google Chrome': 'Application("Google Chrome").windows[0].activeTab.url()',
-  Safari: 'Application("Safari").documents[0].url()',
-};
-
-// The app in front, plus the site in a browser. The overlay never takes focus, so this is what the user is looking at.
-// shortcut: System Events and the browsers through osascript. A site that can't be read gives the app alone, and an
-// app that can't be read gives '', which means no history for this request.
-async function readContext(): Promise<string> {
-  const name = await jxa('Application("System Events").processes.whose({frontmost: true})[0].name()');
-  const script = FRONT_TAB_URL[name];
-  return historyContext(name, script ? await jxa(script) : undefined);
 }
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
@@ -365,6 +374,9 @@ function createOverlay() {
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
   // Count and recency unless config.json says "intentRanker": "neural".
   const history = createHistory((settings as { intentRanker?: unknown } | undefined)?.intentRanker);
+  // Off unless config.json says "historyPerSite": true, since it needs a one-time Automation permission for Chrome.
+  const perSite = (settings as { historyPerSite?: unknown } | undefined)?.historyPerSite === true;
+  if (perSite) execFile('osascript', ['-l', 'JavaScript', '-e', ASK_CHROME], () => {});
   // The context of each suggest-intents request, read when it starts since the front app can change during a run.
   const contexts = new Map<number, Promise<string>>();
   const perform = (action: AgentAction) => {
@@ -378,7 +390,7 @@ function createOverlay() {
         console.warn('Could not save word prediction:', error);
       }
     } else if (action.type === 'suggest-intents') {
-      const context = readContext();
+      const context = readContext(perSite);
       contexts.set(action.request, context);
       for (const old of contexts.keys()) if (old < action.request - 10) contexts.delete(old);
       // Not after Something else: those are the ones the user just turned down. The answer comes after this session

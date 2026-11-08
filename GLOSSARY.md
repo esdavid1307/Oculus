@@ -21,7 +21,7 @@ The seconds from the Start Gesture finishing waking the agent (or from the last 
 _Avoid_: Latency, response time
 
 **Intent History**:
-The Intents this user chose before that ran ok, kept per app on this machine, and per site in Chrome and Safari. Up to 2 of the usual ones for the app in front show at once when a target is picked, and Claude's Suggested Intents are added after them without moving anything. "Skip the ad" is never kept. Ranked by count and recency, or by an optional small neural ranker (`"intentRanker": "neural"` in config.json).
+The Intents this user chose before that ran ok, kept per app on this machine, and per site in Chrome when `"historyPerSite": true` is set (never for Incognito windows). Up to 2 of the usual ones for the app in front show, a site's own first and then the app's, at once when a target is picked, and Claude's Suggested Intents are added after them without moving anything. "Skip the ad" is never kept. Ranked by count and recency, or by an optional small neural ranker (`"intentRanker": "neural"` in config.json).
 _Avoid_: Memory, favourites
 
 **Gaze Keyboard**:

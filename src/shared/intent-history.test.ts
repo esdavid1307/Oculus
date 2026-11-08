@@ -42,7 +42,9 @@ describe('Intent History', () => {
     history.learn('Mail', 'Reply', 1);
     expect(history.suggest('Google Chrome')).toEqual(['Pause']);
     expect(history.suggest('Mail')).toEqual(['Reply']);
-    expect(history.suggest('Google Chrome · youtube.com')).toEqual([]);
+    // A site is topped up from its app, but the app on its own never gets a site's Intents.
+    history.learn('Google Chrome · youtube.com', 'Like', 2);
+    expect(history.suggest('Google Chrome')).toEqual(['Pause']);
   });
 
   it('counts the same Intent in a different case as one', () => {
@@ -161,8 +163,8 @@ describe('neural ranker', () => {
 describe('historyContext', () => {
   it('is the app plus the domain in a browser', () => {
     expect(historyContext('Google Chrome', 'https://www.youtube.com/watch?v=1')).toBe('Google Chrome · youtube.com');
-    expect(historyContext('Safari', 'https://mail.google.com/mail/u/0/#inbox')).toBe('Safari · mail.google.com');
-    expect(historyContext('Safari', 'http://Example.com:8080/x')).toBe('Safari · example.com');
+    expect(historyContext('Google Chrome', 'https://mail.google.com/mail/u/0/#inbox')).toBe('Google Chrome · mail.google.com');
+    expect(historyContext('Google Chrome', 'http://Example.com:8080/x')).toBe('Google Chrome · example.com');
   });
 
   it('is the app alone when the site can not be read', () => {
@@ -171,8 +173,9 @@ describe('historyContext', () => {
     }
   });
 
-  it('is the app alone outside Chrome and Safari', () => {
+  it('is the app alone outside Chrome, Safari included since it hides which windows are private', () => {
     expect(historyContext('Mail', 'https://www.youtube.com')).toBe('Mail');
+    expect(historyContext('Safari', 'https://www.youtube.com')).toBe('Safari');
   });
 
   it('keeps app plus site and the app alone as separate histories', () => {
@@ -180,9 +183,26 @@ describe('historyContext', () => {
     history.learn(historyContext('Google Chrome', 'https://youtube.com/watch'), 'Pause', 1);
     history.learn(historyContext('Google Chrome', 'https://mail.google.com'), 'Reply', 1);
     history.learn(historyContext('Google Chrome', null), 'Scroll down', 1);
-    expect(history.suggest(historyContext('Google Chrome', 'https://www.youtube.com/'))).toEqual(['Pause']);
-    expect(history.suggest(historyContext('Google Chrome', 'https://mail.google.com/x'))).toEqual(['Reply']);
+    expect(history.suggest(historyContext('Google Chrome', 'https://www.youtube.com/'), 1)).toEqual(['Pause']);
+    expect(history.suggest(historyContext('Google Chrome', 'https://mail.google.com/x'), 1)).toEqual(['Reply']);
     expect(history.suggest(historyContext('Google Chrome', null))).toEqual(['Scroll down']);
-    expect(history.suggest(historyContext('Google Chrome', 'https://example.com'))).toEqual([]);
+  });
+
+  it("tops up a site from the app's own history, so per-app history learned earlier is still offered", () => {
+    const history = createIntentHistory();
+    history.learn('Google Chrome', 'Scroll down', 1);
+    history.learn('Google Chrome', 'Pause', 2);
+    expect(history.suggest('Google Chrome · example.com')).toEqual(['Pause', 'Scroll down']);
+    history.learn('Google Chrome · youtube.com', 'pause', 3);
+    history.learn('Google Chrome · youtube.com', 'Like', 4);
+    history.learn('Google Chrome · youtube.com', 'Like', 5);
+    // The site's own come first, and "pause" isn't offered twice.
+    expect(history.suggest('Google Chrome · youtube.com', 3)).toEqual(['Like', 'pause', 'Scroll down']);
+  });
+
+  it('never tops up an app from another app', () => {
+    const history = createIntentHistory();
+    history.learn('Google Chrome', 'Pause', 1);
+    expect(history.suggest('Mail')).toEqual([]);
   });
 });
