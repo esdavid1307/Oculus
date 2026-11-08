@@ -200,6 +200,8 @@ Timings live in `~/Library/Application Support/oculus-agent/config.json`. All ar
 { "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "iconHoldMs": 3000, "finishedMs": 3000, "wordPrediction": true }
 ```
 
+Add `"intentRanker": "neural"` to rank the user's past Intents with a small ranker that learns from each confirmed Intent. Without it, or with any other value, they are ranked by count and recency.
+
 The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.
 
 ## Hackathon Demo
