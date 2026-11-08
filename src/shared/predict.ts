@@ -42,6 +42,9 @@ const REPLAYED_PREFIXES = 4;
 
 const WORD = /^[a-z]+$/;
 
+// Keyed by typed words, so no inherited keys: a plain {} already has 'constructor', which poisons the counts.
+const table = <T>(entries: Record<string, T> = {}): Record<string, T> => Object.assign(Object.create(null), entries);
+
 function seededRandom(seed: number) {
   let state = seed >>> 0;
   return () => {
@@ -54,8 +57,8 @@ export function emptyWordModel(seed = 7): WordModel {
   const random = seededRandom(seed);
   return {
     version: 1,
-    words: {},
-    next: {},
+    words: table(),
+    next: table(),
     ranker: {
       linear: [...PRIOR],
       hidden: Array.from({ length: HIDDEN }, () => FEATURES.map(() => random() * 0.6)),
@@ -74,14 +77,19 @@ export function readWordModel(raw: unknown): WordModel {
   const valid =
     model?.version === 1 &&
     typeof model.words === 'object' &&
+    model.words !== null &&
     typeof model.next === 'object' &&
+    model.next !== null &&
     sized(ranker?.linear, FEATURES.length) &&
     sized(ranker?.hiddenBias, HIDDEN) &&
     sized(ranker?.out, HIDDEN) &&
     Array.isArray(ranker?.hidden) &&
     ranker.hidden.length === HIDDEN &&
     ranker.hidden.every((row) => sized(row, FEATURES.length));
-  return valid ? model : emptyWordModel();
+  if (!valid) return emptyWordModel();
+  const next = table<Record<string, number>>();
+  for (const [previous, after] of Object.entries(model.next)) next[previous] = table(after);
+  return { ...model, words: table(model.words), next };
 }
 
 // The word being typed and the one before it. After a space the word being typed is '', which predicts the next word.
@@ -216,7 +224,7 @@ export function createPredictor(baseWords: BaseWords, model: WordModel = emptyWo
         }
         const own = model.words[word] ?? { count: 0, last: now };
         model.words[word] = { count: own.count + 1, last: now };
-        model.next[previous] ??= {};
+        model.next[previous] ??= table();
         model.next[previous][word] = (model.next[previous][word] ?? 0) + 1;
       });
       forget();
