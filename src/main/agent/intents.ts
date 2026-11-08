@@ -80,7 +80,8 @@ function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
     '--model', config.model,
     '--output-format', 'json',
     '--append-system-prompt', SYSTEM_PROMPT,
-    '--allowedTools', 'Read',
+    // Read only beside the screenshot: screen text could ask for files elsewhere, like credentials.
+    '--allowedTools', 'Read(./**)',
     '--disallowedTools', 'Bash', ...DENIED_TOOLS,
     '--setting-sources', 'project',
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
@@ -95,10 +96,15 @@ function askClaudeCode(config: AgentConfig, shot: Screenshot, prompt: string) {
     let stderr = '';
     child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
-    const timer = setTimeout(() => child.kill(), CLAUDE_CODE_TIMEOUT_MS);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, CLAUDE_CODE_TIMEOUT_MS);
     child.on('error', (cause) => reject(new Error(`Could not start claude, is Claude Code installed? (${cause.message})`)));
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (timedOut) return reject(new Error(`claude timed out after ${CLAUDE_CODE_TIMEOUT_MS / 1000} s`));
       try {
         const result = JSON.parse(stdout);
         if (result.is_error) reject(new Error(`claude code: ${result.subtype}: ${result.result}`));
