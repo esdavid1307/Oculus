@@ -206,6 +206,8 @@ Large View is on by default. It makes the Dock icons big while Oculus runs (`doc
 { "largeView": true, "uiScale": 1.25, "dockIconSize": 96 }
 ```
 
+Add `"intentRanker": "neural"` to rank the user's past Intents with a small ranker that learns from each confirmed Intent. Without it, or with any other value, they are ranked by count and recency.
+
 The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.
 
 ## Hackathon Demo
