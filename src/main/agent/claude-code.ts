@@ -30,7 +30,8 @@ export function claudeArgs(options: Pick<AgentRunOptions, 'goal' | 'model'>, han
     '--model', options.model,
     '--output-format', 'json',
     '--append-system-prompt', systemPrompt(hands, width, height),
-    '--allowedTools', `Bash(node ${hands}:*)`, 'Read',
+    // Read only inside the run folder: screen text could ask for files elsewhere, like credentials.
+    '--allowedTools', `Bash(node ${hands}:*)`, 'Read(./**)',
     '--disallowedTools', ...DENIED_TOOLS,
     // The user's own settings, plugins, hooks and MCP servers stay out of the run.
     '--setting-sources', 'project',

@@ -61,6 +61,14 @@ describe('word prediction', () => {
     expect(JSON.stringify(predictor.model().ranker)).not.toBe(before);
   });
 
+  it('learns words that are also built-in object keys, such as constructor', () => {
+    const predictor = createPredictor(base);
+    predictor.learn('the constructor came');
+    expect(predictor.model().ranker.linear.every(Number.isFinite)).toBe(true);
+    expect(predictor.suggest('the cons')[0]).toBe('constructor');
+    expect(readWordModel(JSON.parse(JSON.stringify(predictor.model()))).words.constructor).toMatchObject({ count: 1 });
+  });
+
   it('never learns from suggesting alone', () => {
     const predictor = createPredictor(base);
     predictor.suggest('hello there');
@@ -92,6 +100,17 @@ describe('word prediction', () => {
   });
 });
 
+describe('spoken English word list', () => {
+  it('holds no contraction pieces, which would type a wrong word', () => {
+    const words = new Set(base.map(([word]) => word));
+    for (const piece of ['don', 'didn', 'isn', 're', 'll']) expect(words.has(piece)).toBe(false);
+  });
+
+  it('holds no strong swearing, which one blink would type', () => {
+    for (const [word] of base) expect(word).not.toMatch(/^(fuck|motherf|shit|bitch|cunt|whore|slut)/);
+  });
+});
+
 describe('saved word model', () => {
   it('survives a round trip through JSON', () => {
     const predictor = createPredictor(base);
@@ -101,7 +120,7 @@ describe('saved word model', () => {
   });
 
   it('starts fresh from anything malformed', () => {
-    for (const raw of [null, 'x', { version: 2 }, { ...emptyWordModel(), ranker: { linear: [1] } }]) {
+    for (const raw of [null, 'x', { version: 2 }, { ...emptyWordModel(), words: null }, { ...emptyWordModel(), ranker: { linear: [1] } }]) {
       expect(readWordModel(raw)).toEqual(emptyWordModel());
     }
   });

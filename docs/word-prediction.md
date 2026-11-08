@@ -6,7 +6,7 @@ On a scanning keyboard every letter costs two selections and a wait, so this is 
 
 ## How it predicts
 
-1. **Candidates** come from 15,000 words of spoken English (`src/main/words/spoken-english.json`, from SUBTLEX via `subtlex-word-frequencies`, ISC) and from the user's own words.
+1. **Candidates** come from the 15,000 most common words of spoken English (`src/main/words/spoken-english.json`, from SUBTLEX via `subtlex-word-frequencies`, ISC), and from the user's own words. Contraction pieces such as "don", strong swearing and slurs are removed from the list, because one blink would type them.
 2. **Seven features** describe each candidate:
    - how common it is in spoken English
    - how often this user confirmed it

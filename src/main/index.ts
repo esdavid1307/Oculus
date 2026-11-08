@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
@@ -57,7 +57,9 @@ function createWordPrediction(enabled: boolean) {
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
-      writeFileSync(file, JSON.stringify(predictor.model()));
+      // Write then rename, so a crash mid-write never leaves a half file that would start the model fresh.
+      writeFileSync(`${file}.tmp`, JSON.stringify(predictor.model()));
+      renameSync(`${file}.tmp`, file);
     },
   };
 }
@@ -119,9 +121,14 @@ function createOverlay() {
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
-      // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
-      words.learn(action.text);
       typeText(action.text);
+      // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
+      // A failed save must not stop the text being typed, so it only warns.
+      try {
+        words.learn(action.text);
+      } catch (error) {
+        console.warn('Could not save word prediction:', error);
+      }
     } else if (action.type === 'suggest-intents') {
       // A fresh capture each time, so the one screenshot on disk is always shot-1.png, overwritten by the next request.
       const capture = createCapture({
