@@ -62,7 +62,7 @@ The Gaze Region radius is a fixed 120 px, around the 66 to 154 px median error o
 Known limits:
 
 - If no face is in frame during calibration, the Gaze Dot never appears and the Centre Box can't be reached until the user recalibrates.
-- The Gaze Dot is on the overlay, so it will appear in the agent's screenshots.
+- The Gaze Dot is on the overlay, which is hidden while the agent takes a screenshot, so Claude never sees it. See [agent-check.md](agent-check.md).
 - The mouse input can't Look Away, because the cursor stays on screen. Restart `npm run dev` to get back to idle.
 
 ## MediaPipe test

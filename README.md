@@ -181,18 +181,21 @@ Once the user confirms the sentence, Oculus reads it aloud through text-to-speec
 npm install
 npm run dev        # overlay with the dev-only mouse input
 npm run dev:gaze   # overlay with real gaze from the webcam
+OCULUS_AGENT_CHECK="<goal>" npm run dev  # one Claude computer-use run in Chrome, see docs/agent-check.md
 npm test
 npm run typecheck
 ```
 
 Hold the mouse on the centre box to perform the Start Gesture. Press Ctrl+C in the terminal to quit, because the overlay ignores clicks.
 
-Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first, The keyboard scans: the highlight steps through the keys, one every 2 seconds. Press Cmd+Shift+Space when it's on the key you want, first a letter group and then a letter. With the camera (`npm run dev:gaze`), a Select Blink does the same: close both eyes for half a second. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility). If typing fails, the text is left on the clipboard.
+After the chime, hold the mouse still on something for 1 second to pick it as the target. The overlay hides for a moment while it takes a screenshot, then shows "Thinking…" while Claude suggests up to 3 Suggested Intents for that spot. They scan like the Gaze Keyboard: press Cmd+Shift+Space (or do a Select Blink) on the one you want, or on Something else for new suggestions. Choosing one only logs it until #10 runs it. Suggestions use the same backend and settings as the agent check (`OCULUS_AGENT_BACKEND`, see `docs/agent-check.md`), and the terminal needs the Screen Recording permission. If anything fails, the log says why and only Something else is shown.
+
+Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first. The keyboard scans: the highlight steps through the keys, one every 2 seconds. Press Cmd+Shift+Space when it's on the key you want, first a letter group and then a letter. With the camera (`npm run dev:gaze`), a Select Blink does the same: close both eyes for half a second. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility). If typing fails, the text is left on the clipboard.
 
 Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "wordPrediction": true }
+{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "wordPrediction": true }
 ```
 
 The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.

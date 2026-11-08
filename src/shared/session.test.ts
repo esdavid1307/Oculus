@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import type { Rect } from './geometry';
-import { GROUPS, layoutKeyboard } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard } from './keyboard';
 import { createSession, type AgentAction, type OverlayState } from './session';
 
 const screen = { width: 1600, height: 1000 };
@@ -75,7 +75,7 @@ describe('Look Away', () => {
   it('stays awake while the user looks around the screen', () => {
     const session = wokenAt3s();
     session(gaze(4000, outsideBox));
-    expect(session(gaze(20000, outsideBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(20000, outsideBox)).phase).not.toBe('idle');
   });
 
   it('stops the agent after 5 seconds off screen', () => {
@@ -346,6 +346,174 @@ describe('Gaze Keyboard word suggestions', () => {
   it('keeps suggestions off the letter screens, so letters scan as before', () => {
     const { press } = typing();
     expect(press('fghij')).toMatchObject({ group: 'fghij', highlight: 'f' });
+  });
+});
+
+describe('Suggested Intents', () => {
+  const target = { x: 300, y: 300, radius: 120 };
+  const awake = (timings?: unknown) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, timings, act: (action) => actions.push(action) });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    return { session, actions };
+  };
+
+  it('asks the model about a target held for 1 second, then shows it is thinking', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, target));
+    expect(session(gaze(4099, target)).phase).toBe('waiting-for-target');
+    expect(actions).toEqual([]);
+    expect(session(gaze(4100, target)).phase).toBe('thinking');
+    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1 }]);
+  });
+
+  it('restarts the hold when the gaze moves to somewhere else, but not on jitter inside the Gaze Region', () => {
+    const { session } = awake();
+    session(gaze(3100, target));
+    session(gaze(3600, { ...target, x: target.x + 100 }));
+    expect(session(gaze(4100, target)).phase).toBe('thinking');
+
+    const moved = awake();
+    moved.session(gaze(3100, target));
+    moved.session(gaze(3600, { ...target, x: target.x + 400 }));
+    expect(moved.session(gaze(4100, { ...target, x: target.x + 400 })).phase).toBe('waiting-for-target');
+    expect(moved.session(gaze(4600, { ...target, x: target.x + 400 })).phase).toBe('thinking');
+  });
+
+  it('needs a full new hold after waking again, even if the last hold was cut short by the Gaze Keyboard', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, inBox));
+    session({ type: 'open-keyboard', t: 3500 });
+    session(gaze(3600, offScreen));
+    session(gaze(8600, offScreen));
+    session(gaze(9000, inBox));
+    expect(session(gaze(12_000, inBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(12_100, inBox)).phase).toBe('waiting-for-target');
+    expect(actions).toEqual([]);
+    expect(session(gaze(13_099, inBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(13_100, inBox)).phase).toBe('thinking');
+  });
+
+  const thinking = () => {
+    const woken = awake();
+    woken.session(gaze(3100, target));
+    woken.session(gaze(4100, target));
+    return woken;
+  };
+
+  const select = (t: number) => ({ type: 'select', t }) as const;
+
+  it('shows up to 3 Suggested Intents from the model, plus Something else, highlighting the first', () => {
+    const { session } = thinking();
+    const intents = ['Skip the ad', 'Open a related video', 'Pause', 'Like the video'];
+    expect(session({ type: 'intents', t: 5000, request: 1, intents })).toEqual({
+      phase: 'choosing',
+      wakeProgress: 0,
+      intents: ['Skip the ad', 'Open a related video', 'Pause'],
+      highlight: 'intent-0',
+    });
+    expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
+      'Skip the ad',
+      'Open a related video',
+      'Pause',
+      'Something else',
+    ]);
+  });
+
+  // Suggestions arrive at 5000 ms, so the scan reaches intent-1 at 7000, intent-2 at 9000 and Something else at 11000.
+  const choosing = (intents = ['Skip the ad', 'Open a related video', 'Pause']) => {
+    const woken = thinking();
+    woken.session({ type: 'intents', t: 5000, request: 1, intents });
+    return woken;
+  };
+
+  it('moves the highlight to the next choice every 2 seconds, and wraps round', () => {
+    const { session } = choosing();
+    expect(session(tick(6999))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(7000))).toMatchObject({ highlight: 'intent-1' });
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'something-else' });
+    expect(session(tick(13_000))).toMatchObject({ highlight: 'intent-0' });
+  });
+
+  it('scans only the choices on screen when the model offers fewer than 3', () => {
+    const { session } = choosing(['Pause']);
+    expect(session(tick(7000))).toMatchObject({ highlight: 'something-else' });
+    expect(session(tick(9000))).toMatchObject({ highlight: 'intent-0' });
+  });
+
+  it('runs the highlighted Suggested Intent on a Select Blink, which is the confirmation', () => {
+    const { session, actions } = choosing();
+    session(tick(9000));
+    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1 }]);
+    expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause' });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause' });
+  });
+
+  it('presses nothing by looking at a choice', () => {
+    const { session, actions } = choosing();
+    const { x, y, width, height } = layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause'])[2].rect;
+    const onPause = { x: x + width / 2, y: y + height / 2, radius: 120 };
+    session(gaze(5100, onPause));
+    expect(session(gaze(8100, onPause)).phase).toBe('choosing');
+    expect(actions).toHaveLength(1);
+  });
+
+  it('fetches fresh suggestions for the same target on Something else', () => {
+    const { session, actions } = choosing();
+    session(tick(11_000));
+    expect(session(select(11_000)).phase).toBe('thinking');
+    expect(actions).toEqual([
+      { type: 'suggest-intents', region: target, request: 1 },
+      { type: 'suggest-intents', region: target, request: 2 },
+    ]);
+  });
+
+  it('starts the scan again from the first choice when fresh suggestions arrive', () => {
+    const { session } = choosing();
+    session(select(11_000));
+    expect(session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] })).toMatchObject({ phase: 'choosing', highlight: 'intent-0' });
+  });
+
+  it('ignores a Select Blink while thinking', () => {
+    const { session, actions } = thinking();
+    expect(session(select(4500)).phase).toBe('thinking');
+    expect(actions).toHaveLength(1);
+  });
+
+  it.each([
+    ['thinking', () => thinking().session],
+    ['choosing', () => choosing().session],
+    [
+      'running',
+      () => {
+        const { session } = choosing();
+        session(select(5100));
+        return session;
+      },
+    ],
+  ])('stops on the Stop Gesture while %s', (phase, reach) => {
+    const session = reach();
+    expect(session(tick(6200)).phase).toBe(phase);
+    session(gaze(6200, offScreen));
+    expect(session(tick(11_200))).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it('ignores a late answer to an earlier request', () => {
+    const { session } = thinking();
+    session(gaze(4200, offScreen));
+    session(gaze(9200, offScreen));
+    session(gaze(9300, inBox));
+    session(gaze(12_300, inBox));
+    session(gaze(12_400, target));
+    expect(session(gaze(13_400, target)).phase).toBe('thinking');
+    expect(session({ type: 'intents', t: 13_500, request: 1, intents: ['Old'] }).phase).toBe('thinking');
+    expect(session({ type: 'intents', t: 13_600, request: 2, intents: ['New'] })).toMatchObject({ intents: ['New'] });
+  });
+
+  it('ignores suggestions that arrive when it is not thinking', () => {
+    const { session } = awake();
+    expect(session({ type: 'intents', t: 3100, request: 1, intents: ['Pause'] }).phase).toBe('waiting-for-target');
   });
 });
 
