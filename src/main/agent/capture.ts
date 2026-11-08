@@ -26,8 +26,9 @@ export function createCapture({ overlay, display, saveDir, hideOverlay }: Captur
       // Denied Screen Recording makes getSources reject ("Failed to get sources.") instead of returning nothing.
       const sources = await desktopCapturer
         .getSources({ types: ['screen'], thumbnailSize: { width: frame.imageWidth, height: frame.imageHeight } })
-        .catch((error: Error) => {
-          throw new Error(`${SCREEN_RECORDING_HINT} (${error.message})`);
+        // The rejection isn't always an Error, so its message can be missing.
+        .catch((error: unknown) => {
+          throw new Error(`${SCREEN_RECORDING_HINT} (${error instanceof Error ? error.message : String(error)})`);
         });
       image = pickScreenSource(sources, display.id).thumbnail;
     } finally {
