@@ -3,7 +3,7 @@ import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
-import { createIntentHistory, readIntentHistory } from '../shared/intent-history';
+import { createIntentHistory, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
@@ -251,7 +251,7 @@ function createWordPrediction(enabled: boolean) {
 }
 
 // What the user ran before, per app. Chosen Intents only, kept on this machine.
-function createHistory() {
+function createHistory(ranker: unknown) {
   const file = join(app.getPath('userData'), 'intent-history.json');
   let saved: unknown;
   try {
@@ -259,7 +259,7 @@ function createHistory() {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Starting Intent History fresh, ignoring ${file}:`, error);
   }
-  const history = createIntentHistory(readIntentHistory(saved));
+  const history = createIntentHistory(readIntentHistory(saved), parseIntentRanker(ranker));
   return {
     suggest: history.suggest,
     learn(context: string, intent: string) {
@@ -350,7 +350,8 @@ function createOverlay() {
   refreshIcons();
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
-  const history = createHistory();
+  // Count and recency unless config.json says "intentRanker": "neural".
+  const history = createHistory((settings as { intentRanker?: unknown } | undefined)?.intentRanker);
   // The context of each suggest-intents request, read when it starts since the front app can change during a run.
   const contexts = new Map<number, Promise<string>>();
   const perform = (action: AgentAction) => {

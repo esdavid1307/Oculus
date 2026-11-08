@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createIntentHistory, emptyIntentHistory, readIntentHistory } from './intent-history';
+import { createIntentHistory, emptyIntentHistory, parseIntentRanker, readIntentHistory } from './intent-history';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -88,5 +88,72 @@ describe('Intent History', () => {
     history.learn('constructor', 'constructor', 1);
     expect(history.suggest('__proto__')).toEqual([]);
     expect(history.suggest('constructor', 2, 1)).toEqual(['constructor']);
+  });
+});
+
+describe('neural ranker', () => {
+  const neural = () => createIntentHistory(emptyIntentHistory(), 'neural');
+
+  it('is chosen only by "neural", and anything else falls back to count and recency', () => {
+    expect(parseIntentRanker('neural')).toBe('neural');
+    for (const other of [undefined, null, 'count', 'Neural', 7, true, {}]) expect(parseIntentRanker(other)).toBe('count');
+  });
+
+  it('orders Intents like count and recency before it has learned anything', () => {
+    const plain = createIntentHistory();
+    const learned = neural();
+    const uses: [string, number][] = [['a', 0], ['a', DAY], ['b', 2 * DAY], ['c', 3 * DAY], ['c', 4 * DAY], ['c', 5 * DAY], ['d', 40 * DAY], ['e', 41 * DAY], ['e', 41.5 * DAY]];
+    // Replayed into the model directly, so the neural one never trains.
+    for (const [intent, at] of uses) {
+      plain.learn('Notes', intent, at);
+      createIntentHistory(learned.model(), 'count').learn('Notes', intent, at);
+    }
+    expect(learned.suggest('Notes', 5, 45 * DAY)).toEqual(plain.suggest('Notes', 5, 45 * DAY));
+  });
+
+  it('raises a repeatedly confirmed Intent to the top, sooner than counting would', () => {
+    const history = neural();
+    const plain = createIntentHistory();
+    for (const h of [history, plain]) {
+      for (let i = 0; i < 4; i++) h.learn('Notes', 'Old favourite', i * DAY);
+      h.learn('Notes', 'New habit', 30 * DAY);
+    }
+    expect(history.suggest('Notes', 1, 30 * DAY)).toEqual(['New habit']);
+    let neuralAt = 0;
+    let plainAt = 0;
+    for (let i = 1; i <= 12; i++) {
+      history.learn('Notes', 'New habit', 30 * DAY + i);
+      plain.learn('Notes', 'New habit', 30 * DAY + i);
+      if (!neuralAt && history.suggest('Notes', 1, 31 * DAY)[0] === 'New habit') neuralAt = i;
+      if (!plainAt && plain.suggest('Notes', 1, 31 * DAY)[0] === 'New habit') plainAt = i;
+    }
+    expect(neuralAt).toBeGreaterThan(0);
+    expect(neuralAt).toBeLessThanOrEqual(plainAt);
+  });
+
+  it('round-trips its weights through save and read', () => {
+    const history = neural();
+    for (let i = 0; i < 5; i++) {
+      history.learn('Notes', 'a', i);
+      history.learn('Notes', 'b', 10 + i);
+    }
+    const saved = JSON.parse(JSON.stringify(history.model()));
+    expect(saved.ranker.linear).not.toEqual(emptyIntentHistory().ranker.linear);
+    expect(readIntentHistory(saved).ranker).toEqual(history.model().ranker);
+  });
+
+  it('still loads a model saved without weights, starting from the prior', () => {
+    const history = createIntentHistory();
+    history.learn('Notes', 'Pause', 1000);
+    const { ranker, ...old } = JSON.parse(JSON.stringify(history.model()));
+    const loaded = readIntentHistory(old);
+    expect(loaded.ranker).toEqual(emptyIntentHistory().ranker);
+    expect(createIntentHistory(loaded, 'neural').suggest('Notes', 2, 1000)).toEqual(['Pause']);
+  });
+
+  it('does not train on the default ranking, so a switch later starts from the prior', () => {
+    const history = createIntentHistory();
+    for (let i = 0; i < 5; i++) history.learn('Notes', 'a', i);
+    expect(history.model().ranker).toEqual(emptyIntentHistory().ranker);
   });
 });
