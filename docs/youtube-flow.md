@@ -8,7 +8,7 @@ The first full Intent flow (#14): the user looks at a video on YouTube, picks wh
 2. Hold gaze on a video thumbnail for 1 second. This is the target.
 3. The overlay hides for one screenshot and shows "Thinking…" while Claude suggests up to 3 Suggested Intents, such as "Open this video".
 4. The Intents scan like the Gaze Keyboard. Select Blink on the one you want. In a dev run, press Cmd+Shift+Space.
-5. The Oculus Agent runs the Intent in Chrome. The overlay shrinks to a banner at the top, "Running: <Intent>" and "Look away to stop", so you can watch the page change underneath.
+5. The Oculus Agent runs the Intent in Chrome. The overlay shrinks to a banner at the top, "Running: <Intent>", what the agent is doing right now (such as "Clicking…"), and "Look away to stop", so you can watch the page change underneath.
 6. The banner turns to "Done: <summary>" with a green border, or "Couldn't finish: <summary>" with an amber one. It stays for `finishedMs` (3 seconds), then the agent sleeps.
 
 If a video ad is on screen when the screenshot is taken (a Skip button, an "Ad" or "Sponsored" badge, or an ad countdown), "Skip the ad" is offered first, wherever the user was looking. Choosing it clicks Skip, waiting up to 10 seconds for a countdown. Nothing depends on an ad: with none on screen the offer never appears, and opening a video works the same.

@@ -118,7 +118,10 @@ function releaseDock() {
 const READ_MENU_BAR = `const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
-  const items = events.processes.byName(process).menuBars[0].menuBarItems;
+  // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
+  const bars = events.processes.byName(process).menuBars;
+  if (bars.length === 0) return [];
+  const items = bars[0].menuBarItems;
   const sizes = items.size();
   return items.position().map(([x, y], i) => ({ path: [process, 0, i], x, y, width: sizes[i][0], height: sizes[i][1] }));
 }))`;
@@ -197,6 +200,8 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
     };
     // Dock separators have no name, and a Desktop icon under a window can't be seen.
     const icons = names.flatMap((name, i) => {
+      // The three lists are read one after another, so an icon added in between (the app's own, at launch) has no place yet.
+      if (!positions[i] || !sizes[i]) return [];
       const [x, y] = positions[i];
       const [width, height] = sizes[i];
       const rect = { x, y, width, height };
@@ -327,15 +332,16 @@ function createOverlay() {
     } else if (action.type === 'run-intent') {
       const { intent, region, request, sinceWakeMs } = action;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
+      // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
+      // starts, so a run that fails at once, or is turned away because another is going, is still counted. Only logged, never shown.
+      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
       // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
       if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
-      // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
-      // starts, so a run that fails at once is still counted. Only logged, never shown.
-      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
+      const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
+      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
         finish(outcome.ok, outcome.summary);
