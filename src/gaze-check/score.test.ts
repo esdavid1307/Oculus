@@ -20,6 +20,11 @@ describe('Centre Box', () => {
     expect(scoreGazeCheck([trial], screen).centre.hits).toBe(0);
   });
 
+  it('counts gaze on the Centre Box edge as inside, as the app does', () => {
+    const trial: Trial = { target: centre, samples: samples(repeat({ x: 1050, y: 250 }, 31)) };
+    expect(scoreGazeCheck([trial], screen).centre.hits).toBe(1);
+  });
+
   it('counts a miss when gaze holds just outside the Centre Box', () => {
     const trial: Trial = { target: centre, samples: samples(repeat({ x: 1051, y: 500 }, 31)) };
     expect(scoreGazeCheck([trial], screen).centre.hits).toBe(0);
