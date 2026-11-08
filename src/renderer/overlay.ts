@@ -1,7 +1,7 @@
 import type { GazeEvent } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
-import { layoutKeyboard } from '../shared/keyboard';
-import type { OverlayState } from '../shared/session';
+import { layoutIntents, layoutKeyboard, type Key } from '../shared/keyboard';
+import type { KeyDwell, OverlayState } from '../shared/session';
 
 declare global {
   interface Window {
@@ -28,6 +28,7 @@ function chime() {
 const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
+const status = document.getElementById('status')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
   Object.assign(element.style, { left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px` });
@@ -37,13 +38,15 @@ function place(element: HTMLElement, { x, y, width, height }: Rect) {
 const screenSize = { width: innerWidth, height: innerHeight };
 place(typed, layoutKeyboard(screenSize, null).text);
 
-let shownGroup: string | null | undefined;
+// Which screen of keys is drawn, so they are only rebuilt when it changes.
+let shownKeys: string | undefined;
 let keyElements = new Map<string, HTMLElement>();
 
-function showKeys(group: string | null) {
+function showKeys(name: string, keys: Key[]) {
+  if (name === shownKeys) return;
   keyElements.forEach((element) => element.remove());
   keyElements = new Map(
-    layoutKeyboard(screenSize, group).keys.map(({ id, label, rect }) => {
+    keys.map(({ id, label, rect }) => {
       const element = document.createElement('div');
       element.className = 'key';
       element.dataset.key = id;
@@ -53,7 +56,7 @@ function showKeys(group: string | null) {
       return [id, element];
     }),
   );
-  shownGroup = group;
+  shownKeys = name;
 }
 
 let lastPhase: OverlayState['phase'] = 'idle';
@@ -64,7 +67,11 @@ function showKeyboard({ text, group, dwell }: Extract<OverlayState, { phase: 'ty
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  if (group !== shownGroup) showKeys(group);
+  showKeys(`typing ${group}`, layoutKeyboard(screenSize, group).keys);
+  lightKey(dwell);
+}
+
+function lightKey(dwell: KeyDwell | null) {
   const element = dwell ? keyElements.get(dwell.key) : undefined;
   if (litKey !== element) litKey?.style.removeProperty('--dwell');
   element?.style.setProperty('--dwell', String(dwell?.progress ?? 0));
@@ -74,6 +81,12 @@ function showKeyboard({ text, group, dwell }: Extract<OverlayState, { phase: 'ty
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
+  if (state.phase === 'choosing') {
+    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents));
+    lightKey(state.dwell);
+  }
+  status.hidden = state.phase !== 'thinking' && state.phase !== 'running';
+  status.textContent = state.phase === 'running' ? `Running: ${state.intent}` : 'Thinking…';
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
   root.dataset.phase = state.phase;
