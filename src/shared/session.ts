@@ -69,6 +69,9 @@ const MAX_PAST_INTENTS = 2;
 
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
 const HOLD_GRACE_MS = 500;
+// The gaze must be off the screen this long before the Stop Gesture countdown shows, so a lost camera frame or a blink
+// doesn't flash it while the user is just reading. The 5 s still count from the first sample off the screen.
+const STOP_HINT_DELAY_MS = 1000;
 
 const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, iconHoldMs: 3000, finishedMs: 3000 };
 
@@ -317,6 +320,8 @@ export function createSession({
     if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
     phase = 'idle';
     awaySince = null;
+    // A Dock hold in progress ends too, so the Dock is released at the end of this input and not left forced open.
+    iconHold = null;
   }
 
   function shown(): OverlayState {
@@ -331,7 +336,7 @@ export function createSession({
   function state(): OverlayState {
     const base = shown();
     // The result of a finished run isn't stopped by looking away, it just goes away.
-    if (awaySince === null || phase === 'idle' || phase === 'finished') return base;
+    if (awaySince === null || now - awaySince < STOP_HINT_DELAY_MS || phase === 'idle' || phase === 'finished') return base;
     return { ...base, stopInMs: Math.max(lookAwayMs - (now - awaySince), 0) };
   }
 
@@ -398,8 +403,7 @@ export function createSession({
         awaySince = away ? (awaySince ?? input.t) : null;
       }
       if (phase === 'finished' && input.t - finishedAt >= finishedMs) {
-        phase = 'idle';
-        awaySince = null;
+        stop();
       } else if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
         stop();
       } else if (phase === 'waiting-for-target' && input.type === 'gaze') {

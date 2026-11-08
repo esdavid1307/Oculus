@@ -1335,7 +1335,8 @@ describe('Stop Gesture in every state', () => {
 
   it.each(states)('counts down and goes idle after 5 seconds off screen while %s', (until) => {
     const { session } = reach(until);
-    expect(session(gaze(7000, offScreen)).stopInMs).toBe(5000);
+    expect(session(gaze(7000, offScreen))).not.toHaveProperty('stopInMs');
+    expect(session(gaze(8000, offScreen)).stopInMs).toBe(4000);
     expect(session(gaze(9000, offScreen)).stopInMs).toBe(3000);
     expect(session(tick(11_999)).stopInMs).toBe(1);
     expect(session(tick(12_000))).toEqual({ phase: 'idle', wakeProgress: 0 });
@@ -1346,6 +1347,25 @@ describe('Stop Gesture in every state', () => {
     expect(session(gaze(7000, target))).not.toHaveProperty('stopInMs');
     session(gaze(7100, offScreen));
     expect(session(gaze(8000, target))).not.toHaveProperty('stopInMs');
+  });
+
+  it.each(states)('shows no countdown for a moment off the screen, such as a lost camera frame, while %s', (until) => {
+    const { session } = reach(until);
+    expect(session(gaze(7000, offScreen))).not.toHaveProperty('stopInMs');
+    expect(session(gaze(7900, offScreen))).not.toHaveProperty('stopInMs');
+    expect(session(gaze(7950, target))).not.toHaveProperty('stopInMs');
+  });
+
+  it('releases the Dock when recalibrating during a Dock hold', () => {
+    const { session, actions } = reach('waiting-for-target');
+    session(gaze(3100, nearDock));
+    expect(actions).toEqual([{ type: 'show-dock' }]);
+    session({ type: 'recalibrate', t: 3500 });
+    expect(actions).toEqual([{ type: 'show-dock' }, { type: 'release-dock' }]);
+    // Waking again doesn't carry the old hold over into an icon scan.
+    session(gaze(4000, inBox));
+    expect(session(gaze(7000, inBox)).phase).toBe('waiting-for-target');
+    expect(session(gaze(7100, target)).phase).toBe('waiting-for-target');
   });
 
   it.each(states)('stops at once on recalibrating while %s', (until) => {

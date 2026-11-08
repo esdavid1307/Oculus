@@ -88,7 +88,19 @@ const stopping = (ms: number) => `Stopping in ${Math.ceil(ms / 1000)}…`;
 // The countdown on every screen but the run banner, which has its own. Shown only while the gaze is off the screen.
 function showStopHint(state: OverlayState) {
   stopHint.hidden = state.stopInMs === undefined || state.phase === 'running';
-  if (!stopHint.hidden) stopHint.textContent = stopping(state.stopInMs!);
+  if (stopHint.hidden) return;
+  stopHint.textContent = stopping(state.stopInMs!);
+  stopHint.dataset.at = stopHintPlace(state);
+}
+
+// Where the countdown covers nothing the user picks from: over the typed text on the Gaze Keyboard, on the gap between
+// the Suggested Intents in the middle, away from the edge being scanned, and at the bottom over the app otherwise
+// (the "Thinking…" banner is in the middle).
+function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
+  if (state.phase === 'typing') return 'top';
+  if (state.phase === 'choosing') return 'middle';
+  if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
+  return 'bottom';
 }
 
 // textContent and text nodes only: the summary comes from a web page Claude read.

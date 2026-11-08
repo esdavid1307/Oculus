@@ -253,6 +253,7 @@ body {
   position: fixed;
   bottom: calc(24px * var(--ui-scale, 1));
   left: 50%;
+  /* Above the keyboard and the intents, so it is never hidden behind them. */
   z-index: 2;
   margin: 0;
   padding: calc(16px * var(--ui-scale, 1));
@@ -260,6 +261,20 @@ body {
   background: rgb(15 23 42 / 95%);
   border: calc(4px * var(--ui-scale, 1)) solid #d97706;
   border-radius: 16px;
+}
+
+/* Centred in the 120px typed-text strip, with less padding, so it stays clear of the keys even at uiScale 2. */
+#stop-hint[data-at='top'] {
+  top: 60px;
+  bottom: auto;
+  padding: calc(8px * var(--ui-scale, 1)) calc(16px * var(--ui-scale, 1));
+  transform: translate(-50%, -50%);
+}
+
+#stop-hint[data-at='middle'] {
+  top: 50%;
+  bottom: auto;
+  transform: translate(-50%, -50%);
 }
 
 #stop-hint[hidden] {
