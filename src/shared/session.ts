@@ -50,7 +50,8 @@ export type SessionInput =
 export type AgentAction =
   | { type: 'type-text'; text: string }
   // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
-  | { type: 'focus-text-box'; name: string }
+  // rect is the box as matched, in overlay coordinates. name is for the log.
+  | { type: 'focus-text-box'; name: string; rect: Rect }
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
@@ -333,7 +334,7 @@ export function createSession({
       // Where the gaze settled, not where the hold began: the first sample is often still on the way in.
       const box = textBoxAt(region);
       if (box) {
-        act({ type: 'focus-text-box', name: box.name });
+        act({ type: 'focus-text-box', name: box.name, rect: box.rect });
         openKeyboard(t);
       } else suggestIntents(region, []);
       target = null;

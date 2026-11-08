@@ -1478,7 +1478,7 @@ describe('Text box target', () => {
     expect(session(gaze(4099, onBox)).phase).toBe('waiting-for-target');
     expect(actions).toEqual([]);
     expect(session(gaze(4100, onBox))).toMatchObject({ phase: 'typing', text: '', group: null, highlight: 'abcde' });
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search' }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }]);
     // The model is never asked on this path, so no fake-model reply would ever be read.
     expect(actions.some(({ type }) => type === 'suggest-intents')).toBe(false);
   });
@@ -1507,7 +1507,7 @@ describe('Text box target', () => {
     tickTo('klmno');
     tickTo('k');
     tickTo('done');
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search' }, { type: 'type-text', text: 'k' }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }, { type: 'type-text', text: 'k' }]);
   });
 
   it('ignores a text box the Gaze Region does not touch', () => {
@@ -1524,7 +1524,7 @@ describe('Text box target', () => {
     const { session, actions } = awake([far, near]);
     session(gaze(3100, { x: 700, y: 120, radius: 120 }));
     session(gaze(4100, { x: 700, y: 120, radius: 120 }));
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'near' }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'near', rect: near.rect }]);
   });
 
   it('closes without typing on the Stop Gesture while typing in a text box', () => {
@@ -1533,7 +1533,7 @@ describe('Text box target', () => {
     session(gaze(4100, onBox));
     session(gaze(4200, offScreen));
     expect(session(gaze(9200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search' }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }]);
   });
 
   it('starts fresh text when opened by a second text box target later', () => {
@@ -1550,8 +1550,8 @@ describe('Text box target', () => {
     const state = session(gaze(13_400, onBox));
     expect(state).toMatchObject({ phase: 'typing', text: '' });
     expect(actions.filter(({ type }) => type === 'focus-text-box')).toEqual([
-      { type: 'focus-text-box', name: 'YouTube search' },
-      { type: 'focus-text-box', name: 'YouTube search' },
+      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
+      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
     ]);
   });
 });

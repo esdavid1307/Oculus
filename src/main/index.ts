@@ -442,15 +442,15 @@ function createOverlay() {
 
   const icons = { dock: [] as Icon[], desktop: [] as Icon[], menubar: [] as Icon[] };
   let textBoxes: TextBox[] = [];
-  let textBoxByName = new Map<string, Rect>();
+  // Walking the front window's AX tree is costly, so text boxes are only read from the Start Gesture until the session
+  // goes back to idle, not all the time. The 3 s Start Gesture gives the first read time to land before a target hold.
+  let wantTextBoxes = false;
+  const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
-    readTextBoxes(bounds, (read) => {
-      textBoxes = read;
-      textBoxByName = new Map(read.map(({ name, rect }) => [name, rect]));
-    });
+    if (wantTextBoxes) refreshTextBoxes();
   };
   const settings = readTimingsFile();
   const largeView = readLargeView(settings);
@@ -540,10 +540,9 @@ function createOverlay() {
       console.log(`[intent-run] stop request=${action.request}`);
       currentRun.controller.abort();
     } else if (action.type === 'focus-text-box') {
-      // Clicks the box's centre at the HID tap, so the focus lands beneath the click-through overlay before typing.
-      // Falls back silently when the latest read no longer has the box, so a stale target cannot type into nothing.
-      const rect = textBoxByName.get(action.name);
-      if (!rect) return console.warn(`[text-box] ${action.name} is gone, skipping focus`);
+      // Clicks the centre of the box the user looked at, at the HID tap, so the focus lands beneath the click-through
+      // overlay before typing. The session sends the rect it matched, so a later read can't swap the box.
+      const { rect } = action;
       const at = { x: bounds.x + rect.x + rect.width / 2, y: bounds.y + rect.y + rect.height / 2 };
       void execute({ type: 'click', at, button: 'left', count: 1, modifiers: [] }).catch((error: Error) =>
         console.error('Could not focus the text box:', error.message),
@@ -575,6 +574,13 @@ function createOverlay() {
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
+    const want = state.phase === 'waiting-for-target' || (state.phase === 'idle' && state.wakeProgress > 0);
+    if (want !== wantTextBoxes) {
+      wantTextBoxes = want;
+      // Read at once on the Start Gesture rather than at the next refresh, and drop the old boxes once idle.
+      if (want) refreshTextBoxes();
+      else textBoxes = [];
+    }
     // The Stop Gesture, the Gaze Keyboard or a run ended the wait, so the answer would be dropped anyway.
     // The picker can be up already, with past Intents, while Claude is still answering.
     if (state.phase !== 'thinking' && state.phase !== 'choosing') pendingIntents?.abort();
