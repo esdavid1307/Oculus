@@ -122,7 +122,8 @@ describe('runIntent', () => {
     expect(logs.at(-1)).toContain('stopped=true');
   });
 
-  it.each(['claude-code', 'api'] as const)('reports each screenshot and input of the %s backend as an activity', async (backend) => {
+  // The model's turn after each input takes most of the run, so the overlay mustn't keep showing the input.
+  it.each(['claude-code', 'api'] as const)('reports each screenshot and input of the %s backend, and thinking after each input', async (backend) => {
     const activities: string[] = [];
     const steps = async (_options: unknown, d: { capture: RunIntentDeps['capture']; execute: RunIntentDeps['execute'] }) => {
       await d.capture();
@@ -134,7 +135,17 @@ describe('runIntent', () => {
     };
     const { deps } = setup({ onActivity: (activity) => activities.push(activity), backends: { 'claude-code': steps, api: steps } });
     await runIntent(run, { ...config, backend }, deps);
-    expect(activities).toEqual(['Looking at the screen', 'Clicking', 'Pressing cmd+down', 'Typing', 'Scrolling']);
+    expect(activities).toEqual([
+      'Looking at the screen',
+      'Clicking',
+      'Thinking',
+      'Pressing cmd+down',
+      'Thinking',
+      'Typing',
+      'Thinking',
+      'Scrolling',
+      'Thinking',
+    ]);
   });
 
   it('never throws when the backend throws', async () => {
