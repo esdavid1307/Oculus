@@ -29,7 +29,8 @@ export function claudeArgs(options: Pick<AgentRunOptions, 'goal' | 'model'>, han
     '--model', options.model,
     '--output-format', 'json',
     '--append-system-prompt', systemPrompt(hands, width, height),
-    '--allowedTools', `Bash(node ${hands}:*)`, 'Read',
+    // Read only inside the run folder: screen text could ask for files elsewhere, like credentials.
+    '--allowedTools', `Bash(node ${hands}:*)`, 'Read(./**)',
     '--disallowedTools', ...DENIED_TOOLS,
     // The user's own settings, plugins, hooks and MCP servers stay out of the run.
     '--setting-sources', 'project',
@@ -102,11 +103,16 @@ export async function runClaudeCode(options: AgentRunOptions, deps: ClaudeCodeDe
       let stderr = '';
       child.stdout.on('data', (chunk) => (stdout += chunk));
       child.stderr.on('data', (chunk) => (stderr += chunk));
-      const timer = setTimeout(() => child.kill(), RUN_TIMEOUT_MS);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+      }, RUN_TIMEOUT_MS);
       child.on('error', (cause) => reject(new Error(`Could not start claude, is Claude Code installed? (${cause.message})`)));
       child.on('close', (code) => {
         clearTimeout(timer);
-        if (stdout.trim()) resolve(stdout);
+        if (timedOut) reject(new Error(`claude timed out after ${RUN_TIMEOUT_MS / 1000} s`));
+        else if (stdout.trim()) resolve(stdout);
         else reject(new Error(`claude exited ${code}: ${stderr.trim() || 'no output'}`));
       });
     });
