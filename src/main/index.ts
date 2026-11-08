@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
-import { createSession, type AgentAction, type Icon, type IconSource, type SessionInput } from '../shared/session';
+import { createSession, type Icon, type SessionInput } from '../shared/session';
 
 const TICK_MS = 100;
 const MOUSE_SAMPLE_MS = 33;
@@ -78,9 +78,78 @@ function releaseDock() {
   appBeforeDock = null;
 }
 
+// Menu bar items are found again by their place in the Accessibility tree, [process, menu bar, item], since status
+// items have no name. Commands in an open menu add their place in the menu.
+// shortcut: reads the app in front and Control Center only, so other apps' status items are left out.
+const READ_MENU_BAR = `const events = Application('System Events');
+const front = events.processes.whose({ frontmost: true })[0].name();
+JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
+  const items = events.processes.byName(process).menuBars[0].menuBarItems;
+  const sizes = items.size();
+  return items.position().map(([x, y], i) => ({ path: [process, 0, i], x, y, width: sizes[i][0], height: sizes[i][1] }));
+}))`;
+
+// Prints the commands of the menu the item opened, leaving out separators and disabled commands. A status item that
+// opens a panel instead prints none.
+// shortcut: a command with a submenu is pressed like any other, scan submenus too if users need them.
+const OPEN_MENU_BAR_ITEM = `function run([path]) {
+  const [process, bar, item] = JSON.parse(path);
+  const menuBarItem = Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item];
+  menuBarItem.actions.byName('AXPress').perform();
+  delay(0.5);
+  if (menuBarItem.menus.length === 0) return '[]';
+  const commands = menuBarItem.menus[0].menuItems;
+  const names = commands.name();
+  const enabled = commands.enabled();
+  const sizes = commands.size();
+  return JSON.stringify(commands.position().flatMap(([x, y], i) =>
+    names[i] && enabled[i] ? [{ path: [process, bar, item, i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
+}`;
+
+const PRESS_MENU_COMMAND = `function run([path]) {
+  const [process, bar, item, command] = JSON.parse(path);
+  Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].menuItems[command].actions.byName('AXPress').perform();
+}`;
+
+const CLOSE_MENU = `function run([path]) {
+  const [process, bar, item] = JSON.parse(path);
+  Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
+}`;
+
+type PlacedPath = { path: unknown[]; x: number; y: number; width: number; height: number };
+
+const toIcons = (placed: PlacedPath[], origin: Rect): Icon[] =>
+  placed.map(({ path, x, y, width, height }) => ({ name: JSON.stringify(path), rect: { x: x - origin.x, y: y - origin.y, width, height } }));
+
+function readMenuBar(origin: Rect, done: (icons: Icon[]) => void) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', READ_MENU_BAR], (error, stdout) => {
+    if (error) return console.error('Could not read the menu bar:', error.message);
+    // Hidden status items are parked at the bottom of the screen with no width.
+    done(toIcons(JSON.parse(stdout) as PlacedPath[], origin).filter(({ rect }) => rect.width > 0 && rect.y < origin.height / 2));
+  });
+}
+
+// The menu left open by the last menu bar item, which the Stop Gesture closes.
+let openMenu: string | null = null;
+
+function openMenuBarItem(path: string, origin: Rect, opened: (icons: Icon[]) => void) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', OPEN_MENU_BAR_ITEM, path], (error, stdout) => {
+    if (error) return console.error('Could not open the menu bar item:', error.message);
+    const icons = toIcons(JSON.parse(stdout) as PlacedPath[], origin);
+    openMenu = icons.length > 0 ? path : null;
+    opened(icons);
+  });
+}
+
+function runMenuScript(script: string, path: string, failure: string) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', script, path], (error) => {
+    if (error) console.error(failure, error.message);
+  });
+}
+
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-function readIcons(source: IconSource, origin: Rect, done: (icons: Icon[]) => void) {
+function readIcons(source: 'dock' | 'desktop', origin: Rect, done: (icons: Icon[]) => void) {
   const script = `${READ_WINDOWS}
 const icons = Application('System Events').${ICONS[source].elements};
 JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.size(), windows: ${source === 'desktop' ? 'windows()' : '[]'} })`;
@@ -104,22 +173,22 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
   });
 }
 
+function openIcon(source: 'dock' | 'desktop', name: string) {
+  const { elements, open } = ICONS[source];
+  const script = `function run([name]) { Application('System Events').${elements}.byName(name).actions.byName('${open}').perform(); }`;
+  execFile('osascript', ['-l', 'JavaScript', '-e', script, name], (error) => {
+    if (error) console.error(`Could not open ${name} from the ${source}:`, error.message);
+  });
+}
+
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
 // shortcut: types through System Events, which needs the Accessibility permission. #6 may replace this.
-function perform(action: Extract<AgentAction, { type: 'open-icon' | 'type-text' }>) {
-  if (action.type === 'open-icon') {
-    const { elements, open } = ICONS[action.source];
-    const script = `function run([name]) { Application('System Events').${elements}.byName(name).actions.byName('${open}').perform(); }`;
-    execFile('osascript', ['-l', 'JavaScript', '-e', script, action.name], (error) => {
-      if (error) console.error(`Could not open ${action.name} from the ${action.source}:`, error.message);
-    });
-    return;
-  }
+function typeText(text: string) {
   const script = ['on run argv', 'tell application "System Events" to keystroke (item 1 of argv)', 'end run'];
-  execFile('osascript', [...script.flatMap((line) => ['-e', line]), action.text], (error) => {
+  execFile('osascript', [...script.flatMap((line) => ['-e', line]), text], (error) => {
     if (!error) return;
     // The keyboard has already closed, so the clipboard is the only copy of the text left.
-    clipboard.writeText(action.text);
+    clipboard.writeText(text);
     console.error('Could not type the Gaze Keyboard text, so it is on the clipboard:', error.message);
   });
 }
@@ -148,10 +217,11 @@ function createOverlay() {
   if (process.env.ELECTRON_RENDERER_URL) overlay.loadURL(process.env.ELECTRON_RENDERER_URL + search);
   else overlay.loadFile(join(__dirname, '../renderer/index.html'), { search });
 
-  const icons: Record<IconSource, Icon[]> = { dock: [], desktop: [] };
+  const icons = { dock: [] as Icon[], desktop: [] as Icon[], menubar: [] as Icon[] };
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
+    readMenuBar(bounds, (read) => (icons.menubar = read));
   };
   refreshIcons();
   const session = createSession({
@@ -161,10 +231,20 @@ function createOverlay() {
     act: (action) => {
       if (action.type === 'show-dock') showDock(bounds, refreshIcons);
       else if (action.type === 'release-dock') releaseDock();
-      else perform(action);
+      else if (action.type === 'type-text') typeText(action.text);
+      else if (action.type === 'close-menu') {
+        if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
+        openMenu = null;
+      } else if (action.source === 'menubar')
+        openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
+      else if (action.source === 'menu') {
+        openMenu = null;
+        runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
+      } else openIcon(action.source, action.name);
     },
     dock: () => icons.dock,
     desktop: () => icons.desktop,
+    menubar: () => icons.menubar,
   });
   const advance = (input: SessionInput) => overlay.webContents.send('overlay-state', session(input));
 

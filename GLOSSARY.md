@@ -41,7 +41,7 @@ Both eyes closed for half a second, which presses the highlighted key or opens t
 _Avoid_: Click, wink
 
 **Icon Scan**:
-Looking near the macOS Dock, or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. The agent stays awake afterwards.
+Looking near the macOS Dock, anywhere along the menu bar, or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. A menu bar item that opens a menu starts a second scan over its commands. The agent stays awake afterwards.
 _Avoid_: Dock Scan, Dock snap, dock mode
 
 **Start Gesture**:

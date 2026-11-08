@@ -7,16 +7,22 @@ export type OverlayState =
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon };
 
-// An icon on the macOS Dock or Desktop, in overlay coordinates.
+// Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
+// The name is what the outside world needs to find it again, in overlay coordinates.
 export type Icon = { name: string; rect: Rect };
 
-export type IconSource = 'dock' | 'desktop';
+// 'menu' is the menu a menu bar item just opened.
+export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
 
 // A select comes from a Select Blink, which real tracking detects outside the GazeEvent format.
-export type SessionInput = GazeEvent | { type: 'tick' | 'open-keyboard' | 'select'; t: number };
+// menu-opened reports the commands of the menu a menu bar item opened.
+export type SessionInput =
+  | GazeEvent
+  | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
+  | { type: 'menu-opened'; t: number; icons: Icon[] };
 
 // Requests for the outside world. The session core never acts on the OS itself.
-export type AgentAction = { type: 'type-text'; text: string } | { type: 'open-icon'; source: IconSource; name: string } | { type: 'show-dock' } | { type: 'release-dock' };
+export type AgentAction = { type: 'type-text'; text: string } | { type: 'open-icon'; source: IconSource; name: string } | { type: 'show-dock' } | { type: 'release-dock' } | { type: 'close-menu' };
 
 const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, iconHoldMs: 3000 };
 
@@ -43,17 +49,36 @@ function onCentreBox(region: GazeRegion | null, { width, height }: Screen) {
   return Math.abs(region.x - width / 2) <= half && Math.abs(region.y - height / 2) <= half;
 }
 
-// Near means the Gaze Region touches one of the icons. The Dock and the Desktop icons sit on screen edges, and looking
-// at them puts the camera's estimate hundreds of pixels past the edge, so the region is pulled back onto the screen first.
-function nearIcon(region: GazeRegion | null, icons: Icon[], { width, height }: Screen) {
-  if (region === null) return false;
+// How far the centre of the Gaze Region is from the nearest icon. The Dock, the menu bar and the Desktop icons sit on
+// screen edges, and looking at them puts the camera's estimate hundreds of pixels past the edge, so the centre is
+// pulled back onto the screen first.
+function iconDistance(region: GazeRegion | null, icons: Icon[], { width, height }: Screen) {
+  if (region === null) return Infinity;
   const x = Math.min(Math.max(region.x, 0), width);
   const y = Math.min(Math.max(region.y, 0), height);
-  return icons.some(({ rect }) => {
-    const dx = Math.max(rect.x - x, 0, x - (rect.x + rect.width));
-    const dy = Math.max(rect.y - y, 0, y - (rect.y + rect.height));
-    return Math.hypot(dx, dy) <= region.radius;
-  });
+  return Math.min(
+    ...icons.map(({ rect }) => {
+      const dx = Math.max(rect.x - x, 0, x - (rect.x + rect.width));
+      const dy = Math.max(rect.y - y, 0, y - (rect.y + rect.height));
+      return Math.hypot(dx, dy);
+    }),
+  );
+}
+
+// Near means the Gaze Region touches one of the icons.
+function nearIcon(region: GazeRegion | null, icons: Icon[], screen: Screen) {
+  return region !== null && iconDistance(region, icons, screen) <= region.radius;
+}
+
+// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them.
+function menuBarDistance(region: GazeRegion | null, items: Icon[], screen: Screen) {
+  if (items.length === 0) return Infinity;
+  const height = Math.max(...items.map(({ rect }) => rect.y + rect.height));
+  return iconDistance(region, [{ name: '', rect: { x: 0, y: 0, width: screen.width, height } }], screen);
+}
+
+function nearMenuBar(region: GazeRegion | null, items: Icon[], screen: Screen) {
+  return region !== null && menuBarDistance(region, items, screen) <= region.radius;
 }
 
 export function createSession({
@@ -62,6 +87,7 @@ export function createSession({
   act = () => {},
   dock = () => [],
   desktop = () => [],
+  menubar = () => [],
 }: {
   screen: Screen;
   timings?: unknown;
@@ -69,9 +95,15 @@ export function createSession({
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
+  // The menus of the app in front, then the status items.
+  menubar?: () => Icon[];
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, iconHoldMs } = parseTimings(timings);
-  const iconsOf = { dock, desktop };
+  const iconsOf = { dock, desktop, menubar };
+  const distance = (region: GazeRegion | null, from: 'dock' | 'desktop' | 'menubar') =>
+    from === 'menubar' ? menuBarDistance(region, menubar(), screen) : iconDistance(region, iconsOf[from](), screen);
+  const near = (region: GazeRegion | null, from: 'dock' | 'desktop' | 'menubar') =>
+    region !== null && distance(region, from) <= region.radius;
   let phase: OverlayState['phase'] = 'idle';
   let holdStart: number | null = null;
   let wakeProgress = 0;
@@ -81,7 +113,7 @@ export function createSession({
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
   let scanStart = 0;
   let highlight: KeyId = '';
-  let iconHold: { source: IconSource; start: number } | null = null;
+  let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
   let dockShown = false;
   // Copied when the icon scan starts, so the icons can't shift under the highlight.
@@ -96,6 +128,16 @@ export function createSession({
       const { keys } = layoutKeyboard(screen, group);
       highlight = keys[step(keys.length)].id;
     }
+  }
+
+  // Steps through the icons column by column from the left, top to bottom.
+  function scanIcons(from: IconSource, all: Icon[], t: number) {
+    phase = 'icons';
+    source = from;
+    iconHold = null;
+    icons = [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
+    scanStart = t;
+    scan(t);
   }
 
   function openKeyboard(t: number) {
@@ -134,12 +176,18 @@ export function createSession({
     } else if (phase !== 'idle') {
       if (input.type === 'gaze') {
         // Looking at an icon on a screen edge is often read as off the screen, and it mustn't count as Look Away.
-        const onEdgeIcon = nearIcon(input.region, phase === 'icons' ? icons : [...dock(), ...desktop()], screen);
+        const onEdgeIcon =
+          phase === 'icons'
+            ? source === 'menubar'
+              ? nearMenuBar(input.region, icons, screen)
+              : nearIcon(input.region, icons, screen)
+            : (['dock', 'desktop', 'menubar'] as const).some((from) => near(input.region, from));
         const away = offScreen(input.region, screen) && !onEdgeIcon;
         awaySince = away ? (awaySince ?? input.t) : null;
       }
       // The Stop Gesture closes the Gaze Keyboard without typing the text, and the icon scan without opening anything.
       if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
+        if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
         phase = 'idle';
         awaySince = null;
       } else if (phase === 'typing') {
@@ -155,31 +203,29 @@ export function createSession({
           act({ type: 'open-icon', source, name: iconHighlight!.name });
           // The opened app takes the focus, which drops the Dock by itself.
           dockShown = false;
-          // Stays awake, so the user can pick the next icon without the Start Gesture again.
+          // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
+          // opens a menu reports its commands with menu-opened, which scans them next.
           phase = 'waiting-for-target';
         }
+      } else if (input.type === 'menu-opened') {
+        if (input.icons.length > 0) scanIcons('menu', input.icons, input.t);
       } else if (input.type === 'gaze') {
-        // Looking near the Dock or a Desktop icon for 3 seconds sticks to it, and the scan steps through all of its
-        // icons, column by column from the left and top to bottom. The Dock wins where the two are close.
-        const near = (['dock', 'desktop'] as const).find((from) => nearIcon(input.region, iconsOf[from](), screen));
+        // Looking near the Dock, the menu bar or a Desktop icon for 3 seconds sticks to it, and the scan steps through
+        // all of its icons. Where two are near, as with a Desktop icon just under the menu bar, the closer one wins.
+        const target = (['dock', 'menubar', 'desktop'] as const)
+          .filter((from) => near(input.region, from))
+          .sort((a, b) => distance(input.region, a) - distance(input.region, b))[0];
         // Other apps can hide the Dock just past the bottom edge, so looking down starts a hold on it. Asks for it to
         // show, as the mouse would. Whether it's hidden right now is checked on the spot, outside the session.
-        if (near === undefined) iconHold = null;
-        else if (iconHold?.source !== near) {
-          if (near === 'dock' && !dockShown) {
+        if (target === undefined) iconHold = null;
+        else if (iconHold?.source !== target) {
+          if (target === 'dock' && !dockShown) {
             act({ type: 'show-dock' });
             dockShown = true;
           }
-          iconHold = { source: near, start: input.t };
+          iconHold = { source: target, start: input.t };
         }
-        if (iconHold !== null && input.t - iconHold.start >= iconHoldMs) {
-          phase = 'icons';
-          source = iconHold.source;
-          iconHold = null;
-          icons = [...iconsOf[source]()].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
-          scanStart = input.t;
-          scan(input.t);
-        }
+        if (iconHold !== null && input.t - iconHold.start >= iconHoldMs) scanIcons(iconHold.source, iconsOf[iconHold.source](), input.t);
       }
     } else if (input.type === 'gaze') {
       if (onCentreBox(input.region, screen)) {

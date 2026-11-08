@@ -516,6 +516,92 @@ describe('Desktop', () => {
   });
 });
 
+describe('Menu bar', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const at = (name: string, x: number, width: number) => ({ name, rect: { x, y: 0, width, height: 33 } });
+  // App menus on the left, status items on the right, out of order as they're read.
+  const menubar = [at('wifi', 1300, 22), at('apple', 10, 34), at('file', 44, 50), at('clock', 1450, 120)];
+  const commands = ['new', 'open', 'close'].map((name, i) => ({ name, rect: { x: 44, y: 34 + i * 24, width: 300, height: 24 } }));
+  const atTop = { x: 800, y: 10, radius: 120 };
+
+  const onMenuBar = () => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), menubar: () => menubar });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, atTop));
+    session(gaze(6100, atTop));
+    return { session, actions };
+  };
+  const highlighted = (state: OverlayState) => (state.phase === 'icons' ? state.highlight.name : null);
+
+  it('sticks to the menu bar after 3 seconds anywhere along it, even past the top edge', () => {
+    const { session } = onMenuBar();
+    expect(session(tick(6200))).toMatchObject({ phase: 'icons', source: 'menubar' });
+    const above = createSession({ screen, menubar: () => menubar });
+    above(gaze(0, inBox));
+    above(gaze(3000, inBox));
+    above(gaze(3100, { x: 800, y: -400, radius: 120 }));
+    expect(above(gaze(6100, { x: 800, y: -400, radius: 120 }))).toMatchObject({ phase: 'icons', source: 'menubar' });
+  });
+
+  it('scans the app menus from the left, then the status items', () => {
+    const { session } = onMenuBar();
+    expect([6100, 8100, 10_100, 12_100].map((t) => highlighted(session(tick(t))))).toEqual(['apple', 'file', 'wifi', 'clock']);
+  });
+
+  it('opens the highlighted item, then scans the commands of the menu it opened from the top', () => {
+    const { session, actions } = onMenuBar();
+    session(tick(8100));
+    expect(session(select(8200)).phase).toBe('waiting-for-target');
+    expect(actions).toEqual([{ type: 'open-icon', source: 'menubar', name: 'file' }]);
+    expect(session({ type: 'menu-opened', t: 8800, icons: commands })).toMatchObject({ phase: 'icons', source: 'menu', highlight: commands[0] });
+    session(tick(10_800));
+    session(select(10_900));
+    expect(actions.at(-1)).toEqual({ type: 'open-icon', source: 'menu', name: 'open' });
+  });
+
+  it('stays waiting when the item opened no menu, such as a status item panel', () => {
+    const { session } = onMenuBar();
+    session(select(6200));
+    expect(session({ type: 'menu-opened', t: 6800, icons: [] }).phase).toBe('waiting-for-target');
+  });
+
+  it('closes the open menu without running anything on the Stop Gesture', () => {
+    const { session, actions } = onMenuBar();
+    session(select(6200));
+    session({ type: 'menu-opened', t: 6800, icons: commands });
+    session(gaze(7000, offScreen));
+    expect(session(gaze(12_000, offScreen)).phase).toBe('idle');
+    expect(actions.map(({ type }) => type)).toEqual(['open-icon', 'close-menu']);
+  });
+
+  it('picks a Desktop icon just under the menu bar when the gaze is on the icon', () => {
+    const school = { name: 'school', rect: { x: 1414, y: 41, width: 64, height: 64 } };
+    const session = createSession({ screen, menubar: () => menubar, desktop: () => [school] });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    const onSchool = { x: 1440, y: 60, radius: 60 };
+    session(gaze(3100, onSchool));
+    expect(session(gaze(6100, onSchool))).toMatchObject({ phase: 'icons', source: 'desktop' });
+  });
+
+  it('picks the menu bar over a Desktop icon just under it when the gaze is on the bar', () => {
+    const school = { name: 'school', rect: { x: 1414, y: 41, width: 64, height: 64 } };
+    const session = createSession({ screen, menubar: () => menubar, desktop: () => [school] });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    const onBar = { x: 1440, y: 10, radius: 60 };
+    session(gaze(3100, onBar));
+    expect(session(gaze(6100, onBar))).toMatchObject({ phase: 'icons', source: 'menubar' });
+  });
+
+  it('does not count gaze past the top edge as Look Away during the scan', () => {
+    const { session } = onMenuBar();
+    expect(session(gaze(30_000, { x: 800, y: -400, radius: 120 })).phase).toBe('icons');
+  });
+});
+
 describe('Gaze Keyboard layout', () => {
   const area = (r: Rect) => r.width * r.height;
   const intersect = (a: Rect, b: Rect) =>
