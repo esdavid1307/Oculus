@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
+import { mouseRegion } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
@@ -408,15 +409,14 @@ function createOverlay() {
   if (useMouse) {
     timers.push(
       setInterval(() => {
-        const { x, y } = screen.getCursorScreenPoint();
-        const region = lookingAway ? null : { x: x - bounds.x, y: y - bounds.y, radius: MOUSE_REGION_RADIUS };
+        const region = mouseRegion(screen.getCursorScreenPoint(), bounds, MOUSE_REGION_RADIUS, lookingAway);
         advance({ type: 'gaze', t: Date.now(), region });
       }, MOUSE_SAMPLE_MS),
     );
   } else {
-    // The overlay page only sends gaze and Select Blinks. A model answer must never come from it.
+    // The overlay page only sends gaze, Select Blinks and recalibrating. A model answer must never come from it.
     ipcMain.on('gaze', (_event, input: SessionInput) => {
-      if (input?.type === 'gaze' || input?.type === 'select') advance(input);
+      if (input?.type === 'gaze' || input?.type === 'select' || input?.type === 'recalibrate') advance(input);
     });
   }
   if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);

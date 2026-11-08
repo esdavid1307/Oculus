@@ -241,3 +241,21 @@ body {
   font-size: calc(48px * var(--ui-scale, 1));
   font-weight: 500;
 }
+
+/* Counts down the Stop Gesture over the Gaze Keyboard, the icon scan and the other screens. Above the Centre Box. */
+#stop-hint {
+  position: fixed;
+  bottom: calc(24px * var(--ui-scale, 1));
+  left: 50%;
+  z-index: 2;
+  margin: 0;
+  padding: calc(16px * var(--ui-scale, 1));
+  transform: translateX(-50%);
+  background: rgb(15 23 42 / 95%);
+  border: calc(4px * var(--ui-scale, 1)) solid #d97706;
+  border-radius: 16px;
+}
+
+#stop-hint[hidden] {
+  display: none;
+}

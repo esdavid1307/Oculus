@@ -31,6 +31,7 @@ const typed = document.getElementById('typed')!;
 const iconHighlight = document.getElementById('icon-highlight')!;
 const iconMagnifier = document.getElementById('icon-magnifier')!;
 const status = document.getElementById('status')!;
+const stopHint = document.getElementById('stop-hint')!;
 const noIntents = document.getElementById('no-intents')!;
 
 function place(element: HTMLElement, { x, y, width, height }: Rect) {
@@ -82,13 +83,21 @@ function highlightKey(id: KeyId) {
   litKey?.classList.add('highlighted');
 }
 
+const stopping = (ms: number) => `Stopping in ${Math.ceil(ms / 1000)}…`;
+
+// The countdown on every screen but the run banner, which has its own. Shown only while the gaze is off the screen.
+function showStopHint(state: OverlayState) {
+  stopHint.hidden = state.stopInMs === undefined || state.phase === 'running';
+  if (!stopHint.hidden) stopHint.textContent = stopping(state.stopInMs!);
+}
+
 // textContent and text nodes only: the summary comes from a web page Claude read.
 function showStatus(state: OverlayState) {
   status.hidden = state.phase !== 'thinking' && state.phase !== 'running' && state.phase !== 'finished';
   if (status.hidden) return;
   if (state.phase === 'running') {
     const hint = document.createElement('small');
-    hint.textContent = 'Look away to stop';
+    hint.textContent = state.stopInMs === undefined ? 'Look away to stop' : stopping(state.stopInMs);
     status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), hint);
   } else if (state.phase === 'finished') {
     status.textContent = `${state.ok ? 'Done' : "Couldn't finish"}: ${state.summary}`;
@@ -124,6 +133,7 @@ window.overlay.onState((state) => {
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);
+  showStopHint(state);
   if (state.phase === lastPhase) return;
   if (state.phase === 'waiting-for-target') chime();
   if (state.phase === 'finished') chime(state.ok ? [660, 880] : [440, 330]);
