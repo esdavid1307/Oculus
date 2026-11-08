@@ -4,8 +4,10 @@ import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import type { Rect } from '../shared/geometry';
 import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
+import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
+import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
@@ -37,6 +39,8 @@ const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
 const DEV_LOOK_AWAY_SHORTCUT = 'CommandOrControl+Shift+L';
 // Time for the Centre Box to be drawn before the first screenshot.
 const OVERLAY_DRAW_MS = 1000;
+// Time for the Dock to come back up after it restarts with a new icon size.
+const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 
@@ -119,9 +123,14 @@ function releaseDock() {
 const READ_MENU_BAR = `const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
-  const items = events.processes.byName(process).menuBars[0].menuBarItems;
+  // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
+  const bars = events.processes.byName(process).menuBars;
+  if (bars.length === 0) return [];
+  const items = bars[0].menuBarItems;
   const sizes = items.size();
-  return items.position().map(([x, y], i) => ({ path: [process, 0, i], x, y, width: sizes[i][0], height: sizes[i][1] }));
+  const titles = items.name();
+  const descriptions = items.description();
+  return items.position().map(([x, y], i) => ({ path: [process, 0, i], label: titles[i] || descriptions[i] || 'Menu bar item', x, y, width: sizes[i][0], height: sizes[i][1] }));
 }))`;
 
 // Prints the commands of the menu the item opened, leaving out separators and disabled commands. A status item that
@@ -138,7 +147,7 @@ const OPEN_MENU_BAR_ITEM = `function run([path]) {
   const enabled = commands.enabled();
   const sizes = commands.size();
   return JSON.stringify(commands.position().flatMap(([x, y], i) =>
-    names[i] && enabled[i] ? [{ path: [process, bar, item, i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
+    names[i] && enabled[i] ? [{ path: [process, bar, item, i], label: names[i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
 }`;
 
 const PRESS_MENU_COMMAND = `function run([path]) {
@@ -151,10 +160,10 @@ const CLOSE_MENU = `function run([path]) {
   Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
 }`;
 
-type PlacedPath = { path: unknown[]; x: number; y: number; width: number; height: number };
+type PlacedPath = { path: unknown[]; label: string; x: number; y: number; width: number; height: number };
 
 const toIcons = (placed: PlacedPath[], origin: Rect): Icon[] =>
-  placed.map(({ path, x, y, width, height }) => ({ name: JSON.stringify(path), rect: { x: x - origin.x, y: y - origin.y, width, height } }));
+  placed.map(({ path, label, x, y, width, height }) => ({ name: JSON.stringify(path), label, rect: { x: x - origin.x, y: y - origin.y, width, height } }));
 
 function readMenuBar(origin: Rect, done: (icons: Icon[]) => void) {
   execFile('osascript', ['-l', 'JavaScript', '-e', READ_MENU_BAR], (error, stdout) => {
@@ -198,11 +207,13 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
     };
     // Dock separators have no name, and a Desktop icon under a window can't be seen.
     const icons = names.flatMap((name, i) => {
+      // The three lists are read one after another, so an icon added in between (the app's own, at launch) has no place yet.
+      if (!positions[i] || !sizes[i]) return [];
       const [x, y] = positions[i];
       const [width, height] = sizes[i];
       const rect = { x, y, width, height };
       if (name === null || windows.some((window) => overlaps(rect, window))) return [];
-      return [{ name, rect: { ...rect, x: x - origin.x, y: y - origin.y } }];
+      return [{ name, label: name, rect: { ...rect, x: x - origin.x, y: y - origin.y } }];
     });
     done(icons);
   });
@@ -342,8 +353,14 @@ function createOverlay() {
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
   };
-  refreshIcons();
   const settings = readTimingsFile();
+  const largeView = readLargeView(settings);
+  // The renderer has no file access, so it gets the settings once the page has loaded.
+  overlay.webContents.once('did-finish-load', () => overlay.webContents.send('large-view', largeView));
+  // A bigger Dock moves its icons, so they are read again once it has restarted.
+  const dockChanged = applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
+  if (dockChanged) setTimeout(refreshIcons, DOCK_RESTART_MS);
+  refreshIcons();
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
   // Count and recency unless config.json says "intentRanker": "neural".
@@ -385,14 +402,16 @@ function createOverlay() {
     } else if (action.type === 'run-intent') {
       const { intent, region, request, sinceWakeMs } = action;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
+      // Time to Action: Start Gesture (or last icon opened) to the Select Blink that chose the Intent. Logged before the run
+      // starts, so a run that fails at once, or is turned away because another is going, is still counted. Only logged, never shown.
+      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
       // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
       if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
-      // Time to Action: Start Gesture to the Intent starting. Only logged, never shown.
-      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
+      const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
+      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
         // The run's request number follows the suggest-intents request it was chosen from.
@@ -482,5 +501,6 @@ app.whenReady().then(async () => {
 });
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  restoreDock(app.getPath('userData'));
   currentRun?.controller.abort();
 });

@@ -17,7 +17,7 @@ One of a few Intents the agent offers for the user to choose between; choosing o
 _Avoid_: Prediction, guess
 
 **Time to Action**:
-The seconds from the Start Gesture waking the agent to the chosen Intent starting. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
+The seconds from the Start Gesture finishing waking the agent (or from the last icon opened, when the agent stayed awake after it) to the Select Blink that chose the Intent. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
 _Avoid_: Latency, response time
 
 **Intent History**:
@@ -75,3 +75,11 @@ _Avoid_: Look away (for leaving a key)
 **Move Off**:
 Gaze leaving a target, such as the Centre Box, while staying on the screen, which restarts that hold.
 _Avoid_: Look away
+
+**Large View**:
+The mode, on by default, that makes what Oculus does not draw itself big enough to see: a larger Dock, the Icon Magnifier, and a UI Scale on the overlay's own text, Gaze Dot and outlines. Turned off with `"largeView": false`.
+_Avoid_: Zoom, accessibility mode
+
+**Icon Magnifier**:
+The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small icon is also grown to a minimum size.
+_Avoid_: Tooltip, zoom

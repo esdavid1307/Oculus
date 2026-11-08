@@ -1,10 +1,11 @@
 import type { Rect } from '../shared/geometry';
 import { layoutIntents, layoutKeyboard, type Key, type KeyId } from '../shared/keyboard';
+import { magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
   interface Window {
-    overlay: { onState(listener: (state: OverlayState) => void): void; sendGaze(input: SessionInput): void };
+    overlay: { onState(listener: (state: OverlayState) => void): void; onLargeView(listener: (settings: LargeView) => void): void; sendGaze(input: SessionInput): void };
   }
 }
 
@@ -28,6 +29,7 @@ const root = document.documentElement;
 const keyboard = document.getElementById('keyboard')!;
 const typed = document.getElementById('typed')!;
 const iconHighlight = document.getElementById('icon-highlight')!;
+const iconMagnifier = document.getElementById('icon-magnifier')!;
 const status = document.getElementById('status')!;
 const noIntents = document.getElementById('no-intents')!;
 
@@ -85,19 +87,39 @@ function showStatus(state: OverlayState) {
   status.hidden = state.phase !== 'thinking' && state.phase !== 'running' && state.phase !== 'finished';
   if (status.hidden) return;
   if (state.phase === 'running') {
+    const activity = document.createElement('span');
+    activity.textContent = state.activity ? `${state.activity}…` : 'Starting…';
     const hint = document.createElement('small');
     hint.textContent = 'Look away to stop';
-    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), hint);
+    status.replaceChildren(document.createTextNode(`Running: ${state.intent}`), activity, hint);
   } else if (state.phase === 'finished') {
     status.textContent = `${state.ok ? 'Done' : "Couldn't finish"}: ${state.summary}`;
     root.dataset.ok = String(state.ok);
   } else status.textContent = 'Thinking…';
 }
 
+// Set once main has read config.json. Until then, and when Large View is off, everything is drawn at the standard size.
+let largeView: LargeView | undefined;
+window.overlay.onLargeView((settings) => {
+  largeView = settings.enabled ? settings : undefined;
+  if (largeView) root.style.setProperty('--ui-scale', String(largeView.uiScale));
+  else root.style.removeProperty('--ui-scale');
+});
+
+// textContent only: icon names come from other apps.
+function showIcon({ highlight }: Extract<OverlayState, { phase: 'icons' }>) {
+  iconMagnifier.hidden = largeView === undefined;
+  if (largeView === undefined) return place(iconHighlight, highlight.rect);
+  const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
+  place(iconHighlight, frame);
+  place(iconMagnifier, panel);
+  iconMagnifier.textContent = highlight.label ?? highlight.name;
+}
+
 window.overlay.onState((state) => {
   root.style.setProperty('--wake-progress', String(state.wakeProgress));
   if (state.phase === 'typing') showKeyboard(state);
-  if (state.phase === 'icons') place(iconHighlight, state.highlight.rect);
+  if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
     showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells));
     highlightKey(state.highlight);
