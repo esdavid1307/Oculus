@@ -1457,3 +1457,101 @@ describe('Stop Gesture in every state', () => {
     expect(actions.filter((action) => action.type === 'release-dock')).toHaveLength(1);
   });
 });
+
+describe('Text box target', () => {
+  const box = { name: 'YouTube search', rect: { x: 500, y: 100, width: 400, height: 40 } };
+  const onBox = { x: 700, y: 120, radius: 120 };
+  const awayFromBox = { x: 200, y: 600, radius: 120 };
+  const select = (t: number) => ({ type: 'select', t }) as const;
+
+  const awake = (boxes: { name: string; rect: Rect }[] = [box]) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), textBoxes: () => boxes });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    return { session, actions };
+  };
+
+  it('opens the Gaze Keyboard directly when the target is a text box, skipping Suggested Intents', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onBox));
+    expect(session(gaze(4099, onBox)).phase).toBe('waiting-for-target');
+    expect(actions).toEqual([]);
+    expect(session(gaze(4100, onBox))).toMatchObject({ phase: 'typing', text: '', group: null, highlight: 'abcde' });
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }]);
+    // The model is never asked on this path, so no fake-model reply would ever be read.
+    expect(actions.some(({ type }) => type === 'suggest-intents')).toBe(false);
+  });
+
+  it('still asks for intents when the target is not a text box', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, awayFromBox));
+    expect(session(gaze(4100, awayFromBox)).phase).toBe('thinking');
+    expect(actions).toEqual([{ type: 'suggest-intents', region: awayFromBox, request: 1, turnedDown: [] }]);
+  });
+
+  it('sends the typed text once Done is pressed, after focusing the box', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onBox));
+    session(gaze(4100, onBox));
+    let t = 4100;
+    const tickTo = (id: string) => {
+      const start = t;
+      let state = session(tick(t));
+      while (state.phase === 'typing' && state.highlight !== id) {
+        if (t - start > 60_000) throw new Error(`the scan never reached ${id}`);
+        state = session(tick((t += 100)));
+      }
+      return session(select(t));
+    };
+    tickTo('klmno');
+    tickTo('k');
+    tickTo('done');
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }, { type: 'type-text', text: 'k' }]);
+  });
+
+  it('ignores a text box the Gaze Region does not touch', () => {
+    const { session, actions } = awake();
+    const far = { x: 50, y: 800, radius: 60 };
+    session(gaze(3100, far));
+    expect(session(gaze(4100, far)).phase).toBe('thinking');
+    expect(actions).toEqual([{ type: 'suggest-intents', region: far, request: 1, turnedDown: [] }]);
+  });
+
+  it('picks the nearest text box when the Gaze Region covers more than one', () => {
+    const near = { name: 'near', rect: { x: 680, y: 100, width: 40, height: 40 } };
+    const far = { name: 'far', rect: { x: 780, y: 100, width: 40, height: 40 } };
+    const { session, actions } = awake([far, near]);
+    session(gaze(3100, { x: 700, y: 120, radius: 120 }));
+    session(gaze(4100, { x: 700, y: 120, radius: 120 }));
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'near', rect: near.rect }]);
+  });
+
+  it('closes without typing on the Stop Gesture while typing in a text box', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onBox));
+    session(gaze(4100, onBox));
+    session(gaze(4200, offScreen));
+    expect(session(gaze(9200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }]);
+  });
+
+  it('starts fresh text when opened by a second text box target later', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onBox));
+    session(gaze(4100, onBox));
+    // Stop Gesture closes the keyboard without typing.
+    session(gaze(4200, offScreen));
+    session(gaze(9200, offScreen));
+    // Wake again and look at the box.
+    session(gaze(9300, inBox));
+    session(gaze(12_300, inBox));
+    session(gaze(12_400, onBox));
+    const state = session(gaze(13_400, onBox));
+    expect(state).toMatchObject({ phase: 'typing', text: '' });
+    expect(actions.filter(({ type }) => type === 'focus-text-box')).toEqual([
+      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
+      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
+    ]);
+  });
+});

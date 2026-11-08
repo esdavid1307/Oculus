@@ -28,6 +28,10 @@ _Avoid_: Memory, favourites
 The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
 _Avoid_: Virtual keyboard, typing mode
 
+**Text Box**:
+A text field, text area or search box the user can look at as the target after waking, which opens the Gaze Keyboard directly instead of going through Suggested Intents. The typed text lands in it.
+_Avoid_: Input, form field
+
 **Suggested Word**:
 One of up to three words the Gaze Keyboard offers, scanned first (after the Suggested Phrase, when there is one), to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
 _Avoid_: Prediction, autocomplete, autofill
