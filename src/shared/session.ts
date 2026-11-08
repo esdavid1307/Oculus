@@ -6,27 +6,34 @@ export type OverlayState =
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
-  | { phase: 'running'; wakeProgress: number; intent: string };
+  | { phase: 'running'; wakeProgress: number; intent: string }
+  // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
+  | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
 
 // A select comes from a Select Blink, which real tracking detects outside the GazeEvent format.
 export type SessionInput =
   | GazeEvent
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
   // The model's answer to the suggest-intents request with the same number.
-  | { type: 'intents'; t: number; request: number; intents: string[] };
+  | { type: 'intents'; t: number; request: number; intents: string[] }
+  // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
+  | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string };
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
   | { type: 'type-text'; text: string }
   | { type: 'suggest-intents'; region: GazeRegion; request: number }
-  | { type: 'run-intent'; intent: string };
+  // region is the target the Intent was suggested for, so "Open this video" knows which video.
+  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number }
+  // The Stop Gesture during a run: the agent must stop acting at once.
+  | { type: 'stop-run'; request: number };
 
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
 
 const MAX_INTENTS = 3;
 
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000 };
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, finishedMs: 3000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 
@@ -41,6 +48,7 @@ function parseTimings(raw: unknown): Timings {
     lookAwayMs: timing('lookAwayMs'),
     scanStepMs: timing('scanStepMs'),
     targetHoldMs: timing('targetHoldMs'),
+    finishedMs: timing('finishedMs'),
   };
 }
 
@@ -62,7 +70,7 @@ export function createSession({
   act?: (action: AgentAction) => void;
   suggest?: Suggest;
 }) {
-  const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs } = parseTimings(timings);
+  const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, finishedMs } = parseTimings(timings);
   let phase: OverlayState['phase'] = 'idle';
   let holdStart: number | null = null;
   let wakeProgress = 0;
@@ -81,6 +89,9 @@ export function createSession({
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
+  let runOk = false;
+  let summary = '';
+  let finishedAt = 0;
 
   // Suggested Intents scan the same way as the Gaze Keyboard.
   function scan(t: number) {
@@ -127,8 +138,8 @@ export function createSession({
   function choose(key: KeyId) {
     if (key === 'something-else') return suggestIntents(asked!);
     intent = intents[Number(key.replace('intent-', ''))];
-    act({ type: 'run-intent', intent });
     phase = 'running';
+    act({ type: 'run-intent', intent, region: asked!, request: ++request });
   }
 
   function holdTarget(region: GazeRegion | null, t: number) {
@@ -149,12 +160,14 @@ export function createSession({
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
     if (phase === 'running') return { phase, wakeProgress, intent };
+    if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
   }
 
   return (input: SessionInput): OverlayState => {
     if (input.type === 'open-keyboard') {
-      if (phase !== 'typing') openKeyboard(input.t);
+      // The agent owns the mouse and keys while it runs, so typing would collide with it.
+      if (phase !== 'typing' && phase !== 'running') openKeyboard(input.t);
     } else if (input.type === 'intents') {
       if (phase === 'thinking' && input.request === request) {
         phase = 'choosing';
@@ -162,10 +175,21 @@ export function createSession({
         scanStart = input.t;
         scan(input.t);
       }
+    } else if (input.type === 'run-finished') {
+      if (phase === 'running' && input.request === request) {
+        phase = 'finished';
+        runOk = input.ok;
+        summary = input.summary;
+        finishedAt = input.t;
+      }
     } else if (phase !== 'idle') {
       if (input.type === 'gaze') awaySince = offScreen(input.region, screen) ? (awaySince ?? input.t) : null;
-      // The Stop Gesture closes the Gaze Keyboard without typing the text.
-      if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
+      if (phase === 'finished' && input.t - finishedAt >= finishedMs) {
+        phase = 'idle';
+        awaySince = null;
+      } else if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
+        // The Stop Gesture closes the Gaze Keyboard without typing the text, and stops a run.
+        if (phase === 'running') act({ type: 'stop-run', request });
         phase = 'idle';
         awaySince = null;
       } else if (phase === 'waiting-for-target' && input.type === 'gaze') {
