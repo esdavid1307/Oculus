@@ -52,7 +52,6 @@ const SECRET_RUN = /\S{16,}/;
 
 const WORD = /^[a-z]+$/;
 
-// Keyed by typed words, so no inherited keys: a plain {} already has 'constructor', which poisons the counts.
 // Drops the least used, then least recent, entries until at most max are left.
 function keepMostUsed(entries: Record<string, { count: number; last: number }>, max: number) {
   const all = Object.entries(entries);
@@ -61,6 +60,7 @@ function keepMostUsed(entries: Record<string, { count: number; last: number }>, 
   for (const [key] of all.slice(0, all.length - max)) delete entries[key];
 }
 
+// Keyed by typed words, so no inherited keys: a plain {} already has 'constructor', which poisons the counts.
 const table = <T>(entries: Record<string, T> = {}): Record<string, T> => Object.assign(Object.create(null), entries);
 
 function seededRandom(seed: number) {

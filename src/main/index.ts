@@ -268,8 +268,10 @@ let subrole = '';
 try { subrole = focused.attributes.byName('AXSubrole').value() || ''; } catch (error) {}
 subrole`;
 
+// Typing waits on this, so a hung osascript is cut off and, like any other failure, counts as secure: the text is
+// still typed, only not learned.
 function isSecureField(done: (secure: boolean) => void) {
-  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], (error, stdout) => {
+  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], { timeout: 2000 }, (error, stdout) => {
     if (error) console.warn('Could not tell whether the field is a password field, so not learning:', error.message);
     done(error !== null || stdout.trim() === 'AXSecureTextField');
   });
