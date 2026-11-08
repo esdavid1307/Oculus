@@ -1,7 +1,8 @@
 // Intent History: the Intents this user chose before that ran fine, per app and site. Pure, so the session core and
 // tests can drive it without Electron.
 //
-// The context is a string: the frontmost app, for example "Google Chrome". Past Intents are ranked by how often and
+// The context is a string: the frontmost app, for example "Google Chrome", or the app plus the site, for example
+// "Google Chrome · youtube.com" (see historyContext). Past Intents are ranked by how often and
 // how recently they were used. A small neural ranker, built like the Suggested Word ranker, can rank them instead.
 import { seededRandom } from './predict';
 import { isSkipAd } from './skip-ad';
@@ -58,6 +59,24 @@ function freshRanker(seed = 11): Ranker {
     out: Array(HIDDEN).fill(0),
   };
 }
+
+// The history context: the app, plus ` · <domain>` for a browser whose front tab's URL could be read.
+// A missing, odd or non-web URL gives the app alone, so history keeps working without the site.
+export function historyContext(app: string, url?: string | null): string {
+  if (!BROWSERS.includes(app) || !url) return app;
+  try {
+    const { protocol, hostname } = new URL(url);
+    // The URL parser already lowercases the host, and an http(s) URL always has one.
+    return protocol === 'https:' || protocol === 'http:' ? `${app}${SITE}${hostname.replace(/^www\./, '')}` : app;
+  } catch {
+    return app;
+  }
+}
+
+const SITE = ' · ';
+
+// The browsers whose front tab Oculus reads. Safari is left out: it can't tell a script whether a window is private.
+export const BROWSERS = ['Google Chrome'];
 
 export function emptyIntentHistory(): IntentHistoryModel {
   return { version: 1, contexts: table(), ranker: freshRanker() };
@@ -160,11 +179,16 @@ export function createIntentHistory(model: IntentHistoryModel = emptyIntentHisto
   }
 
   return {
-    // The best past Intents for this context, best first.
+    // The best past Intents for this context, best first. A site with too few is topped up from the app's own
+    // history, which also keeps what was learned per app before history was kept per site.
     suggest(context: string, limit = 2, now = Date.now()): string[] {
-      return rank(context, now)
-        .slice(0, limit)
-        .map(({ entry }) => entry.text);
+      const best = rank(context, now).map(({ entry }) => entry.text);
+      const at = context.indexOf(SITE);
+      if (at >= 0) {
+        const seen = new Set(best.map((text) => text.toLowerCase()));
+        for (const { entry } of rank(context.slice(0, at), now)) if (!seen.has(entry.text.toLowerCase())) best.push(entry.text);
+      }
+      return best.slice(0, limit);
     },
 
     // Called with an Intent whose run finished ok. Failed or stopped runs never reach it.
