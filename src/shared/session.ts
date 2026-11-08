@@ -14,8 +14,9 @@ export type OverlayState =
   | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
-// The name is what the outside world needs to find it again, in overlay coordinates.
-export type Icon = { name: string; rect: Rect };
+// The name is what the outside world needs to find it again, in overlay coordinates. The label is what a person reads:
+// the name itself can be a lookup key, as for menu bar items.
+export type Icon = { name: string; rect: Rect; label?: string };
 
 // 'menu' is the menu a menu bar item just opened.
 export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
