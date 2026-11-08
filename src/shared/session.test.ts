@@ -282,6 +282,115 @@ describe('Gaze Keyboard', () => {
   });
 });
 
+describe('Dock', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const items = ['Finder', 'Safari', 'Notes'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
+  const nearDock = { x: 700, y: 820, radius: 120 };
+  const belowDock = { x: 700, y: 1300, radius: 120 };
+
+  const awake = (timings?: unknown) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, timings, act: (action) => actions.push(action), dock: () => items });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    return { session, actions };
+  };
+  // Sticks to the Dock at 6100.
+  const onDock = () => {
+    const awoken = awake();
+    awoken.session(gaze(3100, nearDock));
+    awoken.session(gaze(6100, nearDock));
+    return awoken;
+  };
+
+  it('sticks to the Dock after 3 seconds near it, highlighting the first icon', () => {
+    const { session } = awake();
+    session(gaze(3100, nearDock));
+    expect(session(gaze(6099, nearDock)).phase).toBe('waiting-for-target');
+    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'dock', wakeProgress: 0, highlight: items[0] });
+  });
+
+  it('restarts the hold when the user looks away from the Dock', () => {
+    const { session } = awake();
+    session(gaze(3100, nearDock));
+    session(gaze(5000, outsideBox));
+    session(gaze(5100, nearDock));
+    expect(session(gaze(8099, nearDock)).phase).toBe('waiting-for-target');
+    expect(session(gaze(8100, nearDock)).phase).toBe('dock');
+  });
+
+  it('does not stick to the Dock on a Select Blink', () => {
+    const { session } = awake();
+    session(gaze(3100, nearDock));
+    expect(session(select(3200)).phase).toBe('waiting-for-target');
+  });
+
+  it('ignores the Dock while asleep', () => {
+    const session = createSession({ screen, dock: () => items });
+    session(gaze(0, nearDock));
+    expect(session(gaze(5000, nearDock)).phase).toBe('idle');
+  });
+
+  it('ignores the Dock when it could not be read', () => {
+    const session = createSession({ screen });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, nearDock));
+    expect(session(gaze(6100, nearDock)).phase).toBe('waiting-for-target');
+  });
+
+  it('uses the configured Dock hold', () => {
+    const { session } = awake({ dockHoldMs: 1000 });
+    session(gaze(3100, nearDock));
+    expect(session(gaze(4100, nearDock)).phase).toBe('dock');
+  });
+
+  it('steps through the icons every 2 seconds and opens the highlighted one on a Select Blink', () => {
+    const { session, actions } = onDock();
+    expect(session(tick(8100))).toMatchObject({ highlight: items[1] });
+    expect(session(tick(10100))).toMatchObject({ highlight: items[2] });
+    expect(session(tick(12100))).toMatchObject({ highlight: items[0] });
+    session(tick(14100));
+    expect(session(select(14200))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([{ type: 'open-dock-item', name: 'Safari' }]);
+  });
+
+  it('counts gaze far past the screen edge under the Dock as near it', () => {
+    const { session } = awake();
+    session(gaze(3100, belowDock));
+    expect(session(gaze(6100, belowDock)).phase).toBe('dock');
+  });
+
+  it('does not count gaze past the edge under the Dock as Look Away', () => {
+    const { session } = onDock();
+    expect(session(gaze(30_000, belowDock)).phase).toBe('dock');
+  });
+
+  it('still counts gaze past the edge away from the Dock as Look Away', () => {
+    const { session } = awake();
+    const belowCorner = { x: 100, y: 1300, radius: 120 };
+    session(gaze(3100, belowCorner));
+    expect(session(gaze(8100, belowCorner)).phase).toBe('idle');
+  });
+
+  it('leaves without opening anything on the Stop Gesture', () => {
+    const { session, actions } = onDock();
+    session(gaze(7000, offScreen));
+    expect(session(gaze(12_000, offScreen)).phase).toBe('idle');
+    expect(actions).toEqual([]);
+  });
+
+  it('needs a full new hold after waking again', () => {
+    const { session } = awake();
+    session(gaze(3100, nearDock));
+    session(gaze(4000, null));
+    session(gaze(9000, null));
+    session(gaze(9100, inBox));
+    session(gaze(12_100, inBox));
+    expect(session(gaze(12_200, nearDock)).phase).toBe('waiting-for-target');
+  });
+});
+
 describe('Gaze Keyboard layout', () => {
   const area = (r: Rect) => r.width * r.height;
   const intersect = (a: Rect, b: Rect) =>

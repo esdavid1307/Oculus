@@ -43,7 +43,8 @@ body {
 }
 
 [data-phase='waiting-for-target'] #wake,
-[data-phase='typing'] #wake {
+[data-phase='typing'] #wake,
+[data-phase='dock'] #wake {
   visibility: hidden;
 }
 
@@ -52,7 +53,8 @@ body {
 }
 
 /* The scan picks the key, so a dot following the eyes would only distract. */
-[data-phase='typing'] #dot {
+[data-phase='typing'] #dot,
+[data-phase='dock'] #dot {
   visibility: hidden;
 }
 
@@ -211,6 +213,19 @@ body {
 .key[data-key='back'] {
   --fill: #d97706;
   --rest: #78350f;
+}
+
+/* The Dock icon the scan is on. */
+#dock-highlight {
+  position: fixed;
+  display: none;
+  box-sizing: border-box;
+  border: 8px solid #38bdf8;
+  border-radius: 16px;
+}
+
+[data-phase='dock'] #dock-highlight {
+  display: block;
 }
 
 /* The key the scan is on. */
