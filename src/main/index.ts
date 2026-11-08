@@ -325,13 +325,15 @@ function createOverlay() {
           rmSync(saveDir, { recursive: true, force: true });
         });
     } else if (action.type === 'run-intent') {
-      const { intent, region, request } = action;
+      const { intent, region, request, sinceWakeMs } = action;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
       // Deferred: perform runs inside the session call that chose the Intent, which must return before the answer goes in.
       if (running || currentRun) return void setImmediate(() => finish(false, 'Another run is going'));
       const controller = new AbortController();
       running = true;
       currentRun = { request, controller };
+      // Time to Action: Start Gesture to the Intent starting. Only logged, never shown.
+      console.log(`[intent-run] time-to-action=${(sinceWakeMs / 1000).toFixed(1)}s request=${request}`);
       void runIntentInElectron(overlay, { intent, region, request }, controller.signal).then((outcome) => {
         currentRun = null;
         running = false;

@@ -35,7 +35,8 @@ export type AgentAction =
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
-  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number }
+  // sinceWakeMs is the time from the Start Gesture waking the agent to this Intent starting, for Time to Action.
+  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number }
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   | { type: 'open-icon'; source: IconSource; name: string }
@@ -156,6 +157,8 @@ export function createSession({
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
   let intent = '';
+  // When the Start Gesture finished waking the agent. Time to Action counts from here.
+  let wokeAt = 0;
   // seen is when the gaze was last near the held icon target.
   let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
@@ -222,8 +225,8 @@ export function createSession({
     scan(t);
   }
 
-  function press(key: KeyId) {
-    if (phase === 'choosing') choose(key);
+  function press(key: KeyId, t: number) {
+    if (phase === 'choosing') choose(key, t);
     else if (key.startsWith(SUGGESTION_KEY)) {
       // The word replaces the letters typed so far, and the space after it is free.
       text = text.replace(/[a-z]*$/, '') + key.slice(SUGGESTION_KEY.length) + ' ';
@@ -248,11 +251,11 @@ export function createSession({
     phase = 'thinking';
   }
 
-  function choose(key: KeyId) {
+  function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
     intent = intents[Number(key.replace('intent-', ''))];
     phase = 'running';
-    act({ type: 'run-intent', intent, region: asked!, request: ++request });
+    act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt });
   }
 
   function holdTarget(region: GazeRegion | null, t: number) {
@@ -340,7 +343,7 @@ export function createSession({
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
         if (input.type === 'select') {
-          press(highlight);
+          press(highlight, input.t);
           if (phase === 'typing') suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
           scanStart = input.t;
           scan(input.t);
@@ -356,6 +359,7 @@ export function createSession({
       }
       if (wakeProgress === 1) {
         phase = 'waiting-for-target';
+        wokeAt = input.t;
         iconHold = null;
         holdStart = null;
         wakeProgress = 0;

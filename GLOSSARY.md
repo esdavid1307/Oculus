@@ -16,6 +16,10 @@ _Avoid_: Command, task, action
 One of a few Intents the agent offers for the user to choose between; choosing one is the user's confirmation.
 _Avoid_: Prediction, guess
 
+**Time to Action**:
+The seconds from the Start Gesture waking the agent to the chosen Intent starting. It counts waiting for Claude and scanning the picker. It is only logged (`[intent-run] time-to-action=...`), never shown on screen.
+_Avoid_: Latency, response time
+
 **Gaze Keyboard**:
 The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
 _Avoid_: Virtual keyboard, typing mode
