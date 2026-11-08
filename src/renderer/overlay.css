@@ -51,6 +51,11 @@ body {
   background: #0f172a;
 }
 
+/* The scan picks the key, so a dot following the eyes would only distract. */
+[data-phase='typing'] #dot {
+  visibility: hidden;
+}
+
 [data-calibrating] .target {
   visibility: hidden;
 }
@@ -124,7 +129,7 @@ body {
   border: 4px solid #fff;
   border-radius: 16px;
   font-size: 72px;
-  background: linear-gradient(to top, var(--fill) calc(var(--dwell, 0) * 100%), var(--rest) 0);
+  background: var(--rest);
 }
 
 .key[data-key='space'],
@@ -187,7 +192,7 @@ body {
   border: 4px solid #fff;
   border-radius: 16px;
   font-size: 72px;
-  background: linear-gradient(to top, var(--fill) calc(var(--dwell, 0) * 100%), var(--rest) 0);
+  background: var(--rest);
 }
 
 .key[data-key='space'],
@@ -206,4 +211,10 @@ body {
 .key[data-key='back'] {
   --fill: #d97706;
   --rest: #78350f;
+}
+
+/* The key the scan is on. */
+.key.highlighted {
+  background: var(--fill);
+  outline: 8px solid #38bdf8;
 }
