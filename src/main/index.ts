@@ -98,7 +98,7 @@ function createOverlay() {
         saveDir: join(app.getPath('userData'), 'intents'),
         hideOverlay: true,
       });
-      void suggestIntents(action.region, readAgentConfig(process.env, 'shortcut')!, capture).then((intents) =>
+      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture).then((intents) =>
         advance({ type: 'intents', t: Date.now(), request: action.request, intents }),
       );
     } else console.log('Run the Intent, once #10 is built:', action.intent);
@@ -116,7 +116,10 @@ function createOverlay() {
       }, MOUSE_SAMPLE_MS),
     );
   } else {
-    ipcMain.on('gaze', (_event, input: SessionInput) => advance(input));
+    // The overlay page only sends gaze and Select Blinks. A model answer must never come from it.
+    ipcMain.on('gaze', (_event, input: SessionInput) => {
+      if (input?.type === 'gaze' || input?.type === 'select') advance(input);
+    });
   }
   if (!app.isPackaged) {
     globalShortcut.register(DEV_OPEN_KEYBOARD_SHORTCUT, () => advance({ type: 'open-keyboard', t: Date.now() }));

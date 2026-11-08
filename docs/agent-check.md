@@ -61,9 +61,9 @@ Set `OCULUS_AGENT_SHOW_OVERLAY=1` as a negative control. The overlay then stays 
 By default the run needs no API key. The Oculus Agent starts `claude -p` in the background, never shown to the user, and it uses the Claude login of whoever runs `npm run dev`.
 
 1. The Oculus Agent takes the first screenshot, with the overlay hidden, and passes its path in the prompt.
-2. Claude Code can only touch the computer through `scripts/oculus-hands.mjs`, which takes the computer use action names: `node scripts/oculus-hands.mjs left_click '{"coordinate":[600,85]}'`.
+2. Claude Code can only touch the computer through `scripts/oculus-hands.mjs`, which takes the computer use action names. It is copied into the run folder, where Claude Code runs, so a space in the repo path can't break the command: `node oculus-hands.mjs left_click '{"coordinate":[600,85]}'`.
 3. The script forwards each action to the Oculus Agent on a localhost port with a random token. The Agent hides the overlay for screenshots and performs input through the same Accessibility-checked executor as the API backend.
-4. Claude Code is allowed only that script and `Read`, which it uses to look at the screenshots. Web, file-writing and agent tools are denied, and your own settings, plugins, hooks and MCP servers are left out.
+4. Claude Code is allowed only that script and `Read`, which it uses to look at the screenshots. Web, file-writing and agent tools are denied, and your own settings, plugins, hooks and MCP servers are left out. No transcript is saved, so the screenshots don't pile up in `~/.claude`.
 
 The log gets one `[agent-check] claude code run: <N> ms` line for the whole run, not one per model call. A dry run against a fake hands server took about 11 s for click, type, Return and a check screenshot, 7.3 s of it model time.
 

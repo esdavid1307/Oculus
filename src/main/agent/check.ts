@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app, screen, type BrowserWindow } from 'electron';
 import { createCapture } from './capture';
@@ -38,12 +38,14 @@ export async function runAgentCheckInElectron(
     await checkAccessibility();
     await focusChrome();
     await mkdir(runDir, { recursive: true });
+    // shortcut: the hands script is read from the repo, so the claude-code backend is dev-only. Bundle it to package the app.
+    // Copied into the run folder, Claude's working folder, so a space in the repo path can't split its command.
+    await copyFile(join(app.getAppPath(), 'scripts', 'oculus-hands.mjs'), join(runDir, 'oculus-hands.mjs'));
     const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir: runDir, hideOverlay: !config.showOverlayInShots });
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     const result =
       config.backend === 'claude-code'
-        ? // shortcut: the hands script is read from the repo, so this backend is dev-only.
-          await runClaudeCode(config, { capture, execute, log, sleep, now: Date.now, hands: join(app.getAppPath(), 'scripts', 'oculus-hands.mjs'), cwd: runDir })
+        ? await runClaudeCode(config, { capture, execute, log, sleep, now: Date.now, hands: 'oculus-hands.mjs', cwd: runDir })
         : await runAgentCheck(config, { messages: new Anthropic().beta.messages, capture, execute, log, sleep, now: Date.now });
     await writeFile(join(runDir, 'run.json'), JSON.stringify({ result, config }, null, 2));
     log(`${LOG_PREFIX} screenshots and run.json in ${runDir}`);
