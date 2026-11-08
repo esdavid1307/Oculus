@@ -67,12 +67,12 @@ function showKeys(name: string, keys: Key[]) {
 let lastPhase: OverlayState['phase'] = 'idle';
 let litKey: HTMLElement | undefined;
 
-function showKeyboard({ text, group, highlight, suggestions }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions, phrase }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  showKeys(`typing ${JSON.stringify([group, suggestions])}`, layoutKeyboard(screenSize, group, suggestions).keys);
+  showKeys(`typing ${JSON.stringify([group, suggestions, phrase])}`, layoutKeyboard(screenSize, group, suggestions, phrase).keys);
   highlightKey(highlight);
 }
 
