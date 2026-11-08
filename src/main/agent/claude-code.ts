@@ -8,7 +8,7 @@ import { LOG_PREFIX, type AgentCheckResult, type AgentRunOptions, type Capture, 
 // shortcut: one whole run, several turns. The API backend counts steps instead.
 const RUN_TIMEOUT_MS = 180_000;
 // Tools that could reach past the hands: the network, the file system and other agents.
-const DENIED_TOOLS = ['WebFetch', 'WebSearch', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task'];
+export const DENIED_TOOLS = ['WebFetch', 'WebSearch', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task'];
 
 export function systemPrompt(hands: string, width: number, height: number) {
   return [

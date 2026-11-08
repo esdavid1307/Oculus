@@ -1,18 +1,29 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Screen } from './geometry';
-import { GROUPS, layoutKeyboard, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, type KeyId } from './keyboard';
 
 export type OverlayState =
-  | { phase: 'idle' | 'waiting-for-target'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId };
+  | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId }
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId }
+  | { phase: 'running'; wakeProgress: number; intent: string };
 
 // A select comes from a Select Blink, which real tracking detects outside the GazeEvent format.
-export type SessionInput = GazeEvent | { type: 'tick' | 'open-keyboard' | 'select'; t: number };
+export type SessionInput =
+  | GazeEvent
+  | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
+  // The model's answer to the suggest-intents request with the same number.
+  | { type: 'intents'; t: number; request: number; intents: string[] };
 
 // Requests for the outside world. The session core never acts on the OS itself.
-export type AgentAction = { type: 'type-text'; text: string };
+export type AgentAction =
+  | { type: 'type-text'; text: string }
+  | { type: 'suggest-intents'; region: GazeRegion; request: number }
+  | { type: 'run-intent'; intent: string };
 
-const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000 };
+const MAX_INTENTS = 3;
+
+const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000 };
 
 type Timings = typeof DEFAULT_TIMINGS;
 
@@ -26,6 +37,7 @@ function parseTimings(raw: unknown): Timings {
     wakeHoldMs: timing('wakeHoldMs'),
     lookAwayMs: timing('lookAwayMs'),
     scanStepMs: timing('scanStepMs'),
+    targetHoldMs: timing('targetHoldMs'),
   };
 }
 
@@ -45,19 +57,28 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
 }) {
-  const { wakeHoldMs, lookAwayMs, scanStepMs } = parseTimings(timings);
+  const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs } = parseTimings(timings);
   let phase: OverlayState['phase'] = 'idle';
   let holdStart: number | null = null;
   let wakeProgress = 0;
   let awaySince: number | null = null;
+  // The Gaze Region where the user started holding on a target after waking.
+  let target: { region: GazeRegion; start: number } | null = null;
   let text = '';
   let group: string | null = null;
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
   let scanStart = 0;
   let highlight: KeyId = '';
+  let intents: string[] = [];
+  // The target the model was asked about, so Something else can ask again.
+  let asked: GazeRegion | null = null;
+  // Numbers each request, so a late answer to an earlier one is dropped.
+  let request = 0;
+  let intent = '';
 
+  // Suggested Intents scan the same way as the Gaze Keyboard.
   function scan(t: number) {
-    const { keys } = layoutKeyboard(screen, group);
+    const keys = phase === 'choosing' ? layoutIntents(screen, intents) : layoutKeyboard(screen, group).keys;
     highlight = keys[Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % keys.length].id;
   }
 
@@ -72,7 +93,8 @@ export function createSession({
   }
 
   function press(key: KeyId) {
-    if (GROUPS.includes(key)) group = key;
+    if (phase === 'choosing') choose(key);
+    else if (GROUPS.includes(key)) group = key;
     else if (key === 'back') group = null;
     else if (key === 'delete') text = text.slice(0, -1);
     else if (key === 'space') text += ' ';
@@ -85,21 +107,59 @@ export function createSession({
     }
   }
 
+  function suggestIntents(region: GazeRegion) {
+    asked = region;
+    act({ type: 'suggest-intents', region, request: ++request });
+    phase = 'thinking';
+  }
+
+  function choose(key: KeyId) {
+    if (key === 'something-else') return suggestIntents(asked!);
+    intent = intents[Number(key.replace('intent-', ''))];
+    act({ type: 'run-intent', intent });
+    phase = 'running';
+  }
+
+  function holdTarget(region: GazeRegion | null, t: number) {
+    if (region === null || offScreen(region, screen)) {
+      target = null;
+      return;
+    }
+    // Jitter inside the first Gaze Region still counts as the same target.
+    const moved = target && Math.hypot(region.x - target.region.x, region.y - target.region.y) > target.region.radius;
+    if (target === null || moved) target = { region, start: t };
+    if (t - target.start >= targetHoldMs) {
+      suggestIntents(target.region);
+      target = null;
+    }
+  }
+
   function state(): OverlayState {
-    if (phase !== 'typing') return { phase, wakeProgress };
-    return { phase, wakeProgress, text, group, highlight };
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight };
+    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight };
+    if (phase === 'running') return { phase, wakeProgress, intent };
+    return { phase, wakeProgress };
   }
 
   return (input: SessionInput): OverlayState => {
     if (input.type === 'open-keyboard') {
       if (phase !== 'typing') openKeyboard(input.t);
+    } else if (input.type === 'intents') {
+      if (phase === 'thinking' && input.request === request) {
+        phase = 'choosing';
+        intents = input.intents.slice(0, MAX_INTENTS);
+        scanStart = input.t;
+        scan(input.t);
+      }
     } else if (phase !== 'idle') {
       if (input.type === 'gaze') awaySince = offScreen(input.region, screen) ? (awaySince ?? input.t) : null;
       // The Stop Gesture closes the Gaze Keyboard without typing the text.
       if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
         phase = 'idle';
         awaySince = null;
-      } else if (phase === 'typing') {
+      } else if (phase === 'waiting-for-target' && input.type === 'gaze') {
+        holdTarget(input.region, input.t);
+      } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
         if (input.type === 'select') {
           press(highlight);
@@ -119,6 +179,8 @@ export function createSession({
         phase = 'waiting-for-target';
         holdStart = null;
         wakeProgress = 0;
+        // A target hold cut short last time, for example by the Gaze Keyboard, must not carry over.
+        target = null;
       }
     }
     return state();

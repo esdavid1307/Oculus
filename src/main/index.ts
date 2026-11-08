@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import { createSession, type AgentAction, type SessionInput } from '../shared/session';
+import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
+import { suggestIntents } from './agent/intents';
 
 // Holds ANTHROPIC_API_KEY and the OCULUS_AGENT_* settings. Loaded before anything reads process.env.
 try {
@@ -38,12 +40,12 @@ function readTimingsFile(): unknown {
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
 // shortcut: types through System Events, which needs the Accessibility permission. #6 may replace this.
-function perform(action: AgentAction) {
+function typeText(text: string) {
   const script = ['on run argv', 'tell application "System Events" to keystroke (item 1 of argv)', 'end run'];
-  execFile('osascript', [...script.flatMap((line) => ['-e', line]), action.text], (error) => {
+  execFile('osascript', [...script.flatMap((line) => ['-e', line]), text], (error) => {
     if (!error) return;
     // The keyboard has already closed, so the clipboard is the only copy of the text left.
-    clipboard.writeText(action.text);
+    clipboard.writeText(text);
     console.error('Could not type the Gaze Keyboard text, so it is on the clipboard:', error.message);
   });
 }
@@ -86,6 +88,21 @@ function createOverlay() {
   if (process.env.ELECTRON_RENDERER_URL) overlay.loadURL(process.env.ELECTRON_RENDERER_URL + search);
   else overlay.loadFile(join(__dirname, '../renderer/index.html'), { search });
 
+  const perform = (action: AgentAction) => {
+    if (action.type === 'type-text') typeText(action.text);
+    else if (action.type === 'suggest-intents') {
+      // A fresh capture each time, so the one screenshot on disk is always shot-1.png, overwritten by the next request.
+      const capture = createCapture({
+        overlay,
+        display: screen.getPrimaryDisplay(),
+        saveDir: join(app.getPath('userData'), 'intents'),
+        hideOverlay: true,
+      });
+      void suggestIntents(action.region, readAgentConfig(process.env, 'shortcut')!, capture).then((intents) =>
+        advance({ type: 'intents', t: Date.now(), request: action.request, intents }),
+      );
+    } else console.log('Run the Intent, once #10 is built:', action.intent);
+  };
   const session = createSession({ screen: bounds, timings: readTimingsFile(), act: perform });
   const advance = (input: SessionInput) => overlay.webContents.send('overlay-state', session(input));
 

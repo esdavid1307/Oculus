@@ -45,3 +45,20 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null):
         ];
   return { text: { x: 0, y: 0, width, height: TEXT_HEIGHT }, keys };
 }
+
+// Suggested Intents fill a 2 x 2 grid over the whole screen. Something else always takes the last cell,
+// so it stays put when fresh suggestions arrive.
+export function layoutIntents({ width, height }: Screen, intents: string[]): Key[] {
+  const cellWidth = (width - GAP) / 2;
+  const cellHeight = (height - GAP) / 2;
+  const cell = (index: number) => ({
+    x: (index % 2) * (cellWidth + GAP),
+    y: Math.floor(index / 2) * (cellHeight + GAP),
+    width: cellWidth,
+    height: cellHeight,
+  });
+  return [
+    ...intents.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
+    { id: 'something-else', label: 'Something else', rect: cell(3) },
+  ];
+}
