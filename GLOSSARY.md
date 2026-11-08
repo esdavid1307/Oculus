@@ -65,7 +65,7 @@ The run of quick, deliberate blinks that restarts calibration.
 _Avoid_: Reset, blink command
 
 **Stop Gesture**:
-Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts.
+Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face counts. A countdown ("Stopping in 3…") shows while it runs, and recalibrating counts as a Stop at once, discarding any typed text.
 _Avoid_: Cancel, abort
 
 **Look Away**:
@@ -75,3 +75,15 @@ _Avoid_: Look away (for leaving a key)
 **Move Off**:
 Gaze leaving a target, such as the Centre Box, while staying on the screen, which restarts that hold.
 _Avoid_: Look away
+
+**Large View**:
+The mode, on by default, that makes what Oculus does not draw itself big enough to see: a larger Dock, the Icon Magnifier, and a UI Scale on the overlay's own text, Gaze Dot and outlines. Turned off with `"largeView": false`.
+_Avoid_: Zoom, accessibility mode
+
+**Icon Magnifier**:
+The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small icon is also grown to a minimum size.
+_Avoid_: Tooltip, zoom
+
+**Suggested Phrase**:
+The one earlier-submitted text the Gaze Keyboard offers, in a wide key scanned before the Suggested Words, once 2 or more typed letters match its start. Choosing it replaces everything typed so far.
+_Avoid_: Autocomplete, saved message

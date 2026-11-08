@@ -2,10 +2,13 @@ import { execFile } from 'node:child_process';
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
+import { mouseRegion } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
 import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
+import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
 import { createSession, type AgentAction, type Icon, type SessionInput } from '../shared/session';
+import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { readAgentConfig } from './agent/config';
@@ -37,6 +40,8 @@ const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
 const DEV_LOOK_AWAY_SHORTCUT = 'CommandOrControl+Shift+L';
 // Time for the Centre Box to be drawn before the first screenshot.
 const OVERLAY_DRAW_MS = 1000;
+// Time for the Dock to come back up after it restarts with a new icon size.
+const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 
@@ -121,7 +126,9 @@ const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
   const items = events.processes.byName(process).menuBars[0].menuBarItems;
   const sizes = items.size();
-  return items.position().map(([x, y], i) => ({ path: [process, 0, i], x, y, width: sizes[i][0], height: sizes[i][1] }));
+  const titles = items.name();
+  const descriptions = items.description();
+  return items.position().map(([x, y], i) => ({ path: [process, 0, i], label: titles[i] || descriptions[i] || 'Menu bar item', x, y, width: sizes[i][0], height: sizes[i][1] }));
 }))`;
 
 // Prints the commands of the menu the item opened, leaving out separators and disabled commands. A status item that
@@ -138,7 +145,7 @@ const OPEN_MENU_BAR_ITEM = `function run([path]) {
   const enabled = commands.enabled();
   const sizes = commands.size();
   return JSON.stringify(commands.position().flatMap(([x, y], i) =>
-    names[i] && enabled[i] ? [{ path: [process, bar, item, i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
+    names[i] && enabled[i] ? [{ path: [process, bar, item, i], label: names[i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
 }`;
 
 const PRESS_MENU_COMMAND = `function run([path]) {
@@ -151,10 +158,10 @@ const CLOSE_MENU = `function run([path]) {
   Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
 }`;
 
-type PlacedPath = { path: unknown[]; x: number; y: number; width: number; height: number };
+type PlacedPath = { path: unknown[]; label: string; x: number; y: number; width: number; height: number };
 
 const toIcons = (placed: PlacedPath[], origin: Rect): Icon[] =>
-  placed.map(({ path, x, y, width, height }) => ({ name: JSON.stringify(path), rect: { x: x - origin.x, y: y - origin.y, width, height } }));
+  placed.map(({ path, label, x, y, width, height }) => ({ name: JSON.stringify(path), label, rect: { x: x - origin.x, y: y - origin.y, width, height } }));
 
 function readMenuBar(origin: Rect, done: (icons: Icon[]) => void) {
   execFile('osascript', ['-l', 'JavaScript', '-e', READ_MENU_BAR], (error, stdout) => {
@@ -202,7 +209,7 @@ JSON.stringify({ names: icons.name(), positions: icons.position(), sizes: icons.
       const [width, height] = sizes[i];
       const rect = { x, y, width, height };
       if (name === null || windows.some((window) => overlaps(rect, window))) return [];
-      return [{ name, rect: { ...rect, x: x - origin.x, y: y - origin.y } }];
+      return [{ name, label: name, rect: { ...rect, x: x - origin.x, y: y - origin.y } }];
     });
     done(icons);
   });
@@ -229,6 +236,7 @@ function createWordPrediction(enabled: boolean) {
   const predictor = createPredictor(spokenEnglish as BaseWords, readWordModel(saved));
   return {
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
+    suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
@@ -294,6 +302,21 @@ function typeText(text: string) {
   });
 }
 
+// Whether the box the text just went into is a password field, whose text must never be remembered. Checked on the
+// focused element's subrole. If it can't be read, that counts as secure: not learning is the safe mistake.
+const FOCUSED_SUBROLE = `const events = Application('System Events');
+const focused = events.processes.whose({ frontmost: true })[0].attributes.byName('AXFocusedUIElement').value();
+let subrole = '';
+try { subrole = focused.attributes.byName('AXSubrole').value() || ''; } catch (error) {}
+subrole`;
+
+function isSecureField(done: (secure: boolean) => void) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], (error, stdout) => {
+    if (error) console.warn('Could not tell whether the field is a password field, so not learning:', error.message);
+    done(error !== null || stdout.trim() === 'AXSecureTextField');
+  });
+}
+
 // Runs never overlap: two would fight over the same cursor.
 let running = false;
 // The Intent run in progress, so the Stop Gesture and quitting can abort it.
@@ -342,8 +365,14 @@ function createOverlay() {
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
   };
-  refreshIcons();
   const settings = readTimingsFile();
+  const largeView = readLargeView(settings);
+  // The renderer has no file access, so it gets the settings once the page has loaded.
+  overlay.webContents.once('did-finish-load', () => overlay.webContents.send('large-view', largeView));
+  // A bigger Dock moves its icons, so they are read again once it has restarted.
+  const dockChanged = applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
+  if (dockChanged) setTimeout(refreshIcons, DOCK_RESTART_MS);
+  refreshIcons();
   // On unless config.json says "wordPrediction": false.
   const words = createWordPrediction((settings as { wordPrediction?: unknown } | undefined)?.wordPrediction !== false);
   // Count and recency unless config.json says "intentRanker": "neural".
@@ -355,11 +384,14 @@ function createOverlay() {
       typeText(action.text);
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
       // A failed save must not stop the text being typed, so it only warns.
-      try {
-        words.learn(action.text);
-      } catch (error) {
-        console.warn('Could not save word prediction:', error);
-      }
+      isSecureField((secure) => {
+        if (secure) return;
+        try {
+          words.learn(action.text);
+        } catch (error) {
+          console.warn('Could not save word prediction:', error);
+        }
+      });
     } else if (action.type === 'suggest-intents') {
       const context = readContext();
       contexts.set(action.request, context);
@@ -429,6 +461,7 @@ function createOverlay() {
     timings: settings,
     act: perform,
     suggest: words.suggest,
+    suggestPhrase: words.suggestPhrase,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
@@ -446,15 +479,14 @@ function createOverlay() {
   if (useMouse) {
     timers.push(
       setInterval(() => {
-        const { x, y } = screen.getCursorScreenPoint();
-        const region = lookingAway ? null : { x: x - bounds.x, y: y - bounds.y, radius: MOUSE_REGION_RADIUS };
+        const region = mouseRegion(screen.getCursorScreenPoint(), bounds, MOUSE_REGION_RADIUS, lookingAway);
         advance({ type: 'gaze', t: Date.now(), region });
       }, MOUSE_SAMPLE_MS),
     );
   } else {
-    // The overlay page only sends gaze and Select Blinks. A model answer must never come from it.
+    // The overlay page only sends gaze, Select Blinks and recalibrating. A model answer must never come from it.
     ipcMain.on('gaze', (_event, input: SessionInput) => {
-      if (input?.type === 'gaze' || input?.type === 'select') advance(input);
+      if (input?.type === 'gaze' || input?.type === 'select' || input?.type === 'recalibrate') advance(input);
     });
   }
   if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);
@@ -482,5 +514,6 @@ app.whenReady().then(async () => {
 });
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  restoreDock(app.getPath('userData'));
   currentRun?.controller.abort();
 });

@@ -4,7 +4,7 @@ body {
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font: 600 32px system-ui, sans-serif;
+  font: 600 calc(32px * var(--ui-scale, 1)) system-ui, sans-serif;
   color: #fff;
 }
 
@@ -16,7 +16,7 @@ body {
   height: 50vmin;
   box-sizing: border-box;
   background: rgb(15 23 42 / 80%);
-  border: 4px solid #fff;
+  border: calc(4px * var(--ui-scale, 1)) solid #fff;
 }
 
 .target > * {
@@ -76,8 +76,8 @@ body {
 
 #status small {
   display: block;
-  margin-top: 8px;
-  font-size: 20px;
+  margin-top: calc(8px * var(--ui-scale, 1));
+  font-size: calc(20px * var(--ui-scale, 1));
   font-weight: 500;
   opacity: 0.8;
 }
@@ -88,7 +88,7 @@ body {
   top: 24px;
   max-width: 80vw;
   transform: translateX(-50%);
-  border: 4px solid #38bdf8;
+  border: calc(4px * var(--ui-scale, 1)) solid #38bdf8;
   border-radius: 16px;
 }
 
@@ -102,9 +102,9 @@ body {
 
 #dot {
   position: fixed;
-  width: 40px;
-  height: 40px;
-  margin: -20px 0 0 -20px;
+  width: calc(40px * var(--ui-scale, 1));
+  height: calc(40px * var(--ui-scale, 1));
+  margin: calc(-20px * var(--ui-scale, 1)) 0 0 calc(-20px * var(--ui-scale, 1));
   border-radius: 50%;
   background: #38bdf8;
 }
@@ -147,7 +147,7 @@ body {
 .key[data-key^='intent-'],
 .key[data-key='something-else'] {
   padding: 32px;
-  font-size: 48px;
+  font-size: calc(48px * var(--ui-scale, 1));
   text-align: center;
 }
 
@@ -163,8 +163,8 @@ body {
   padding: 0 32px;
   overflow: hidden;
   white-space: pre;
-  font-size: 64px;
-  border-bottom: 4px solid #38bdf8;
+  font-size: calc(64px * var(--ui-scale, 1));
+  border-bottom: calc(4px * var(--ui-scale, 1)) solid #38bdf8;
 }
 
 #typed::after {
@@ -181,9 +181,9 @@ body {
   --rest: rgb(30 41 59);
   display: grid;
   place-items: center;
-  border: 4px solid #fff;
+  border: calc(4px * var(--ui-scale, 1)) solid #fff;
   border-radius: 16px;
-  font-size: 72px;
+  font-size: calc(72px * var(--ui-scale, 1));
   background: var(--rest);
 }
 
@@ -191,7 +191,7 @@ body {
 .key[data-key='done'],
 .key[data-key='delete'],
 .key[data-key='back'] {
-  font-size: 44px;
+  font-size: calc(44px * var(--ui-scale, 1));
 }
 
 .key[data-key='done'] {
@@ -210,7 +210,7 @@ body {
   position: fixed;
   display: none;
   box-sizing: border-box;
-  border: 8px solid #38bdf8;
+  border: calc(8px * var(--ui-scale, 1)) solid #38bdf8;
   border-radius: 16px;
 }
 
@@ -221,12 +221,41 @@ body {
 /* The key the scan is on. */
 .key.highlighted {
   background: var(--fill);
-  outline: 8px solid #38bdf8;
+  outline: calc(8px * var(--ui-scale, 1)) solid #38bdf8;
 }
 
 /* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
 .key[data-key^='word:'] {
   --rest: #134e4a;
-  font-size: 56px;
+  font-size: calc(56px * var(--ui-scale, 1));
   font-weight: 500;
+}
+
+/* The Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
+.key[data-key='phrase'] {
+  --rest: #3b0764;
+  --fill: #7e22ce;
+  padding: 0 calc(24px * var(--ui-scale, 1));
+  overflow: hidden;
+  text-align: center;
+  font-size: calc(48px * var(--ui-scale, 1));
+  font-weight: 500;
+}
+
+/* Counts down the Stop Gesture over the Gaze Keyboard, the icon scan and the other screens. Above the Centre Box. */
+#stop-hint {
+  position: fixed;
+  bottom: calc(24px * var(--ui-scale, 1));
+  left: 50%;
+  z-index: 2;
+  margin: 0;
+  padding: calc(16px * var(--ui-scale, 1));
+  transform: translateX(-50%);
+  background: rgb(15 23 42 / 95%);
+  border: calc(4px * var(--ui-scale, 1)) solid #d97706;
+  border-radius: 16px;
+}
+
+#stop-hint[hidden] {
+  display: none;
 }

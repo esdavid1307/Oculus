@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import type { Rect } from './geometry';
 import { GROUPS, layoutIntents, layoutKeyboard } from './keyboard';
-import { createSession, type AgentAction, type OverlayState } from './session';
+import { createSession, type AgentAction, type OverlayState, type SessionInput } from './session';
 
 const screen = { width: 1600, height: 1000 };
 const inBox = { x: 800, y: 500, radius: 120 };
@@ -408,6 +408,15 @@ describe('Dock', () => {
     const { session } = awake({ iconHoldMs: 1000 });
     session(gaze(3100, nearDock));
     expect(session(gaze(4100, nearDock)).phase).toBe('icons');
+  });
+
+  it('passes an icon\'s label through to the overlay', () => {
+    const labelled = [{ name: '["Finder",0,2]', label: 'File', rect: items[0].rect }];
+    const session = createSession({ screen, dock: () => labelled });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, nearDock));
+    expect(session(gaze(6100, nearDock))).toMatchObject({ phase: 'icons', highlight: { name: '["Finder",0,2]', label: 'File' } });
   });
 
   it('steps through the icons every 2 seconds and opens the highlighted one on a Select Blink', () => {
@@ -1138,6 +1147,81 @@ describe('Running an Intent', () => {
   });
 });
 
+describe('Suggested Phrase', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const phrases: Record<string, string> = { pl: 'please call the nurse', pla: 'please call the nurse' };
+  const make = (withPhrases = true) => {
+    const session = createSession({
+      screen,
+      suggest: (text) => (text === '' ? [] : ['one', 'two', 'three']),
+      suggestPhrase: withPhrases ? (text) => phrases[text] : undefined,
+    });
+    let state = session({ type: 'open-keyboard', t: 0 });
+    let t = 0;
+    const press = (id: string) => {
+      const start = t;
+      while (state.phase === 'typing' && state.highlight !== id) {
+        if (t - start > 60_000) throw new Error(`the scan never reached ${id}`);
+        state = session(tick((t += 100)));
+      }
+      return (state = session(select(t)));
+    };
+    const type = (...letters: string[]) => letters.forEach((l) => (press(GROUPS.find((g) => g.includes(l))!), press(l)));
+    return { press, type, state: () => state };
+  };
+
+  it('offers no phrase on an empty keyboard or after 1 letter', () => {
+    const { type, state } = make();
+    expect(state()).not.toHaveProperty('phrase');
+    type('p');
+    expect(state()).not.toHaveProperty('phrase');
+  });
+
+  it('offers the phrase after 2 letters and scans it before the Suggested Words', () => {
+    const { type, state } = make();
+    type('p', 'l');
+    expect(state()).toMatchObject({ phrase: 'please call the nurse', suggestions: ['one', 'two', 'three'], highlight: 'phrase' });
+  });
+
+  it('replaces everything typed with the phrase when pressed', () => {
+    const { type, press, state } = make();
+    type('p', 'l');
+    expect(press('phrase')).toMatchObject({ text: 'please call the nurse', group: null });
+    expect(state()).not.toHaveProperty('phrase');
+  });
+
+  it('hides the phrase key on the letter screens', () => {
+    expect(layoutKeyboard(screen, 'abcde', [], 'x').keys.map(({ id }) => id)).not.toContain('phrase');
+  });
+
+  it('behaves as before without a phrase dependency', () => {
+    const { type, state } = make(false);
+    type('p', 'l');
+    expect(state()).not.toHaveProperty('phrase');
+    expect(state()).toMatchObject({ highlight: 'word:one' });
+  });
+
+  it('lays the phrase out as one wide first row, with the words after it, without overlap', () => {
+    for (const size of [{ width: 1512, height: 982 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
+      const { keys } = layoutKeyboard(size, null, ['a', 'b', 'c'], 'a whole sentence');
+      expect(keys.length).toBeLessThanOrEqual(13);
+      expect(keys[0]).toMatchObject({ id: 'phrase', label: 'a whole sentence' });
+      expect(keys[0].rect.width).toBeCloseTo(size.width);
+      expect(keys.slice(1, 4).map(({ id }) => id)).toEqual(['word:a', 'word:b', 'word:c']);
+      const hit = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+      for (const { rect } of keys) {
+        expect(rect.x >= 0 && rect.y >= 120 && rect.x + rect.width <= size.width + 0.001 && rect.y + rect.height <= size.height + 0.001).toBe(true);
+        for (const other of keys) if (other.rect !== rect) expect(hit(rect, other.rect)).toBe(false);
+      }
+    }
+  });
+
+  it('keeps the layout unchanged when there is no phrase', () => {
+    expect(layoutKeyboard(screen, null, ['a', 'b'], undefined)).toEqual(layoutKeyboard(screen, null, ['a', 'b']));
+    expect(layoutKeyboard(screen, null, [], '')).toEqual(layoutKeyboard(screen, null));
+  });
+});
+
 describe('Gaze Keyboard layout', () => {
   const area = (r: Rect) => r.width * r.height;
   const intersect = (a: Rect, b: Rect) =>
@@ -1171,5 +1255,145 @@ describe('Gaze Keyboard layout', () => {
 
   it('puts every letter in exactly one group', () => {
     expect(GROUPS.join('')).toBe('abcdefghijklmnopqrstuvwxyz');
+  });
+});
+
+describe('Stop Gesture in every state', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const target = { x: 300, y: 300, radius: 120 };
+  const nearDock = { x: 700, y: 820, radius: 120 };
+  const dock = [{ name: 'Finder', rect: { x: 600, y: 910, width: 66, height: 82 } }];
+  const commands = [{ name: 'Copy', rect: { x: 100, y: 40, width: 200, height: 22 } }];
+
+  type Until = 'waiting-for-target' | 'thinking' | 'choosing' | 'running' | 'typing' | 'dock' | 'menu';
+
+  // Woken at 3 s. Every state is reached by 6.2 s, so looking away from 7 s stops it at 12 s.
+  const reach = (until: Until) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), suggest: () => [], dock: () => dock });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    if (until === 'typing') session({ type: 'open-keyboard', t: 3100 });
+    if (until === 'dock') {
+      session(gaze(3100, nearDock));
+      session(gaze(6100, nearDock));
+    }
+    if (until === 'menu') {
+      // A menu bar item opened a menu, which is scanned next.
+      session({ type: 'menu-opened', t: 3100, icons: commands });
+    }
+    if (until === 'thinking' || until === 'choosing' || until === 'running') {
+      session(gaze(3100, target));
+      session(gaze(4100, target));
+    }
+    if (until === 'choosing' || until === 'running') session({ type: 'intents', t: 5000, request: 1, intents: ['Skip the ad', 'Pause'] });
+    if (until === 'running') session(select(5100));
+    return { session, actions };
+  };
+
+  const states: Until[] = ['waiting-for-target', 'thinking', 'choosing', 'running', 'typing', 'dock'];
+
+  it.each(states)('counts down and goes idle after 5 seconds off screen while %s', (until) => {
+    const { session } = reach(until);
+    expect(session(gaze(7000, offScreen)).stopInMs).toBe(5000);
+    expect(session(gaze(9000, offScreen)).stopInMs).toBe(3000);
+    expect(session(tick(11_999)).stopInMs).toBe(1);
+    expect(session(tick(12_000))).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it.each(states)('has no countdown while the gaze is on the screen, or after it comes back, while %s', (until) => {
+    const { session } = reach(until);
+    expect(session(gaze(7000, target))).not.toHaveProperty('stopInMs');
+    session(gaze(7100, offScreen));
+    expect(session(gaze(8000, target))).not.toHaveProperty('stopInMs');
+  });
+
+  it.each(states)('stops at once on recalibrating while %s', (until) => {
+    const { session } = reach(until);
+    expect(session({ type: 'recalibrate', t: 7000 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it('shows no countdown while asleep, or on the result of a finished run', () => {
+    const asleep = createSession({ screen });
+    expect(asleep(gaze(0, offScreen))).not.toHaveProperty('stopInMs');
+    const { session } = reach('running');
+    session({ type: 'run-finished', t: 6000, request: 2, ok: true, summary: 'Done.' });
+    expect(session(gaze(6100, offScreen))).not.toHaveProperty('stopInMs');
+  });
+
+  it('closes the Gaze Keyboard without typing the text, on the Stop Gesture and on recalibrating', () => {
+    for (const stopIt of [(s: ReturnType<typeof reach>['session']) => s(gaze(12_000, offScreen)), (s: ReturnType<typeof reach>['session']) => s({ type: 'recalibrate', t: 7000 })]) {
+      const { session, actions } = reach('typing');
+      session(select(3200));
+      session(gaze(7000, offScreen));
+      expect(stopIt(session).phase).toBe('idle');
+      expect(actions.filter((action) => action.type === 'type-text')).toEqual([]);
+    }
+  });
+
+  it('discards typed text on recalibrating, so the next keyboard starts empty', () => {
+    const { session } = reach('typing');
+    session(select(3200));
+    session({ type: 'recalibrate', t: 7000 });
+    expect(session({ type: 'open-keyboard', t: 8000 })).toMatchObject({ phase: 'typing', text: '' });
+  });
+
+  it('opens nothing from an icon scan on the Stop Gesture or recalibrating', () => {
+    for (const stopIt of [(s: ReturnType<typeof reach>['session']) => s(gaze(12_000, offScreen)), (s: ReturnType<typeof reach>['session']) => s({ type: 'recalibrate', t: 7000 })]) {
+      const { session, actions } = reach('dock');
+      session(gaze(7000, offScreen));
+      stopIt(session);
+      expect(actions.filter((action) => action.type === 'open-icon')).toEqual([]);
+    }
+  });
+
+  it('closes the open menu on the Stop Gesture and on recalibrating', () => {
+    const { session, actions } = reach('menu');
+    session(gaze(7000, offScreen));
+    session(gaze(12_000, offScreen));
+    expect(actions.filter((action) => action.type === 'close-menu')).toHaveLength(1);
+    const other = reach('menu');
+    other.session({ type: 'recalibrate', t: 7000 });
+    expect(other.actions.filter((action) => action.type === 'close-menu')).toHaveLength(1);
+  });
+
+  it('stops a run once on recalibrating, and asks for nothing after it', () => {
+    const { session, actions } = reach('running');
+    const before = actions.length;
+    session({ type: 'recalibrate', t: 7000 });
+    expect(actions.slice(before)).toEqual([{ type: 'stop-run', request: 2 }]);
+    for (const input of [gaze(7100, offScreen), gaze(12_100, offScreen), tick(20_000), select(21_000), { type: 'recalibrate', t: 22_000 } as const]) session(input);
+    expect(actions).toHaveLength(before + 1);
+  });
+
+  it('asks for nothing after the stop-run of the Stop Gesture, whatever arrives next', () => {
+    const { session, actions } = reach('running');
+    session(gaze(6000, offScreen));
+    session(gaze(11_000, offScreen));
+    const after = actions.length;
+    const inputs = [
+      gaze(11_100, target),
+      tick(12_000),
+      select(12_100),
+      { type: 'run-finished', t: 12_200, request: 2, ok: true, summary: 'Late.' } as const,
+      { type: 'intents', t: 12_300, request: 2, intents: ['Pause'] } satisfies SessionInput,
+      gaze(13_000, offScreen),
+      gaze(18_000, offScreen),
+    ];
+    for (const input of inputs) expect(session(input).phase).toBe('idle');
+    expect(actions).toHaveLength(after);
+  });
+
+  it('does nothing on recalibrating while asleep', () => {
+    const { actions } = reach('waiting-for-target');
+    const session = createSession({ screen, act: (action) => actions.push(action) });
+    expect(session({ type: 'recalibrate', t: 100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([]);
+  });
+
+  it('lets the Dock go on recalibrating, as it does on the Stop Gesture', () => {
+    const { session, actions } = reach('dock');
+    session({ type: 'recalibrate', t: 7000 });
+    expect(actions.filter((action) => action.type === 'release-dock')).toHaveLength(1);
   });
 });

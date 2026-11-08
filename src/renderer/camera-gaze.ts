@@ -33,7 +33,9 @@ export async function startCameraGaze(send: (input: SessionInput) => void) {
 
   // No click starts this, so the user gets a moment to get in frame before the dots begin.
   const runCalibration = async () => {
-    // Null, so calibrating can't count towards a hold, and it stops the agent as a Look Away.
+    // Recalibrating counts as a Stop at once, including discarding typed text. Then null gaze, so calibrating can't
+    // count towards a hold.
+    send({ type: 'recalibrate', t: Date.now() });
     onSample = ({ t }) => send({ type: 'gaze', t, region: null });
     root.dataset.calibrating = '';
     dot.hidden = true;

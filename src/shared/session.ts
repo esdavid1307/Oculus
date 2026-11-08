@@ -1,20 +1,25 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
 
-export type OverlayState =
+export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[] }
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
   // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
   | { phase: 'running'; wakeProgress: number; intent: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
-  | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string };
+  | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string }
+) & {
+  // The milliseconds left before the Stop Gesture stops the agent. Only there while the gaze is off the screen.
+  stopInMs?: number;
+};
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
-// The name is what the outside world needs to find it again, in overlay coordinates.
-export type Icon = { name: string; rect: Rect };
+// The name is what the outside world needs to find it again, in overlay coordinates. The label is what a person reads:
+// the name itself can be a lookup key, as for menu bar items.
+export type Icon = { name: string; rect: Rect; label?: string };
 
 // 'menu' is the menu a menu bar item just opened.
 export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
@@ -24,6 +29,8 @@ export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
 export type SessionInput =
   | GazeEvent
   | { type: 'tick' | 'open-keyboard' | 'select'; t: number }
+  // Recalibrating counts as a Stop at once: the old calibration no longer says where the user is looking.
+  | { type: 'recalibrate'; t: number }
   // The model's answer to the suggest-intents request with the same number.
   | { type: 'intents'; t: number; request: number; intents: string[] }
   // The user's own past Intents for the target of the suggest-intents request with the same number, best first.
@@ -49,6 +56,9 @@ export type AgentAction =
 
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
+
+// The one text submitted before that the typed text starts, if any. See src/shared/predict.ts.
+export type SuggestPhrase = (text: string) => string | undefined;
 
 const MAX_INTENTS = 3;
 const MAX_PAST_INTENTS = 2;
@@ -120,6 +130,7 @@ export function createSession({
   timings,
   act = () => {},
   suggest = () => [],
+  suggestPhrase = () => undefined,
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
@@ -128,6 +139,7 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
   suggest?: Suggest;
+  suggestPhrase?: SuggestPhrase;
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
@@ -144,6 +156,8 @@ export function createSession({
   let holdStart: number | null = null;
   let wakeProgress = 0;
   let awaySince: number | null = null;
+  // The time of the latest input, which the Stop Gesture countdown counts from.
+  let now = 0;
   // The Gaze Region where the user started holding on a target after waking.
   let target: { region: GazeRegion; start: number } | null = null;
   // The wake hold ends on the Centre Box, so a target hold only starts after a Move Off from it.
@@ -154,6 +168,7 @@ export function createSession({
   let scanStart = 0;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
+  let phrase: string | undefined;
   let intents: string[] = [];
   let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
@@ -181,7 +196,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrase).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -219,20 +234,29 @@ export function createSession({
     return iconHold !== null;
   }
 
+  function refreshSuggestions() {
+    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+    phrase = suggestPhrase(text) || undefined;
+  }
+
   function openKeyboard(t: number) {
     phase = 'typing';
     holdStart = null;
     wakeProgress = 0;
     text = '';
     group = null;
-    suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+    refreshSuggestions();
     scanStart = t;
     scan(t);
   }
 
   function press(key: KeyId, t: number) {
     if (phase === 'choosing') choose(key, t);
-    else if (key.startsWith(SUGGESTION_KEY)) {
+    else if (key === PHRASE_KEY) {
+      // The phrase starts with what was typed, so it replaces all of it.
+      text = phrase ?? text;
+      group = null;
+    } else if (key.startsWith(SUGGESTION_KEY)) {
       // The word replaces the letters typed so far, and the space after it is free.
       text = text.replace(/[a-z]*$/, '') + key.slice(SUGGESTION_KEY.length) + ' ';
       group = null;
@@ -280,8 +304,17 @@ export function createSession({
     }
   }
 
-  function state(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions };
+  // The Stop Gesture, and recalibrating. Closes the Gaze Keyboard without typing the text, the icon scan without
+  // opening anything, and stops a run. Nothing is asked of the outside world after the stop-run.
+  function stop() {
+    if (phase === 'running') act({ type: 'stop-run', request });
+    if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
+    phase = 'idle';
+    awaySince = null;
+  }
+
+  function shown(): OverlayState {
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
     if (phase === 'running') return { phase, wakeProgress, intent };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
@@ -289,8 +322,18 @@ export function createSession({
     return { phase, wakeProgress };
   }
 
+  function state(): OverlayState {
+    const base = shown();
+    // The result of a finished run isn't stopped by looking away, it just goes away.
+    if (awaySince === null || phase === 'idle' || phase === 'finished') return base;
+    return { ...base, stopInMs: Math.max(lookAwayMs - (now - awaySince), 0) };
+  }
+
   return (input: SessionInput): OverlayState => {
-    if (input.type === 'open-keyboard') {
+    now = input.t;
+    if (input.type === 'recalibrate') {
+      if (phase !== 'idle') stop();
+    } else if (input.type === 'open-keyboard') {
       // The agent owns the mouse and keys while it runs, so typing would collide with it.
       if (phase !== 'typing' && phase !== 'running') openKeyboard(input.t);
     } else if (input.type === 'past-intents') {
@@ -350,12 +393,7 @@ export function createSession({
         phase = 'idle';
         awaySince = null;
       } else if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
-        // The Stop Gesture closes the Gaze Keyboard without typing the text, the icon scan without opening anything,
-        // and stops a run.
-        if (phase === 'running') act({ type: 'stop-run', request });
-        if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
-        phase = 'idle';
-        awaySince = null;
+        stop();
       } else if (phase === 'waiting-for-target' && input.type === 'gaze') {
         // An icon hold wins, so the shorter target hold can't fire on the way to the Dock.
         if (holdIcons(input.region, input.t)) target = null;
@@ -374,7 +412,7 @@ export function createSession({
         scan(input.t);
         if (input.type === 'select') {
           press(highlight, input.t);
-          if (phase === 'typing') suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
+          if (phase === 'typing') refreshSuggestions();
           scanStart = input.t;
           scan(input.t);
         }
