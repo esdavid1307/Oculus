@@ -96,12 +96,12 @@ async function play() {
   push({ phase: 'thinking', wakeProgress: 1 });
   await sleep(2200);
 
-  const fixed: FixedIntent[] = ['close', 'quit', 'minimize', 'type', 'dock'];
-  const picker = { phase: 'choosing' as const, wakeProgress: 1, fixed, app: 'Google Chrome', fixedAt: past.length, cells: 11, recent: past.length, side: 'right' as const, stepProgress: 0 };
+  const fixed: FixedIntent[] = ['close', 'quit', 'minimize', 'type', 'search', 'dock', 'chrome'];
+  const picker = { phase: 'choosing' as const, wakeProgress: 1, fixed, app: 'Google Chrome', fixedAt: past.length, cells: 12, recent: past.length, side: 'right' as const, stepProgress: 0 };
   push({ ...picker, intents: past, highlight: 'intent-0', suggesting: true });
   push({ ...picker, intents, highlight: 'intent-0', suggesting: false });
   await sleep(950);
-  for (const highlight of ['intent-1', 'close', 'quit', 'minimize', 'type', 'dock', 'intent-2', 'intent-0']) {
+  for (const highlight of ['intent-1', 'close', 'quit', 'minimize', 'type', 'search', 'dock', 'chrome', 'intent-2', 'intent-0']) {
     push({ ...picker, intents, highlight, suggesting: false });
     await sleep(850);
   }
