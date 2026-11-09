@@ -28,7 +28,7 @@ function thinking(front: { app: string }, inChrome = false) {
 const keysOf = (state: ReturnType<ReturnType<typeof createSession>>) => (state.phase === 'choosing' ? layoutIntents(screen, state) : []);
 
 describe('the Quit Fixed Intent', () => {
-  it('shows after Close and before Minimize, Type and Dock, then Search and Chrome in Chrome', () => {
+  it('shows after Close and before Minimize, Type and Dock, and Search and Chrome in Chrome', () => {
     expect(thinking({ app: 'TextEdit' }).session(claude(5000, ['Pause']))).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock'] });
     expect(thinking({ app: 'Google Chrome' }, true).session(claude(5000, ['Pause']))).toMatchObject({
       fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'search', 'dock', 'chrome'],

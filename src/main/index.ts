@@ -536,8 +536,8 @@ function createOverlay() {
   let wantTextBoxes = false;
   // The app in front, from the menu bar read every ICON_READ_MS: its first item is the front app's menu, named by its
   // path [process, bar, item]. An app with no menu bar leaves Control Center first, so the front app is unknown then.
-  // Used for the Quit tile, the Chrome menu bar rule, the Chrome-only Fixed Intents (Search and Chrome) and Done always sending in
-  // Messages, with no extra osascript.
+  // Used for the Quit tile, the Chrome menu bar rule, the Chrome-only Fixed Intents (Search and Chrome) and Done always
+  // sending in Messages, with no extra osascript.
   const frontApp = () => {
     const first = icons.menubar[0];
     const process = first ? (JSON.parse(first.name) as string[])[0] : '';

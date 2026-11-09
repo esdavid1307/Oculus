@@ -1,6 +1,6 @@
-// Issues #67, #68 and #96: the Chrome-only Fixed Intents. With Chrome in front, Search shows after Type and a Chrome tile
-// after Dock; choosing Chrome starts a second scan over Next Tab, New Tab and Close Tab, which run as key presses in main
-// with no Claude call. Search and New Tab open the Gaze Keyboard, whose Done always submits.
+// Issues #67, #68 and #96: the Chrome-only Fixed Intents. With Chrome in front, Search shows after Type and a Chrome
+// tile after Dock; choosing Chrome starts a second scan over Next Tab, New Tab and Close Tab, which run as key presses in
+// main with no Claude call. Search and New Tab open the Gaze Keyboard, whose Done always submits.
 import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import { CLOSE_KEY, layoutIntents } from './keyboard';

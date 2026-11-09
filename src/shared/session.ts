@@ -459,6 +459,8 @@ export function createSession({
     const chrome = inChrome();
     fixed = FIXED_INTENTS.filter((name) => (name !== 'quit' || quittable) && (chrome || !CHROME_ONLY.includes(name)));
     inChromeCommands = false;
+    // shortcut: in Chrome with 2 past Intents this is 13, past the 12-tile cap, so Claude's third Intent is dropped;
+    // show 1 past Intent in Chrome or raise the cap if that third one is missed.
     cells = recent + fixed.length + MAX_INTENTS + 1;
     restartScan(t);
     scan(t);
