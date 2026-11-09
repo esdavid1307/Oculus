@@ -420,7 +420,9 @@ function typeText(text: string, submit = false) {
   const script = [
     'on run argv',
     'tell application "System Events" to keystroke (item 1 of argv)',
-    ...(submit ? ['tell application "System Events" to key code 36'] : []),
+    // Forward Delete (117) first drops an inline completion, like Chrome's address bar adds, so Return takes what was
+    // typed. With the caret at the end and nothing selected it does nothing.
+    ...(submit ? ['tell application "System Events" to key code 117', 'tell application "System Events" to key code 36'] : []),
     'end run',
   ];
   execFile('osascript', [...script.flatMap((line) => ['-e', line]), text], (error) => {
@@ -551,7 +553,9 @@ function createOverlay() {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
       // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
       readFocusedField((field) => {
-        const submit = pressesReturn(field, action.submit);
+        // Search and New Tab force Return only while Chrome is in front: if main skipped their key press, the text is in
+        // another app, where Return could send it.
+        const submit = pressesReturn(field, action.submit && chromeFront());
         console.log(`[type-text] field=${field ? `${field.role}/${field.subrole}` : 'unknown'} submit=${submit}`);
         typeText(action.text, submit);
         if (!words.enabled || isSecure(field)) return;
