@@ -1,54 +1,563 @@
+/* Apple liquid glass, tuned for gaze. Resting surfaces stay translucent; the scan fill is solid so white
+   type on a highlighted key stays at 4.5:1. Colours are Apple's dark-mode system palette. */
+:root {
+  --s: var(--ui-scale, 1);
+  --blue: #0a84ff;
+  --indigo: #5e5ce6;
+  --purple: #bf5af2;
+  --pink: #ff375f;
+  --orange: #ff9f0a;
+  --green: #30d158;
+  --teal: #64d2ff;
+  --label: #f5f5f7;
+  --label-2: rgb(235 235 245 / 72%);
+  --label-3: rgb(235 235 245 / 48%);
+  --glow-colours: var(--blue), var(--purple), var(--pink), var(--orange), var(--teal), var(--blue);
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --spring: linear(0, 0.053 4%, 0.176 8%, 0.33 13%, 0.487 17%, 0.632 21%, 0.754 25%, 0.852 29%, 0.925 33%, 0.976 38%, 1.009 42%, 1.028 46%, 1.037 50%, 1.038 54%, 1.036 58%, 1.031 63%, 1.025 67%, 1.019 71%, 1.013 75%, 1.009 79%, 1.005 83%, 1.002 88%, 1.001 92%, 0.999 96%, 1);
+  --glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 14%) 0%, rgb(255 255 255 / 4%) 38%, rgb(255 255 255 / 0%) 70%);
+  --glass-rim: inset 0 1px 0 rgb(255 255 255 / 28%), inset 0 -0.5px 0 rgb(255 255 255 / 6%), inset 0 0 0 1px rgb(255 255 255 / 10%);
+  /* The window is transparent, so backdrop-filter can't reach the apps beneath. Panels over them are tinted instead. */
+  --hud: linear-gradient(180deg, rgb(72 72 78 / 78%) 0%, rgb(22 22 26 / 88%) 100%);
+  --hud-shadow: var(--glass-rim), 0 24px 80px rgb(0 0 0 / 48%), 0 0 0 1px rgb(255 255 255 / 6%);
+  /* The menu bar, which on a MacBook is as tall as the notch. Set from the screen in overlay.ts. */
+  --menu-bar: 24px;
+  --notch: 200px;
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font: 600 calc(32px * var(--ui-scale, 1)) system-ui, sans-serif;
-  color: #fff;
+  font: 590 calc(32px * var(--s)) / 1.2 -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+  letter-spacing: -0.022em;
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
+.svg-filters {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.icon {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes breathe {
+  50% {
+    transform: scale(1.018);
+  }
+}
+
+@keyframes drift {
+  50% {
+    transform: translate3d(3%, -4%, 0) scale(1.06);
+  }
+}
+
+@keyframes glass-sheen {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -140% 0;
+  }
+}
+
+@keyframes caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes key-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(16px * var(--s))) scale(0.96);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pop {
+  from {
+    scale: 0.3;
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* The Centre Box. The session hit-tests the 50vmin square, so the circle fills it. */
 .target {
   position: fixed;
+  /* Above the Gaze Keyboard. */
+  z-index: 1;
   display: grid;
-  place-items: center;
+  place-items: stretch;
   width: 50vmin;
   height: 50vmin;
   box-sizing: border-box;
-  background: rgb(15 23 42 / 80%);
-  border: calc(4px * var(--ui-scale, 1)) solid #fff;
 }
 
-.target > * {
+.target > *,
+.target::before {
   grid-area: 1 / 1;
 }
 
 #wake {
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  z-index: 1;
+  margin: -25vmin 0 0 -25vmin;
+  overflow: hidden;
+  contain: paint;
+  border-radius: 50%;
+  -webkit-mask-image: radial-gradient(circle, #000 99.5%, transparent 100%);
+  mask-image: radial-gradient(circle, #000 99.5%, transparent 100%);
   text-align: center;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgb(255 255 255 / 16%), transparent 52%),
+    radial-gradient(80% 80% at 50% 100%, rgb(10 132 255 / 18%), transparent 60%),
+    rgb(16 16 20 / 72%);
+  box-shadow:
+    var(--glass-rim),
+    0 40px 120px rgb(0 0 0 / 50%),
+    0 0 0 1px rgb(255 255 255 / 8%),
+    0 0 calc(var(--wake-progress, 0) * 160px) rgb(10 132 255 / calc(var(--wake-progress, 0) * 80%));
+  animation: breathe 7s ease-in-out infinite;
+  transition:
+    opacity 0.5s var(--ease),
+    scale 0.7s var(--spring),
+    visibility 0s;
 }
 
-#wake span {
-  padding: 20%;
+.wake-aurora {
+  width: 78%;
+  height: 78%;
+  margin: auto;
+  border-radius: 50%;
+  background: conic-gradient(from 200deg, var(--glow-colours));
+  opacity: 0.34;
+  filter: blur(calc(22px * var(--s)));
+  animation: spin 18s linear infinite;
+}
+
+.wake-specular {
+  width: 86%;
+  height: 86%;
+  margin: auto;
+  border-radius: 50%;
+  background: radial-gradient(120% 70% at 50% 0%, rgb(255 255 255 / 28%), transparent 56%);
+  pointer-events: none;
+}
+
+/* The ring's track, under the progress. */
+#wake::before {
+  content: '';
+  width: 86%;
+  aspect-ratio: 1;
+  margin: auto;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.6vmin rgb(255 255 255 / 11%);
 }
 
 .ring {
-  width: 85%;
+  width: 86%;
   aspect-ratio: 1;
+  margin: auto;
   border-radius: 50%;
-  background: conic-gradient(#38bdf8 calc(var(--wake-progress, 0) * 1turn), transparent 0);
-  mask: radial-gradient(closest-side, transparent 78%, #000 80%);
+  background: conic-gradient(var(--glow-colours));
+  mask:
+    radial-gradient(closest-side, transparent 91.5%, #000 92.5%),
+    conic-gradient(#000 calc(var(--wake-progress, 0) * 1turn), transparent 0);
+  mask-composite: intersect;
 }
 
-/* The Centre Box shows only while the agent is asleep. Before the first state arrives there's no data-phase, which is asleep too. */
-[data-phase]:not([data-phase='idle']) #wake {
+.wake-label {
+  z-index: 1;
+  display: grid;
+  align-content: center;
+  align-items: center;
+  justify-items: center;
+  gap: calc(8px * var(--s));
+  padding: 16%;
+  text-wrap: balance;
+}
+
+.wake-label .icon {
+  width: calc(56px * var(--s));
+  height: calc(56px * var(--s));
+  margin-bottom: calc(4px * var(--s));
+  color: var(--teal);
+  stroke-width: 1.7;
+  justify-self: center;
+  align-self: center;
+  filter: drop-shadow(0 0 calc(16px * var(--s)) rgb(100 210 255 / 70%));
+}
+
+.wake-label strong {
+  font-size: calc(30px * var(--s));
+  font-weight: 660;
+  letter-spacing: -0.03em;
+}
+
+.wake-label span {
+  font-size: calc(18px * var(--s));
+  font-weight: 510;
+  letter-spacing: -0.01em;
+  color: var(--label-2);
+}
+
+.wake-brand {
+  margin-top: calc(10px * var(--s));
+  font-size: calc(12px * var(--s));
+  font-style: normal;
+  font-weight: 590;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--label-3);
+}
+
+.wake-label .holding,
+[data-waking] .wake-label .rest {
+  display: none;
+}
+
+[data-waking] .wake-label .holding {
+  display: block;
+  color: #fff;
+}
+
+[data-waking] .wake-aurora {
+  opacity: 0.58;
+  animation-duration: 7s;
+}
+
+/* The Centre Box shows only while the agent is asleep. Before the first state arrives there's no data-phase, which is
+   asleep too. Waking grows it as it fades, as if the look went through it. */
+[data-phase]:not([data-phase='idle']) #wake,
+[data-calibrating] .target {
   visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  scale: 1.12;
+  transition:
+    opacity 0.35s var(--ease),
+    scale 0.5s var(--ease),
+    visibility 0s 0.35s;
 }
 
-[data-calibrating] body {
-  background: #0f172a;
+/* The keyboard sheet must cover the orb at once, or it ghosts through the glass. */
+[data-phase='typing'] #wake,
+[data-phase='choosing'] #wake {
+  display: none;
+  transition: none;
+}
+
+/* The edge glow: the agent is awake and watching, thinking, or at work on the screen. A conic gradient turns under a
+   mask that keeps only a soft band along the edges. Only the transform animates, so it costs the tracker nothing. */
+#glow {
+  --edge: calc(36px * var(--s));
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  mask:
+    linear-gradient(to right, #000, rgb(0 0 0 / 50%) calc(var(--edge) * 0.4), transparent var(--edge), transparent calc(100% - var(--edge)), rgb(0 0 0 / 50%) calc(100% - var(--edge) * 0.4), #000),
+    linear-gradient(to bottom, #000, rgb(0 0 0 / 50%) calc(var(--edge) * 0.4), transparent var(--edge), transparent calc(100% - var(--edge)), rgb(0 0 0 / 50%) calc(100% - var(--edge) * 0.4), #000);
+  mask-composite: add;
+  transition:
+    opacity 0.9s var(--ease),
+    visibility 0s 0.9s;
+}
+
+#glow > div {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 160vmax;
+  height: 160vmax;
+  margin: -80vmax 0 0 -80vmax;
+  background: conic-gradient(var(--glow-colours));
+  animation: spin 12s linear infinite paused;
+}
+
+[data-phase='waiting-for-target'] #glow,
+[data-phase='thinking'] #glow,
+[data-phase='running'] #glow {
+  visibility: visible;
+  transition: opacity 0.9s var(--ease);
+}
+
+[data-phase='waiting-for-target'] #glow {
+  opacity: 0.48;
+}
+
+[data-phase='thinking'] #glow,
+[data-phase='running'] #glow {
+  opacity: 0.92;
+}
+
+[data-phase='waiting-for-target'] #glow > div,
+[data-phase='thinking'] #glow > div,
+[data-phase='running'] #glow > div {
+  animation-play-state: running;
+}
+
+[data-phase='thinking'] #glow > div {
+  animation-duration: 3.2s;
+}
+
+/* Calibration covers the screen, so the dots are all there is to look at. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(55% 50% at 50% 40%, rgb(10 132 255 / 22%), transparent 68%),
+    radial-gradient(45% 45% at 88% 108%, rgb(191 90 242 / 16%), transparent 70%),
+    #050506;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.8s var(--ease),
+    visibility 0s 0.8s;
+}
+
+[data-calibrating] body::before {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.5s var(--ease);
+}
+
+[data-calibrating='ready'] body::before {
+  opacity: 0.35;
+}
+
+/* Sit between the top and inner calibration points, so the line never covers a dot. */
+[data-calibrating='dots'] body::after {
+  content: 'Follow the light';
+  position: fixed;
+  top: 14%;
+  left: 50%;
+  z-index: 4;
+  padding: calc(14px * var(--s)) calc(28px * var(--s));
+  translate: -50% 0;
+  white-space: nowrap;
+  font-size: calc(22px * var(--s));
+  font-weight: 510;
+  letter-spacing: -0.01em;
+  color: var(--label);
+  border-radius: 99px;
+  background: var(--hud);
+  box-shadow: var(--hud-shadow);
+}
+
+/* The camera preview, drawn by the tracker, framed in a circle like Face ID. Its inline styles are overridden. */
+body > video {
+  position: fixed !important;
+  top: 42% !important;
+  left: 50% !important;
+  z-index: 1;
+  width: 38vmin !important;
+  height: 38vmin;
+  object-fit: cover;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 16%),
+    0 30px 80px rgb(0 0 0 / 45%);
+  transform: translate(-50%, -50%) scaleX(-1) !important;
+  transition: opacity 0.6s var(--ease);
+}
+
+#face-ring {
+  --framed: 0;
+  position: fixed;
+  top: 42%;
+  left: 50%;
+  display: none;
+  width: 44vmin;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 1.2vmin rgb(255 255 255 / 10%),
+    0 0 80px rgb(10 132 255 / 18%);
+}
+
+#face-ring::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(var(--glow-colours));
+  mask:
+    radial-gradient(closest-side, transparent 93%, #000 94%),
+    conic-gradient(#000 calc(var(--framed) * 1turn), transparent 0);
+  mask-composite: intersect;
+}
+
+[data-calibrating='face'] #face-ring {
+  display: block;
+}
+
+@property --framed {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+#gaze-message {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 5;
+  box-sizing: border-box;
+  max-width: min(72vw, calc(920px * var(--s)));
+  margin: 0;
+  padding: calc(28px * var(--s)) calc(40px * var(--s));
+  translate: -50% -50%;
+  text-align: center;
+  text-wrap: balance;
+  border-radius: calc(36px * var(--s));
+  background: var(--hud);
+  box-shadow: var(--hud-shadow);
+  backdrop-filter: blur(40px) saturate(1.8);
+}
+
+#gaze-message strong {
+  display: block;
+  font-size: calc(40px * var(--s));
+  font-weight: 660;
+  letter-spacing: -0.03em;
+}
+
+#gaze-message span {
+  display: block;
+  margin-top: calc(10px * var(--s));
+  font-size: calc(20px * var(--s));
+  font-weight: 510;
+  letter-spacing: -0.01em;
+  color: var(--label-2);
+}
+
+[data-calibrating='face'] #gaze-message {
+  top: calc(42% + 26vmin);
+  translate: -50% 0;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+[data-calibrating='ready'] #gaze-message {
+  background: var(--hud);
+  box-shadow: var(--hud-shadow);
+}
+
+#gaze-message[hidden] {
+  display: none;
+}
+
+/* The Gaze Dot: a soft glass ring with a bright centre, readable over light and dark pages. Gliding a little hides jitter. */
+#dot {
+  position: fixed;
+  z-index: 6;
+  box-sizing: border-box;
+  width: calc(44px * var(--s));
+  height: calc(44px * var(--s));
+  margin: calc(-22px * var(--s)) 0 0 calc(-22px * var(--s));
+  border: calc(2px * var(--s)) solid rgb(255 255 255 / 94%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 14%);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 30%),
+    0 0 calc(28px * var(--s)) rgb(10 132 255 / 55%),
+    0 4px 16px rgb(0 0 0 / 28%);
+  backdrop-filter: blur(8px);
+  transition:
+    left 0.12s linear,
+    top 0.12s linear;
+}
+
+#dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 28%;
+  height: 28%;
+  margin: auto;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px rgb(255 255 255 / 80%);
+}
+
+/* The calibration dot glides to each point so the eyes can follow it, and a ring closes in on it while it records. */
+[data-calibrating] #dot {
+  width: calc(28px * var(--s));
+  height: calc(28px * var(--s));
+  margin: calc(-14px * var(--s)) 0 0 calc(-14px * var(--s));
+  border: none;
+  background: #fff;
+  box-shadow:
+    0 0 0 calc(8px * var(--s)) rgb(10 132 255 / 32%),
+    0 0 calc(48px * var(--s)) rgb(10 132 255 / 88%);
+  backdrop-filter: none;
+  transition:
+    left 0.6s var(--ease),
+    top 0.6s var(--ease);
+}
+
+[data-calibrating] #dot::after {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  border: calc(2px * var(--s)) solid rgb(255 255 255 / 80%);
+  background: none;
+  box-shadow: none;
+  opacity: 0;
 }
 
 /* The scan picks the key, so a dot following the eyes would only distract. */
@@ -58,87 +567,78 @@ body {
   visibility: hidden;
 }
 
-[data-calibrating] .target {
-  visibility: hidden;
-}
-
-#gaze-message,
-#status {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  margin: 0;
-  padding: 16px;
-  transform: translate(-50%, -50%);
-  background: rgb(15 23 42 / 90%);
-  text-align: center;
-}
-
-/* What the agent is doing right now, between the Intent and the stop hint. */
-#status span {
-  display: block;
-  margin-top: 8px;
-}
-
-#status small {
-  display: block;
-  margin-top: calc(8px * var(--ui-scale, 1));
-  font-size: calc(20px * var(--ui-scale, 1));
-  font-weight: 500;
-  opacity: 0.8;
-}
-
-/* A banner, so the page the agent is working on stays visible underneath. */
-[data-phase='running'] #status,
-[data-phase='finished'] #status {
-  top: 24px;
-  max-width: 80vw;
-  transform: translateX(-50%);
-  border: calc(4px * var(--ui-scale, 1)) solid #38bdf8;
-  border-radius: 16px;
-}
-
-[data-phase='finished'][data-ok='true'] #status {
-  border-color: #16a34a;
-}
-
-[data-phase='finished'][data-ok='false'] #status {
-  border-color: #d97706;
-}
-
-#dot {
-  position: fixed;
-  width: calc(40px * var(--ui-scale, 1));
-  height: calc(40px * var(--ui-scale, 1));
-  margin: calc(-20px * var(--ui-scale, 1)) 0 0 calc(-20px * var(--ui-scale, 1));
-  border-radius: 50%;
-  background: #38bdf8;
-}
-
-/* The Centre Box sits above the Gaze Keyboard. */
-.target {
-  z-index: 1;
-}
-
+/* The Gaze Keyboard and the Suggested Intents: a sheet over the whole screen, with colour behind the glass keys. */
 #keyboard {
   position: fixed;
   inset: 0;
-  display: none;
-  background: rgb(15 23 42 / 94%);
+  z-index: 2;
+  overflow: hidden;
+  visibility: hidden;
+  opacity: 0;
+  background: rgb(8 8 12 / 96%);
+  transition:
+    opacity 0.4s var(--ease),
+    visibility 0s 0.4s;
+}
+
+#keyboard .aurora {
+  position: absolute;
+  inset: -18%;
+  background:
+    radial-gradient(42% 46% at 12% 10%, rgb(10 132 255 / 42%), transparent 70%),
+    radial-gradient(46% 50% at 92% 92%, rgb(191 90 242 / 38%), transparent 72%),
+    radial-gradient(36% 40% at 82% 14%, rgb(100 210 255 / 22%), transparent 68%),
+    radial-gradient(40% 42% at 8% 88%, rgb(255 55 95 / 16%), transparent 70%),
+    radial-gradient(28% 30% at 50% 48%, rgb(94 92 230 / 14%), transparent 70%);
+  animation: drift 22s ease-in-out infinite;
+  pointer-events: none;
+}
+
+#keyboard .noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  background: #fff;
+  filter: url(#noise);
+  mix-blend-mode: overlay;
 }
 
 [data-phase='typing'] #keyboard,
 [data-phase='choosing'] #keyboard {
-  display: block;
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 0.4s var(--ease);
+}
+
+[data-phase='choosing'] #keyboard .aurora {
+  background:
+    radial-gradient(48% 50% at 18% 0%, rgb(10 132 255 / 36%), transparent 70%),
+    radial-gradient(50% 52% at 86% 100%, rgb(191 90 242 / 40%), transparent 72%),
+    radial-gradient(32% 36% at 50% 50%, rgb(255 55 95 / 10%), transparent 70%);
+}
+
+#typed,
+.key,
+#no-intents {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
 }
 
 #no-intents {
-  position: absolute;
-  box-sizing: border-box;
   display: grid;
   place-items: center;
-  padding: 32px;
+  padding: calc(40px * var(--s));
   text-align: center;
+  text-wrap: balance;
+  font-size: calc(32px * var(--s));
+  font-weight: 510;
+  color: var(--label-2);
+  border-radius: calc(36px * var(--s));
+  background: var(--glass-sheen), rgb(255 255 255 / 6%);
+  box-shadow: var(--glass-rim);
+  backdrop-filter: blur(36px) saturate(1.8);
 }
 
 #no-intents[hidden] {
@@ -185,6 +685,13 @@ body {
   border-radius: 16px;
   color: var(--ink);
   overflow: hidden;
+  background: var(--rest);
+  backdrop-filter: none;
+}
+
+/* The tile's ring shows the step, in place of the bar under other keys. */
+.key.tile::after {
+  display: none;
 }
 
 .key.tile[data-key='close'] {
@@ -282,121 +789,647 @@ body {
 #typed {
   display: flex;
   align-items: center;
-  padding: 0 32px;
+  padding: 0 calc(36px * var(--s));
   overflow: hidden;
   white-space: pre;
-  font-size: calc(64px * var(--ui-scale, 1));
-  border-bottom: calc(4px * var(--ui-scale, 1)) solid #38bdf8;
+  font-size: calc(56px * var(--s));
+  font-weight: 590;
+  letter-spacing: -0.03em;
+  border-radius: calc(32px * var(--s));
+  background: var(--glass-sheen), rgb(255 255 255 / 8%);
+  box-shadow: var(--glass-rim), 0 12px 40px rgb(0 0 0 / 22%);
+  backdrop-filter: blur(40px) saturate(1.9);
 }
 
 #typed::after {
   content: '';
   flex: none;
-  width: 6px;
-  height: 1.1em;
-  margin-left: 4px;
-  background: #38bdf8;
+  width: calc(4px * var(--s));
+  height: 0.92em;
+  margin-left: calc(6px * var(--s));
+  border-radius: 99px;
+  background: var(--blue);
+  box-shadow: 0 0 12px rgb(10 132 255 / 70%);
+  animation: caret 1.1s ease-in-out infinite;
+}
+
+#typed:empty::before {
+  content: 'Type with your eyes';
+  color: var(--label-3);
+  font-weight: 510;
+}
+
+#typed:empty::after {
+  order: -1;
+  margin: 0 calc(10px * var(--s)) 0 0;
 }
 
 .key {
-  --fill: #0369a1;
-  --rest: rgb(30 41 59);
-  display: grid;
-  place-items: center;
-  border: calc(4px * var(--ui-scale, 1)) solid #fff;
-  border-radius: 16px;
-  --font: calc(72px * var(--ui-scale, 1));
+  /* The colour of the key once the scan lights it. */
+  --fill: #0b64d8;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(10px * var(--s));
+  overflow: hidden;
+  padding: calc(16px * var(--s)) calc(28px * var(--s));
+  text-align: center;
+  text-wrap: balance;
+  --font: calc(68px * var(--s));
   /* One line of label fits however short the rows get. */
   font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.65));
-  background: var(--rest);
+  font-weight: 590;
+  line-height: 1.08;
+  border-radius: calc(32px * var(--s));
+  background-color: rgb(255 255 255 / 9%);
+  background-image: var(--glass-sheen);
+  box-shadow: var(--glass-rim), 0 12px 36px rgb(0 0 0 / 22%);
+  backdrop-filter: blur(28px) saturate(1.9);
+  transition:
+    background-color 0.32s var(--ease),
+    box-shadow 0.32s var(--ease),
+    color 0.32s var(--ease),
+    scale 0.5s var(--spring);
+}
+
+.key .frost {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(255 255 255 / 18%), rgb(255 255 255 / 0%) 42%);
+  mix-blend-mode: soft-light;
+}
+
+.key > .icon,
+.key > span:not(.frost):not(.badge) {
+  z-index: 1;
+}
+
+.key.enter {
+  animation: key-in 0.5s var(--ease) calc(var(--i, 0) * 20ms) backwards;
+}
+
+.key .icon {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+/* The letter groups, spaced so each letter reads on its own. */
+.key:is([data-key='abcde'], [data-key='fghij'], [data-key='klmno'], [data-key='pqrst'], [data-key='uvwxyz']) {
+  letter-spacing: 0.1em;
 }
 
 .key[data-key='space'],
 .key[data-key='done'],
 .key[data-key='delete'],
 .key[data-key='back'] {
-  --font: calc(44px * var(--ui-scale, 1));
+  --font: calc(38px * var(--s));
+  letter-spacing: -0.02em;
 }
 
 .key[data-key='done'] {
-  --fill: #16a34a;
-  --rest: #14532d;
+  --fill: #1f7a36;
+  background-color: rgb(48 209 88 / 16%);
+}
+
+.key[data-key='done'] .icon {
+  color: var(--green);
 }
 
 .key[data-key='delete'],
 .key[data-key='back'] {
-  --fill: #d97706;
-  --rest: #78350f;
+  --fill: #a84a00;
+  background-color: rgb(255 159 10 / 14%);
 }
 
-/* The Dock or Desktop icon the scan is on. */
+.key[data-key='delete'] .icon,
+.key[data-key='back'] .icon {
+  color: var(--orange);
+}
+
+/* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
+.key[data-key^='word:'] {
+  --fill: #0a6a8f;
+  --font: calc(50px * var(--s));
+  font-weight: 510;
+  background-color: rgb(100 210 255 / 12%);
+}
+
+/* Each Suggested Phrase: a whole sentence, so smaller type and room to wrap, with an Apple Intelligence rim. */
+.key[data-key^='phrase:'] {
+  --fill: #6e30b8;
+  flex-direction: row;
+  gap: calc(20px * var(--s));
+  --font: calc(42px * var(--s));
+  /* Two lines fit, for a phrase that wraps. */
+  font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.36));
+  font-weight: 510;
+  background-color: rgb(191 90 242 / 14%);
+}
+
+.key[data-key^='phrase:']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: calc(2px * var(--s));
+  border-radius: inherit;
+  background: linear-gradient(120deg, var(--blue), var(--purple), var(--pink), var(--orange));
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+.key[data-key^='phrase:'] .icon {
+  width: 0.95em;
+  height: 0.95em;
+  color: var(--purple);
+  fill: currentColor;
+  stroke: none;
+}
+
+.key.history {
+  --fill: #4b4ad0;
+}
+
+.key.history .icon {
+  fill: none;
+  stroke: currentColor;
+  color: var(--indigo);
+}
+
+/* An Intent from this user's own history. */
+.badge {
+  position: absolute;
+  z-index: 2;
+  top: calc(20px * var(--s));
+  left: calc(24px * var(--s));
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--s));
+  padding: calc(6px * var(--s)) calc(14px * var(--s)) calc(6px * var(--s)) calc(10px * var(--s));
+  font-size: calc(16px * var(--s));
+  font-weight: 590;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--label-2);
+  border-radius: 99px;
+  background: rgb(255 255 255 / 12%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
+}
+
+.badge .icon {
+  width: 1em;
+  height: 1em;
+}
+
+/* Tiles are small, so the badge tucks into the corner, clear of the icon. */
+.key.tile .badge {
+  top: calc(8px * var(--s));
+  left: calc(8px * var(--s));
+  padding: calc(3px * var(--s)) calc(8px * var(--s)) calc(3px * var(--s)) calc(6px * var(--s));
+  font-size: calc(11px * var(--s));
+}
+
+/* The key the scan is on: filled, lifted, and ringed in white, so it stands out without relying on colour. */
+.key.highlighted {
+  z-index: 2;
+  scale: 1.03;
+  color: #fff;
+  background-color: var(--fill);
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 22%), rgb(255 255 255 / 0%) 46%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 40%),
+    0 0 0 calc(4px * var(--s)) #fff,
+    0 0 calc(80px * var(--s)) color-mix(in srgb, var(--fill) 88%, transparent),
+    0 28px 64px rgb(0 0 0 / 48%);
+}
+
+.key.highlighted .frost {
+  mix-blend-mode: overlay;
+  background: linear-gradient(115deg, rgb(255 255 255 / 0%) 18%, rgb(255 255 255 / 38%) 48%, rgb(255 255 255 / 0%) 72%);
+  background-size: 240% 100%;
+  animation: glass-sheen 2.1s var(--ease) infinite;
+}
+
+.key.highlighted .icon,
+.key.highlighted .badge {
+  color: #fff;
+}
+
+.key.highlighted .badge {
+  background: rgb(255 255 255 / 22%);
+}
+
+/* How long is left before the scan moves on. overlay.ts runs it over one step. */
+.key::after,
+#icon-magnifier::after {
+  content: '';
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  bottom: calc(16px * var(--s));
+  z-index: 2;
+  height: calc(5px * var(--s));
+  border-radius: 99px;
+  background: rgb(255 255 255 / 94%);
+  box-shadow: 0 0 12px rgb(255 255 255 / 50%);
+  transform: scaleX(0);
+  transform-origin: left;
+  opacity: 0;
+}
+
+.key.highlighted::after,
+#icon-magnifier::after {
+  opacity: 1;
+}
+
+/* The Dock or Desktop icon the scan is on. It glides from one icon to the next. */
 #icon-highlight {
   position: fixed;
+  z-index: 2;
   display: none;
   box-sizing: border-box;
-  border: calc(8px * var(--ui-scale, 1)) solid #38bdf8;
-  border-radius: 16px;
+  border: calc(4px * var(--s)) solid #fff;
+  border-radius: calc(24px * var(--s));
+  background: rgb(10 132 255 / 10%);
+  box-shadow:
+    0 0 0 calc(3px * var(--s)) var(--blue),
+    0 0 calc(48px * var(--s)) rgb(10 132 255 / 80%),
+    inset 0 0 calc(20px * var(--s)) rgb(10 132 255 / 28%);
+  transition:
+    left 0.45s var(--spring),
+    top 0.45s var(--spring),
+    width 0.45s var(--spring),
+    height 0.45s var(--spring);
 }
 
 [data-phase='icons'] #icon-highlight {
   display: block;
 }
 
-/* The key the scan is on. */
-.key.highlighted {
-  background: var(--fill);
-  outline: calc(8px * var(--ui-scale, 1)) solid #38bdf8;
-}
-
-/* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
-.key[data-key^='word:'] {
-  --rest: #134e4a;
-  --font: calc(56px * var(--ui-scale, 1));
-  font-weight: 500;
-}
-
-/* Each Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
-.key[data-key^='phrase:'] {
-  --rest: #3b0764;
-  --fill: #7e22ce;
-  padding: 0 calc(24px * var(--ui-scale, 1));
+/* Large View's name of the highlighted icon, away from it. */
+#icon-magnifier {
+  position: fixed;
+  z-index: 2;
+  display: none;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(8px * var(--s));
+  padding: calc(24px * var(--s)) calc(48px * var(--s));
   overflow: hidden;
   text-align: center;
-  --font: calc(48px * var(--ui-scale, 1));
-  /* Two lines fit, for a phrase that wraps. */
-  font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.36));
-  font-weight: 500;
+  font-size: calc(60px * var(--s));
+  font-weight: 660;
+  letter-spacing: -0.03em;
+  border-radius: calc(40px * var(--s));
+  background: var(--hud);
+  box-shadow: var(--hud-shadow);
+  backdrop-filter: blur(40px) saturate(1.8);
+  opacity: 1;
+  transition:
+    opacity 0.3s var(--ease),
+    left 0.5s var(--spring),
+    top 0.5s var(--spring);
+}
+
+#icon-magnifier::before {
+  content: 'Blink to open';
+  order: 1;
+  font-size: calc(20px * var(--s));
+  font-weight: 510;
+  letter-spacing: 0;
+  color: var(--label-2);
+}
+
+[data-phase='icons'] #icon-magnifier:not([hidden]) {
+  display: flex;
+}
+
+@starting-style {
+  [data-phase='icons'] #icon-magnifier:not([hidden]) {
+    opacity: 0;
+  }
+}
+
+/* The Dynamic Island: grows out of the notch to say what the agent is doing, and morphs as that changes. Pure black
+   at the top so it blends into the notch on a MacBook. */
+#status {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: calc(16px * var(--s));
+  width: max-content;
+  min-width: calc(var(--notch) + 2 * var(--menu-bar));
+  max-width: min(84vw, calc(980px * var(--s)));
+  padding: calc(var(--menu-bar) + 14px * var(--s)) calc(32px * var(--s)) calc(20px * var(--s)) calc(24px * var(--s));
+  overflow: hidden;
+  translate: -50% 0;
+  transform-origin: top center;
+  background: #000;
+  border-radius: 0 0 calc(36px * var(--s)) calc(36px * var(--s));
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 10%),
+    0 28px 70px rgb(0 0 0 / 48%);
+  transition:
+    opacity 0.35s var(--ease),
+    scale 0.6s var(--spring),
+    display 0.6s allow-discrete;
+}
+
+#status::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, var(--blue), var(--purple), var(--pink), transparent);
+  opacity: 0.7;
+}
+
+#status[hidden] {
+  display: none;
+  opacity: 0;
+  scale: 0.5 0.2;
+}
+
+@starting-style {
+  #status {
+    opacity: 0;
+    scale: 0.5 0.2;
+  }
+}
+
+#status .glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(40px * var(--s));
+  height: calc(40px * var(--s));
+  border-radius: 50%;
+}
+
+#status .glyph .icon {
+  width: 62%;
+  height: 62%;
+  stroke-width: 2.4;
+}
+
+#status .lines {
+  display: grid;
+  min-width: min-content;
+  gap: calc(2px * var(--s));
+}
+
+#status strong {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(24px * var(--s));
+  font-weight: 590;
+  letter-spacing: -0.02em;
+}
+
+#status .detail {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: calc(18px * var(--s));
+  font-weight: 510;
+  color: var(--label-2);
+}
+
+#status small {
+  font-size: calc(15px * var(--s));
+  font-weight: 510;
+  color: var(--label-3);
+  transition: color 0.3s;
+}
+
+#status small[data-warn='true'] {
+  color: var(--orange);
+}
+
+[data-phase='waiting-for-target'] #status .glyph {
+  color: var(--teal);
+  background: rgb(100 210 255 / 18%);
+  box-shadow: 0 0 16px rgb(100 210 255 / 28%);
+}
+
+[data-phase='thinking'] #status strong {
+  color: transparent;
+  background: linear-gradient(90deg, rgb(255 255 255 / 45%) 0%, #fff 28%, rgb(191 90 242 / 90%) 50%, rgb(255 255 255 / 45%) 100%) 0 0 / 200% 100%;
+  background-clip: text;
+  animation: shimmer 1.8s linear infinite;
+}
+
+/* Thinking: a small Siri-like orb. Running: a spinner in the same colours. */
+[data-phase='thinking'] #status .glyph,
+[data-phase='running'] #status .glyph {
+  background: conic-gradient(var(--glow-colours));
+  animation: spin 1.4s linear infinite;
+}
+
+[data-phase='thinking'] #status .glyph {
+  box-shadow: 0 0 calc(22px * var(--s)) rgb(191 90 242 / 70%);
+  mask: radial-gradient(closest-side, #000 70%, transparent);
+}
+
+[data-phase='running'] #status .glyph {
+  animation-duration: 1s;
+  mask: radial-gradient(closest-side, transparent 66%, #000 69%);
+}
+
+[data-phase='finished'] #status .glyph {
+  color: #fff;
+  background: var(--green);
+  box-shadow: 0 0 calc(24px * var(--s)) rgb(48 209 88 / 55%);
+  animation: pop 0.6s var(--spring);
+}
+
+[data-phase='finished'][data-ok='false'] #status .glyph {
+  color: #000;
+  background: var(--orange);
+  box-shadow: 0 0 calc(24px * var(--s)) rgb(255 159 10 / 55%);
+}
+
+/* Once the wake is acknowledged the island tucks back around the notch, so it covers nothing the user may want to look
+   at. The green dot is the camera's "in use" light. */
+#status[data-compact] {
+  justify-content: space-between;
+  width: auto;
+  height: var(--menu-bar);
+  min-width: calc(var(--notch) + 2 * var(--menu-bar) + 24px);
+  padding: 0 calc(12px * var(--s)) 0 calc(8px * var(--s));
+  border-radius: 0 0 calc(var(--menu-bar) / 2) calc(var(--menu-bar) / 2);
+}
+
+#status[data-compact] .lines {
+  display: none;
+}
+
+#status[data-compact] .glyph {
+  width: calc(var(--menu-bar) - 8px);
+  height: calc(var(--menu-bar) - 8px);
+}
+
+#status[data-compact]::after {
+  content: '';
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: 9px;
+  height: 9px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--green);
+  opacity: 1;
 }
 
 /* Counts down the Stop Gesture over the Gaze Keyboard, the icon scan and the other screens. Above the Centre Box. */
 #stop-hint {
   position: fixed;
-  bottom: calc(24px * var(--ui-scale, 1));
+  bottom: calc(32px * var(--s));
   left: 50%;
   /* Above the keyboard and the intents, so it is never hidden behind them. */
-  z-index: 2;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: calc(14px * var(--s));
   margin: 0;
-  padding: calc(16px * var(--ui-scale, 1));
-  transform: translateX(-50%);
-  background: rgb(15 23 42 / 95%);
-  border: calc(4px * var(--ui-scale, 1)) solid #d97706;
-  border-radius: 16px;
+  padding: calc(16px * var(--s)) calc(30px * var(--s)) calc(16px * var(--s)) calc(24px * var(--s));
+  translate: -50% 0;
+  font-size: calc(26px * var(--s));
+  font-weight: 590;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  border-radius: 99px;
+  background: var(--hud);
+  box-shadow:
+    var(--glass-rim),
+    0 0 0 calc(2px * var(--s)) rgb(255 159 10 / 80%),
+    0 20px 50px rgb(0 0 0 / 50%);
+  backdrop-filter: blur(28px) saturate(1.6);
+  transition:
+    opacity 0.3s var(--ease),
+    scale 0.45s var(--spring),
+    display 0.45s allow-discrete;
 }
 
-/* Centred in the 120px typed-text strip, with less padding, so it stays clear of the keys even at uiScale 2. */
+#stop-hint::before {
+  content: '';
+  width: calc(12px * var(--s));
+  height: calc(12px * var(--s));
+  border-radius: 50%;
+  background: var(--orange);
+  box-shadow: 0 0 calc(12px * var(--s)) var(--orange);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@starting-style {
+  #stop-hint {
+    opacity: 0;
+    scale: 0.85;
+  }
+}
+
+/* Centred in the typed-text strip, with less padding, so it stays clear of the keys even at uiScale 2. */
 #stop-hint[data-at='top'] {
-  top: 60px;
+  top: var(--typed-middle, 60px);
   bottom: auto;
-  padding: calc(8px * var(--ui-scale, 1)) calc(16px * var(--ui-scale, 1));
-  transform: translate(-50%, -50%);
+  padding: calc(8px * var(--s)) calc(22px * var(--s)) calc(8px * var(--s)) calc(16px * var(--s));
+  translate: -50% -50%;
 }
 
 #stop-hint[data-at='middle'] {
   top: 50%;
   bottom: auto;
-  transform: translate(-50%, -50%);
+  translate: -50% -50%;
 }
 
 #stop-hint[hidden] {
   display: none;
+  opacity: 0;
+  scale: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #wake,
+  .wake-aurora,
+  #glow > div,
+  #keyboard .aurora,
+  #status .glyph,
+  #stop-hint::before,
+  [data-phase='thinking'] #status strong,
+  .key.highlighted .frost {
+    animation: none;
+  }
+
+  .key.enter {
+    animation-name: fade-in;
+  }
+
+  .key.highlighted {
+    scale: none;
+  }
+
+  #dot,
+  [data-calibrating] #dot,
+  #icon-highlight,
+  #icon-magnifier {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --label-2: #fff;
+    --label-3: rgb(255 255 255 / 85%);
+    --glass-sheen: none;
+    --hud: #1c1c1e;
+  }
+
+  #wake,
+  #typed,
+  .key,
+  #no-intents,
+  #gaze-message,
+  #icon-magnifier,
+  #stop-hint {
+    backdrop-filter: none;
+  }
+
+  #keyboard {
+    background: #000;
+  }
+
+  #keyboard .aurora,
+  #keyboard .noise,
+  .wake-aurora,
+  .key .frost {
+    display: none;
+  }
+
+  .key {
+    background-color: #1c1c1e;
+    background-image: none;
+    box-shadow: inset 0 0 0 calc(2px * var(--s)) rgb(255 255 255 / 60%);
+  }
+
+  #typed {
+    background: #1c1c1e;
+  }
 }

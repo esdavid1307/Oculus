@@ -9,6 +9,10 @@ const inBox = { x: 800, y: 500, radius: 120 };
 const outsideBox = { x: 200, y: 500, radius: 120 };
 const offScreen = { x: 800, y: -400, radius: 120 };
 
+// The Neural Layer's learn actions are tested on their own, under 'Learning signals', and left out everywhere else.
+const record = (into: AgentAction[]) => (action: AgentAction) => {
+  if (action.type !== 'learn') into.push(action);
+};
 const typedText = (state: OverlayState) => (state.phase === 'typing' ? state.text : null);
 const tick = (t: number) => ({ type: 'tick', t }) as const;
 const gaze = (t: number, region: GazeEvent['region']): GazeEvent => ({ type: 'gaze', t, region });
@@ -153,7 +157,7 @@ describe('Gaze Keyboard', () => {
 
   const typing = (timings?: unknown) => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, timings, act: (action) => actions.push(action) });
+    const session = createSession({ screen, timings, act: record(actions) });
     let state = session({ type: 'open-keyboard', t: 0 });
     let t = 0;
     // Waits for the scan to reach a key, then presses it with a Select Blink.
@@ -178,7 +182,7 @@ describe('Gaze Keyboard', () => {
 
   it('opens on the group screen with no text, highlighting the first key', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [], phrases: [] });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [], phrases: [], stepMs: 2000 });
   });
 
   it('moves the highlight to the next key every 2 seconds, and wraps round', () => {
@@ -290,7 +294,7 @@ describe('Dock', () => {
 
   const awake = (timings?: unknown) => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, timings, act: (action) => actions.push(action), dock: () => items });
+    const session = createSession({ screen, timings, act: record(actions), dock: () => items });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     return { session, actions };
@@ -307,14 +311,14 @@ describe('Dock', () => {
     const { session } = awake();
     session(gaze(3100, nearDock));
     expect(session(gaze(6099, nearDock)).phase).toBe('waiting-for-target');
-    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0] });
+    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0], stepMs: 2000 });
   });
 
   describe('showing the Dock', () => {
     const hidden = items.map(({ name, rect }) => ({ name, rect: { ...rect, y: screen.height } }));
     const awakeWithHiddenDock = () => {
       const actions: AgentAction[] = [];
-      const session = createSession({ screen, act: (action) => actions.push(action), dock: () => hidden });
+      const session = createSession({ screen, act: record(actions), dock: () => hidden });
       session(gaze(0, inBox));
       session(gaze(3000, inBox));
       return { session, actions };
@@ -369,7 +373,7 @@ describe('Dock', () => {
 
     it('does not ask for the Dock while asleep', () => {
       const actions: AgentAction[] = [];
-      const session = createSession({ screen, act: (action) => actions.push(action), dock: () => hidden });
+      const session = createSession({ screen, act: record(actions), dock: () => hidden });
       session(gaze(0, belowDock));
       expect(actions).toEqual([]);
     });
@@ -456,7 +460,7 @@ describe('Dock', () => {
 
   it('still stops the Gaze Keyboard when the user looks down past the Dock', () => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => items });
+    const session = createSession({ screen, act: record(actions), dock: () => items });
     session({ type: 'open-keyboard', t: 0 });
     session(gaze(100, belowDock));
     expect(session(gaze(5100, belowDock)).phase).toBe('idle');
@@ -481,7 +485,7 @@ describe('Desktop', () => {
   const dock = [at('Finder', 600, 920)];
   const awake = () => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => dock, desktop: () => desktop });
+    const session = createSession({ screen, act: record(actions), dock: () => dock, desktop: () => desktop });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     return { session, actions };
@@ -554,7 +558,7 @@ describe('Menu bar', () => {
 
   const onMenuBar = () => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, act: (action) => actions.push(action), menubar: () => menubar });
+    const session = createSession({ screen, act: record(actions), menubar: () => menubar });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     session(gaze(3100, atTop));
@@ -654,7 +658,7 @@ describe('Gaze Keyboard word suggestions', () => {
   const typing = () => {
     const actions: AgentAction[] = [];
     const asked: string[] = [];
-    const session = createSession({ screen, act: (action) => actions.push(action), suggest: (text) => (asked.push(text), suggest(text)) });
+    const session = createSession({ screen, act: record(actions), suggest: (text) => (asked.push(text), suggest(text)) });
     let state = session({ type: 'open-keyboard', t: 0 });
     let t = 0;
     const press = (id: string) => {
@@ -717,7 +721,7 @@ describe('Suggested Intents', () => {
   const target = { x: 300, y: 300, radius: 120 };
   const awake = (timings?: unknown) => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, timings, act: (action) => actions.push(action) });
+    const session = createSession({ screen, timings, act: record(actions) });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     return { session, actions };
@@ -838,7 +842,7 @@ describe('Suggested Intents', () => {
     session(tick(9000));
     expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
     expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2, sinceWakeMs: 6100 });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2, sinceWakeMs: 6100, held: { from: 3100, to: 4100 } });
   });
 
   it('counts Time to Action from the Start Gesture through every wait, including after Something else', () => {
@@ -852,7 +856,7 @@ describe('Suggested Intents', () => {
   it('counts Time to Action from the last icon opened when the agent stayed awake after it', () => {
     const actions: AgentAction[] = [];
     const dock = ['Finder', 'Safari'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
-    const session = createSession({ screen, act: (action) => actions.push(action), dock: () => dock });
+    const session = createSession({ screen, act: record(actions), dock: () => dock });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     session(gaze(3100, { x: 700, y: 820, radius: 120 }));
@@ -1051,7 +1055,7 @@ describe('Running an Intent', () => {
   // Woken at 3 s, thinking from 4.1 s (request 1), choosing from 5 s, and the first Intent chosen at 5.1 s (request 2).
   const reach = (until: 'awake' | 'thinking' | 'choosing' | 'running', timings?: unknown) => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, timings, act: (action) => actions.push(action) });
+    const session = createSession({ screen, timings, act: record(actions) });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     if (until !== 'awake') {
@@ -1066,7 +1070,7 @@ describe('Running an Intent', () => {
   it('asks the agent to run the chosen Intent on its target, with the next request number', () => {
     const { session, actions } = reach('choosing');
     expect(session(select(5100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Skip the ad', activity: '' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2, sinceWakeMs: 2100 });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Skip the ad', region: target, request: 2, sinceWakeMs: 2100, held: { from: 3100, to: 4100 } });
   });
 
   it('shows what the agent is doing during its run', () => {
@@ -1243,7 +1247,7 @@ describe('Suggested Intents side panel', () => {
     // Skip the ad at 5 s, Pause at 7 s, Something else at 9 s and Close at 11 s.
     expect(session(tick(11_000))).toMatchObject({ highlight: 'close' });
     expect(session({ type: 'select', t: 11_100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
-    expect(actions).toEqual([{ type: 'suggest-intents', region: { x: 300, y: 300, radius: 120 }, request: 1, turnedDown: [] }]);
+    expect(actions.filter(({ type }) => type !== 'learn')).toEqual([{ type: 'suggest-intents', region: { x: 300, y: 300, radius: 120 }, request: 1, turnedDown: [] }]);
   });
 });
 
@@ -1378,7 +1382,7 @@ describe('Stop Gesture in every state', () => {
   // Woken at 3 s. Every state is reached by 6.2 s, so looking away from 7 s stops it at 12 s.
   const reach = (until: Until) => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, act: (action) => actions.push(action), suggest: () => [], dock: () => dock });
+    const session = createSession({ screen, act: record(actions), suggest: () => [], dock: () => dock });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     if (until === 'typing') session({ type: 'open-keyboard', t: 3100 });
@@ -1514,7 +1518,7 @@ describe('Stop Gesture in every state', () => {
 
   it('does nothing on recalibrating while asleep', () => {
     const { actions } = reach('waiting-for-target');
-    const session = createSession({ screen, act: (action) => actions.push(action) });
+    const session = createSession({ screen, act: record(actions) });
     expect(session({ type: 'recalibrate', t: 100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
     expect(actions).toEqual([]);
   });
@@ -1534,7 +1538,7 @@ describe('Text box target', () => {
 
   const awake = (boxes: { name: string; rect: Rect }[] = [box]) => {
     const actions: AgentAction[] = [];
-    const session = createSession({ screen, act: (action) => actions.push(action), textBoxes: () => boxes });
+    const session = createSession({ screen, act: record(actions), textBoxes: () => boxes });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     return { session, actions };
@@ -1621,5 +1625,98 @@ describe('Text box target', () => {
       { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
       { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
     ]);
+  });
+});
+
+describe('Learning signals', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const signals = (actions: AgentAction[]) => actions.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));
+  const setup = (options: Partial<Parameters<typeof createSession>[0]> = {}) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action), ...options });
+    return { session, actions };
+  };
+
+  it('teaches Gaze Correction a little from the Start Gesture: the user looked at the Centre Box', () => {
+    const { session, actions } = setup();
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    expect(signals(actions)).toEqual([{ kind: 'gaze', from: 0, to: 3000, target: { x: 800, y: 500 }, weight: 0.25 }]);
+  });
+
+  it('reports every Select Blink with how long the key was lit, and marks Back and Delete as undoing the press before', () => {
+    const { session, actions } = setup();
+    session({ type: 'open-keyboard', t: 0 });
+    // abcde is lit from 0, fghij from 2000.
+    session(tick(2300));
+    session(select(2300));
+    // Back is the last key on the letter screen, lit from 5 x 2000 after the press.
+    session(tick(12_700));
+    session(select(12_700));
+    expect(signals(actions)).toEqual([
+      { kind: 'select', offsetMs: 300, stepMs: 2000, undoes: false },
+      { kind: 'select', offsetMs: 400, stepMs: 2000, undoes: true },
+    ]);
+  });
+
+  it('uses the learned Scan Pace from the next restart of a scan, never under a lit key', () => {
+    let pace = 2000;
+    const { session } = setup({ scanPace: () => pace });
+    session({ type: 'open-keyboard', t: 0 });
+    pace = 1000;
+    expect(session(tick(1500))).toMatchObject({ highlight: 'abcde', stepMs: 2000 });
+    session(select(1500));
+    expect(session(tick(2600))).toMatchObject({ highlight: 'b', stepMs: 1000 });
+  });
+
+  it('scans icons in the learned order, and reports which one was opened among all scanned, in screen order', () => {
+    const items = ['Finder', 'Safari', 'Notes'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
+    const { session, actions } = setup({ dock: () => items, orderIcons: (_source, names) => [...names].reverse() });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, { x: 700, y: 820, radius: 120 }));
+    expect(session(gaze(6100, { x: 700, y: 820, radius: 120 }))).toMatchObject({ phase: 'icons', highlight: items[2] });
+    session(select(6200));
+    expect(signals(actions).slice(-2)).toEqual([
+      { kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false },
+      { kind: 'icon-opened', source: 'dock', scanned: ['Finder', 'Safari', 'Notes'], chosen: 'Notes' },
+    ]);
+  });
+
+  describe('a text box', () => {
+    const box = { name: 'Search', rect: { x: 500, y: 100, width: 400, height: 40 } };
+    const onBox = { x: 690, y: 130, radius: 120 };
+    const typedOnBox = () => {
+      const { session, actions } = setup({ textBoxes: () => [box] });
+      session(gaze(0, inBox));
+      session(gaze(3000, inBox));
+      session(gaze(3100, onBox));
+      session(gaze(4100, onBox));
+      // 'a' through its group, at the start of each scan.
+      session(select(4200));
+      session(select(4300));
+      return { session, actions };
+    };
+
+    it('teaches Gaze Correction its centre once Done confirms the text typed into it', () => {
+      const { session, actions } = typedOnBox();
+      expect(signals(actions).filter(({ kind }) => kind === 'gaze')).toHaveLength(1);
+      session(tick(4300 + 7 * 2000 + 100));
+      session(select(4300 + 7 * 2000 + 100));
+      expect(signals(actions).filter(({ kind }) => kind === 'gaze').at(-1)).toEqual({
+        kind: 'gaze',
+        from: 3100,
+        to: 4100,
+        target: { x: 700, y: 120 },
+        weight: 1,
+      });
+    });
+
+    it('teaches nothing when the Stop Gesture throws the text away', () => {
+      const { session, actions } = typedOnBox();
+      session(gaze(5000, offScreen));
+      session(gaze(10_000, offScreen));
+      expect(signals(actions).filter(({ kind }) => kind === 'gaze')).toHaveLength(1);
+    });
   });
 });
