@@ -1,249 +1,207 @@
-# Oculus
+# Oculus Agent
 
-### Giving a voice to those who cannot speak.
+**A macOS assistant that turns gaze-based intent into fewer, simpler computer interactions.**
 
-Oculus is an AI-powered, eye-controlled communication system designed for people with limited mobility or speech impairments, including individuals living with ALS, cerebral palsy, or other conditions affecting their ability to communicate.
+Built for **natHacks 2026** · Healthcare & Accessibility
 
-Inspired by Stephen Hawking's predictive communication system, Oculus allows users to type, construct sentences, and speak using only their eyes and a standard webcam.
+## The problem
 
-**No expensive eye-tracking hardware. No physical keyboard. Just your eyes.**
+People with severe motor disabilities, including some people living with ALS or cerebral palsy, may be able to move their eyes even when using a mouse or keyboard is difficult. Existing gaze-control approaches make basic computer tasks possible, but they treat the eyes as a mouse: every click, button and text field takes a slow, precise fixation. Finding one video can take dozens of them, and that is tiring. Dedicated eye-tracking hardware also costs thousands of dollars, and an ordinary webcam is too coarse for precise pointing.
 
-## The Problem
+Oculus Agent explores a different model: instead of using eye movement as a replacement mouse, the user indicates **what they want to do**, and an AI agent handles the steps.
 
-For individuals with severe mobility impairments, something as simple as asking for water or expressing a thought can be extremely difficult.
+## How it works
 
-Traditional assistive communication devices can cost thousands of dollars and often require specialized hardware.
+1. **Wake.** The user looks at the Centre Box in the middle of the screen for 3 seconds. A ring fills and a chime plays, so a passing glance never wakes it.
+2. **Point at what matters.** The user holds their gaze on something for 1 second: a YouTube video, an essay in Google Docs, a text box. Gaze is always treated as a rough area (a Gaze Region), never an exact point.
+3. **Choose.** The overlay hides for one screenshot, and Claude suggests a few Intents for that spot, such as "Skip the ad" or "Continue the essay". They appear as large tiles next to Fixed Intents that never need Claude (Cancel, Quit, Minimize, Type, Dock). A highlight steps through the tiles, and a **Select Blink** (both eyes closed for half a second) chooses the lit one. Choosing is the user's confirmation. "Something else" asks for different suggestions.
+4. **Let the agent work.** Claude does every click and keystroke in a computer-use loop: screenshot, next action, perform it, repeat. A banner shows what it's doing right now.
+5. **Stop at any time.** Looking off the screen for 5 seconds stops any run, with a visible countdown. Losing the user's face counts too.
 
-Stephen Hawking used a predictive keyboard controlled by a cheek-muscle sensor to communicate. His system reduced the number of characters he needed to enter by predicting words as he typed.
+The goal is to reduce repeated gaze selections, **not** to remove user control.
 
-Oculus builds on this idea by replacing physical input with webcam-based eye tracking and using AI to help users communicate more efficiently.
+## What works today
 
-## Our Solution
+Everything below is on `main` and runs with the laptop webcam.
 
-Oculus transforms an ordinary laptop into an eye-controlled communication device.
+- **Webcam gaze tracking.** MediaPipe Face Landmarker iris tracking runs locally, with calibration and 300 ms smoothing. A blink sequence restarts calibration.
+- **Suggested Intents and the agent.** Claude suggests Intents for the spot the user looked at, then runs the chosen one. Two demo flows are tested end to end: continuing an essay in Google Docs ([docs/essay-flow.md](docs/essay-flow.md)) and YouTube, including picking a related video and skipping an ad ([docs/youtube-flow.md](docs/youtube-flow.md)).
+- **Fixed Intents.** Cancel, Quit (names the app it will quit), Minimize, Type and Dock show in every picker immediately. With Chrome in front, Search joins them, and a Chrome tile scans New Tab, Next Tab and Close Tab ([docs/fixed-intents.md](docs/fixed-intents.md)).
+- **Gaze Keyboard.** A full-screen scanning keyboard where each letter takes two Select Blinks (a group, then a letter). It opens by looking at a text box or choosing Type. Done types the text into that box, presses Return in single-line fields such as search boxes, and sends in Messages.
+- **Word and phrase suggestions.** Up to three Suggested Words finish the current word or predict the next one, and up to two Suggested Phrases offer texts the user sent before. Both learn the user's own words ([docs/word-prediction.md](docs/word-prediction.md)).
+- **Icon Scan.** A 3 second look at the Dock, the menu bar or a Desktop icon scans its icons, and a Select Blink opens one. Menus scan their commands next.
+- **Gaze Scan in Chrome** (optional). A 3 second look at named things in Chrome, such as a video title or the Skip Ad button, scans the elements nearby ([docs/chrome-scan.md](docs/chrome-scan.md)).
+- **Learning from confirmed choices.** Gaze Correction learns the user's tracking offset, Icon Order puts their usual icons first, and Scan Pace adapts to how fast they blink ([docs/neural-layer.md](docs/neural-layer.md)). Intent History offers their past Intents for the app or site in front straight away. Only confirmed choices teach it: a stopped run never does.
+- **Large View** (on by default). Bigger Dock icons, a magnified label for the highlighted icon, and scaled overlay text.
+- **Time to Action.** Each run logs the seconds from waking to the chosen Intent starting, as the measure of whether Oculus got faster.
 
-Using computer vision, the system estimates where a user is looking on the screen. Users can select letters, words, or entire phrases by maintaining their gaze on an option.
+## Results: is webcam gaze good enough?
 
-Instead of typing every letter, an AI-powered prediction engine suggests words and complete sentences based on what the user has already entered.
+Before building on any tracker, we wrote a gaze check harness ([docs/gaze-check.md](docs/gaze-check.md), `npm run gaze-check`) and compared WebGazer with MediaPipe iris. All runs were at 1512 × 949 with one tester.
 
-Once the user confirms a message, the application converts it into audible speech.
+| Measure | WebGazer (3 runs) | MediaPipe still (3 runs) | MediaPipe, head moving (1 run) |
+| --- | --- | --- | --- |
+| Median error | 92 to 174 px | 66 to 154 px | 114 px |
+| Jitter | 55 to 146 px | 20 to 29 px | 15 px |
+| Corner holds at 240 px | 4 of 18 | 8 of 18 | 3 of 6 |
 
-## Key Features
+MediaPipe won, but most of its error is a steady offset, too large for small dwell targets. That result shaped the design: options **scan** one at a time and a blink confirms, so gaze only has to land in the right general area.
 
-### 👁️ Webcam Eye Tracking
-- Track eye gaze using a standard webcam.
-- Calibrate gaze estimates to screen coordinates.
-- Navigate the interface without a mouse or keyboard.
-- Smooth gaze predictions to reduce accidental selections.
+## Key design choices
 
-### ⌨️ Eye-Controlled Keyboard
-- Select letters by looking at them.
-- Customizable dwell time for selection.
-- Large, accessible keyboard targets.
-- Visual feedback showing selection progress.
+### Intent, not micro-clicking
 
-### 🧠 AI-Powered Predictive Typing
-- Predict words from partial input.
-- Suggest complete sentences based on conversation context.
-- Reduce the number of selections needed to communicate.
-- Allow users to accept, reject, or edit suggestions.
+Traditional gaze control needs many separate selections. Oculus lets users express a higher-level Intent and the agent performs the intermediate steps.
 
-### 🔊 Text-to-Speech
-- Convert completed messages into spoken audio.
-- Support customizable voices and speech speed.
-- Speak only messages explicitly confirmed by the user.
+### Deliberate activation
 
-### 💬 Quick Communication
-Provide immediate access to common phrases, including:
-- "Yes"
-- "No"
-- "I need help"
-- "I need water"
-- "I'm in pain"
-- "Thank you"
+A 3 second hold with a filling ring wakes the agent, and a half-second Select Blink is long enough that natural blinks don't count. This avoids the *Midas touch* problem, where everything looked at gets activated.
 
-### 🔒 Privacy-First Design
-- Process webcam data locally wherever possible.
-- Avoid storing or uploading raw video.
-- Support offline communication through local prediction and speech synthesis.
+### Explicit user control
 
-## How It Works
+Nothing runs until the user chooses a tile, and looking away always stops a run. Choices are large and readable, with Cancel and Something else always available.
 
-**1. Webcam Tracking**
+### Webcam-first accessibility
 
-The user's webcam captures facial landmarks and eye movements. A gaze-estimation model estimates where the user is looking on the screen.
+Oculus runs on an ordinary laptop webcam rather than a dedicated eye tracker. Accuracy, lighting and calibration remain real limitations, which is why the interface scans instead of asking for precise pointing.
 
-**2. Calibration**
+## Privacy
 
-The user looks at several points across the display to improve gaze accuracy.
+- Camera frames and gaze are processed on the computer. **No video leaves the machine** and none is stored.
+- After the user picks a target, a screenshot of the screen goes to Anthropic's Claude to suggest and run Intents. Screenshots are only taken after the user asks for something, never streamed.
+- Learning data (Gaze Correction, Intent History, the user's words and phrases) stays on the computer in `~/Library/Application Support/oculus-agent/`.
 
-**3. Gaze-Based Selection**
+Oculus is therefore not fully local. A local-only mode is planned (#90).
 
-The user looks at an on-screen key or phrase. Holding their gaze for a configurable duration triggers a selection.
+## Run locally
 
-**4. Predictive Text**
+### Requirements
 
-As the user enters text, the prediction engine suggests possible words and sentences.
+- **macOS** on a Mac with a webcam. Windows and Linux aren't supported.
+- **Node.js** and **npm**.
+- **Google Chrome**, for the demo flows.
+- **Claude access**, either:
+  - **Claude Code** installed and signed in (`claude` on your PATH). This is the default backend and uses your own Claude login.
+  - Or an API key from console.anthropic.com, with `OCULUS_AGENT_BACKEND=api`. Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`.
+- **Xcode Command Line Tools**, only for the optional Gaze Scan in Chrome.
 
-For example:
+### Permissions
 
-User selects: `I wou`
+Grant these to the terminal app that runs `npm run dev`, then quit and reopen the terminal. They're all under System Settings → Privacy & Security.
 
-Predictions:
-- I would like
-- I would prefer
-- I would like some water
+- **Camera**, for gaze.
+- **Screen & System Audio Recording**, for screenshots.
+- **Accessibility**, for clicks and key presses.
+- **Automation → System Events**, which macOS asks for the first time the agent types.
 
-The user can select an entire suggestion instead of entering every character.
-
-**5. Speech Generation**
-
-Once the user confirms the sentence, Oculus reads it aloud through text-to-speech.
-
-## Tech Stack
-
-| Component | Technology |
-|---|---|
-| Frontend | React, TypeScript |
-| Styling | Tailwind CSS |
-| Eye tracking | MediaPipe iris |
-| Facial landmarks | MediaPipe Face Landmarker |
-| Computer vision | TensorFlow.js / MediaPipe |
-| Predictive text | Local autocomplete / LLM API |
-| Text-to-speech | Web Speech API |
-| Platform | Web browser |
-
-*These are the proposed technologies for the initial implementation.*
-
-## System Architecture
-
-```text
-              Webcam
-                 |
-                 v
-        Eye Gaze Detection
-                 |
-                 v
-         Gaze Calibration
-                 |
-                 v
-       Screen Coordinate Mapping
-                 |
-                 v
-        Dwell-Time Selection
-                 |
-                 v
-      Eye-Controlled Keyboard
-                 |
-                 v
-        Predictive Text Engine
-                 |
-                 v
-        User Confirmation
-                 |
-                 v
-         Text-to-Speech
-                 |
-                 v
-           Spoken Audio
-```
-
-## Development Roadmap
-
-### Phase 1 — Eye Tracking
-- [ ] Set up browser-based webcam tracking.
-- [ ] Implement gaze calibration.
-- [ ] Display a real-time estimated Gaze Dot.
-- [ ] Implement smoothing and dwell-based selection.
-
-### Phase 2 — Communication Interface
-- [ ] Build an accessible on-screen keyboard.
-- [ ] Add letter and word selection.
-- [ ] Implement delete, space, and clear controls.
-- [ ] Add text-to-speech functionality.
-
-### Phase 3 — AI Prediction
-- [ ] Implement next-word prediction.
-- [ ] Generate suggested sentence completions.
-- [ ] Add gaze-based prediction selection.
-- [ ] Optimize predictions to minimize user effort.
-
-### Phase 4 — Accessibility & Optimization
-- [ ] Add adjustable dwell times.
-- [ ] Support personalized vocabulary and phrases.
-- [ ] Improve tracking under different lighting conditions.
-- [ ] Add offline functionality.
-- [ ] Evaluate accuracy, communication speed, and usability.
-
-## Development
+### Setup
 
 ```sh
 npm install
-npm run dev        # overlay with the dev-only mouse input
-npm run dev:gaze   # overlay with real gaze from the webcam
-OCULUS_AGENT_CHECK="<goal>" npm run dev  # one Claude computer-use run in Chrome, see docs/agent-check.md
+npm run dev:gaze   # the app with real gaze from the webcam
+npm run dev        # the app with a dev-only mouse stand-in for gaze
+npm run gaze-check # the standalone gaze accuracy test, opens in Chrome
 npm test
 npm run typecheck
 ```
 
-Hold the mouse on the centre box to perform the Start Gesture. Press Cmd+Option+Q to quit, because the overlay ignores clicks.
+Press Cmd+Option+Q to quit, because the overlay ignores clicks.
 
-After the chime, move off the Centre Box, then hold the mouse still on something for 1 second to pick it as the target. Something under the Centre Box needs that move off first, so staying on the box after waking picks nothing. The overlay hides for a moment while it takes a screenshot, then the picker opens in a column on the side of the screen away from the target, so the target stays in view. It starts with up to 2 Intents from Intent History, then the Fixed Intents Close, Home, Minimize and Type, and Claude's up to 3 Suggested Intents for that spot join after them while the highlight keeps going ("Finding more…" shows until they do). A suggested "Skip the ad" goes ahead of the Fixed Intents instead and takes the highlight. The picker scans like the Gaze Keyboard: press Cmd+Shift+Space (or do a Select Blink) on the one you want, on Something else for different suggestions, which tells Claude what you turned down, or on Close (shown as Cancel) to leave without running anything (back to idle, like a stop). Home shows the Desktop and Minimize minimizes the window in front, as key presses without asking Claude, then go back to idle. Type opens the Gaze Keyboard on whatever already has focus. See `docs/fixed-intents.md`. Choosing one runs it on whatever is on screen, and the overlay shows a banner while it runs and the result after. Look away for 5 seconds to stop a run (a "Stopping in 3…" countdown shows), or move the mouse off the display or press Cmd+Shift+L in a dev run to test Look Away. Recalibrating stops everything at once. See `docs/youtube-flow.md` and, for continuing an essay in Google Docs, `docs/essay-flow.md`. Suggestions use the same backend and settings as the agent check (`OCULUS_AGENT_BACKEND`, see `docs/agent-check.md`), and the terminal needs the Screen Recording permission. If anything fails, the overlay says there are no suggestions, only the Fixed Intents and Something else are shown, and the log says why.
+### Try it
 
-Press Cmd+Shift+K to open the Gaze Keyboard. This shortcut is dev-only until #13 opens the keyboard from a text box. Click a text box in another app first. The keyboard scans: the highlight steps through the keys, one every 2 seconds. Press Cmd+Shift+Space when it's on the key you want, first a letter group and then a letter. With the camera (`npm run dev:gaze`), a Select Blink does the same: close both eyes for half a second. Done types the text into that box with System Events, so the terminal running `npm run dev` needs the Accessibility permission (System Settings → Privacy & Security → Accessibility). If typing fails, the text is left on the clipboard.
+1. Run `npm run dev:gaze` and follow the calibration dots.
+2. Look at the Centre Box until the ring fills and the chime plays.
+3. Look at a YouTube video or a Google Doc for 1 second.
+4. When the tiles show, blink for half a second on the one you want.
+5. Look away from the screen for 5 seconds to stop.
 
-Once awake, look at the Dock, anywhere along the menu bar, or at a Desktop icon that no window covers, for 3 seconds to stick to it. Opening a menu from the menu bar scans its commands next. The highlight then steps through its icons, one every 2 seconds, and a Select Blink (or Cmd+Shift+Space) opens the highlighted one. The agent stays awake afterwards. If the app in front hides the Dock, looking down brings it up with macOS's Ctrl+F3 (Move focus to the Dock) shortcut, which must stay on in Keyboard Shortcuts.
+In a dev run, Cmd+Shift+Space stands in for a Select Blink and Cmd+Shift+L toggles Look Away. With `npm run dev`, holding the mouse still stands in for gaze.
 
-Timings live in `~/Library/Application Support/oculus-agent/config.json`. All are optional:
+### Configuration
+
+Timings and options live in `~/Library/Application Support/oculus-agent/config.json`. All are optional, and bad values fall back to the defaults.
 
 ```json
-{ "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000, "iconHoldMs": 3000, "finishedMs": 3000, "wordPrediction": true }
+{
+  "wakeHoldMs": 3000, "lookAwayMs": 5000, "scanStepMs": 2000, "targetHoldMs": 1000,
+  "iconHoldMs": 3000, "finishedMs": 3000, "wordPrediction": true,
+  "largeView": true, "uiScale": 1.25, "dockIconSize": 96,
+  "neuralLayer": true, "chromeScan": false, "historyPerSite": false
+}
 ```
 
-Large View is on by default. It makes the Dock icons big while Oculus runs (`dockIconSize`, 48 to 128, default 96), shows the highlighted icon's name in a large panel during an Icon Scan, and scales the overlay's own text, Gaze Dot and outlines (`uiScale`, 1 to 2, default 1.25). Set `"largeView": false` to turn it all off. Bad values fall back to the defaults. The Dock's original size is saved to `dock-size.json` next to `config.json` and put back on quit, or on the next start after a crash. Dock magnification is left alone.
+- `uiScale` ranges from 1 to 2.
+- `dockIconSize` ranges from 48 to 128. The Dock's original size is put back on quit.
+- `"intentRanker": "neural"` ranks past Intents with a small learned ranker instead of by count and recency.
 
-```json
-{ "largeView": true, "uiScale": 1.25, "dockIconSize": 96 }
+Agent settings (model, effort, step limit, backend) are environment variables, listed in [docs/agent-check.md](docs/agent-check.md).
+
+## Architecture
+
+```text
+Webcam ── MediaPipe iris (local) ──┐
+Dev mouse stand-in ────────────────┤
+                                   v
+                    Gaze events (docs/gaze-events.md)
+                                   |
+                                   v
+         Session core: wake, target, picker, keyboard, run, stop
+          |                        |                       |
+          v                        v                       v
+   Overlay (Electron)      Intent engine (Claude)   Agent loop (Claude computer use)
+   Centre Box, tiles,      screenshot + Gaze Region  screenshot → action → System Events
+   Gaze Keyboard, banner   → Suggested Intents       / Swift Accessibility helper
+                                   |
+                                   v
+                 Neural Layer and Intent History (local)
 ```
 
-Add `"chromeScan": true` for Gaze Scan in Google Chrome (#22): a 3 second look at named things in Chrome, such as a video title or the Skip Ad button, scans them, and a Select Blink asks for Suggested Intents about the one chosen. It builds a small Swift helper on first use, so it needs Xcode or its Command Line Tools. See `docs/chrome-scan.md`.
+The session core takes gaze events and timer ticks and returns overlay state and agent actions. Its tests run with no webcam, network or real clicks. The dev mouse input sends the same gaze events as the camera, so the team could build the flow before tracking worked.
 
-Add `"historyPerSite": true` to keep Intent History per site in Google Chrome, for example "Pause" on youtube.com but not on mail.google.com. A site with fewer than 2 past Intents is topped up from Chrome's own history. Incognito windows are never read, and Safari always uses the app alone, since it can't tell a script which windows are private. It needs macOS to let Oculus control Chrome: the dialog shows when Oculus starts if Chrome is open, otherwise the first time Oculus reads Chrome, so turn it on while someone can answer the dialog. Until it is allowed, history is kept for Chrome as a whole.
+**Stack:**
+- Electron and TypeScript, built with electron-vite.
+- MediaPipe Tasks Vision for gaze.
+- The Anthropic SDK and Claude Code for the agent.
+- AppleScript/JXA and a small Swift helper for macOS control.
+- Vitest for tests.
 
-Add `"intentRanker": "neural"` to rank the user's past Intents with a small ranker that learns from each confirmed Intent. Without it, or with any other value, they are ranked by count and recency.
+## Challenges and next steps
 
-The Gaze Keyboard suggests words and learns the user's own words and phrases from text confirmed with Done, see `docs/word-prediction.md`.
+### Challenges
 
-## Hackathon Demo
+- **Webcam gaze is coarse.** Median error is often over 100 px, mostly as a steady offset. We switched from dwell keys to scanning, and Gaze Correction learns the offset.
+- **Gaze overshoots screen edges.** A look at the Dock can land well below the display. Near the scanned icons, gaze just past the edge counts as on them, not as Look Away.
+- **The agent had to see the screen, not the overlay.** The overlay hides for each screenshot, and Claude's clicks had to land on the right Retina pixels.
 
-Our goal is to demonstrate hands-free communication using only a standard laptop webcam.
+### Next steps
 
-A user will:
+- **Safety limits enforced in code (#12).** Today, the rule against logins, passwords and payments is an instruction to Claude only. Next, the session core blocks them and asks for confirmation before anything is sent or deleted.
+- **Accessibility audit (#78).** We audited Oculus against WCAG 2.2 AA, Section 508 and EN 301 549 and filed 13 fixes (#79 to #91):
+  - switch and keyboard input
+  - keeping a draft when typing is interrupted
+  - an adjustable Select Blink length and a one-eye option
+  - errors shown on screen
+  - AA contrast
+  - screen reader roles
+  - a local-only mode
+- **Demo readiness (#15).** Launching at login and checking every flow with eyes alone on the demo laptop.
+- **User testing.** Measure whether Oculus reduces effort compared with ordinary gaze navigation, with the people it's for.
 
-1. Calibrate their eye tracking.
-2. Navigate the keyboard without moving their hands.
-3. Select a few letters or words using eye gaze.
-4. Choose an AI-predicted sentence.
-5. Have Oculus speak the message aloud.
+This is a hackathon prototype and accessibility concept, **not a clinically validated assistive technology** or a replacement for dedicated AAC devices. It doesn't speak typed text aloud: it's for computer access, not spoken communication. Accessibility standards inform the design, but conformance hasn't been reached or evaluated yet.
 
-We will also compare traditional gaze-based letter-by-letter typing against AI-assisted predictive typing to measure reductions in selections and communication time.
+## Built at natHacks 2026
 
-## Challenges
+Developed during the 64-hour natHacks 2026 competition at the University of Alberta. Work was split into GitHub issues and reviewed pull requests. Terms such as Gaze Region, Select Blink and Look Away are defined in [GLOSSARY.md](GLOSSARY.md).
 
-Webcam-based eye tracking is less precise than specialized eye-tracking hardware. Accuracy can vary depending on lighting, camera placement, glasses, and individual eye movement.
+## Credits and links
 
-To address these challenges, Oculus will focus on large selection targets, calibration, gaze smoothing, and predictive text that minimizes the number of required selections.
-
-Oculus is an experimental assistive communication project and is not currently a validated replacement for dedicated AAC devices.
-
-## Our Vision
-
-Communication should not depend on someone's ability to move their hands or speak.
-
-Our long-term goal is to make assistive communication more affordable, accessible, and intelligent through software that runs on devices people already own.
-
-**Your eyes. Your words. Your voice.**
-
----
-
-Built for natHacks 2026 — Healthcare & Accessibility.
+- **Team:** Edwin Shaiju David ([@esdavid1307](https://github.com/esdavid1307)), [@fawazm30](https://github.com/fawazm30), [@znafi](https://github.com/znafi), [@DimaLimanets](https://github.com/DimaLimanets), [@Mehrgarithm](https://github.com/Mehrgarithm)
+- **Demo:** [Add demo video link]
+- **Slides:** [Add slides link]
+- **Dependencies, models and data:**
+  - [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker) (Google), for iris and blink tracking
+  - [Claude](https://www.anthropic.com/claude) by Anthropic (`claude-sonnet-5-5` by default), through the Anthropic SDK and Claude Code
+  - [Electron](https://www.electronjs.org/), [electron-vite](https://electron-vite.org/), [Vite](https://vite.dev/), [Vitest](https://vitest.dev/) and TypeScript
+  - The spoken-English word frequency list, from Zeke Sikelianos' SUBTLEX word frequencies package (ISC, see `src/main/words/LICENSE-subtlex`)
+  - [WebGazer](https://webgazer.cs.brown.edu/), tested in the gaze check and later removed
+- **Inspiration:** Stephen Hawking's predictive communication system, and the eye-gaze AAC tools people with ALS use today.
