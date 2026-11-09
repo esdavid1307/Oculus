@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Rect } from './geometry';
-import { magnify, MIN_TARGET, planDock, readLargeView, readSavedDock } from './large-view';
+import { FIT_PADDING, HIGHLIGHT_BORDER, highlightMode, magnify, MIN_TARGET, planDock, readLargeView, readSavedDock } from './large-view';
 
 const screen = { width: 1600, height: 1000 };
 
@@ -103,58 +103,61 @@ describe('magnify', () => {
   });
 });
 
+describe('highlightMode', () => {
+  it('fits menu bar items, menu commands and Chrome elements, and grows Dock and Desktop icons', () => {
+    expect(['menubar', 'menu', 'chrome'].map(highlightMode)).toEqual(['fit', 'fit', 'fit']);
+    expect(['dock', 'desktop'].map(highlightMode)).toEqual(['grow', 'grow']);
+  });
+});
+
 describe('magnify with mode: "fit"', () => {
-  it('wraps a menu bar item with padding instead of growing it to the minimum size', () => {
-    const item = { x: 800, y: 0, width: 40, height: 22 };
-    const { frame } = magnify(item, screen, 1.25, 'fit');
-    // Each side is padded symmetrically; the top is clamped at the screen edge so the padding appears below.
-    expect(frame.width).toBe(40 + 12);
-    expect(frame.height).toBe(22 + 12);
-    expect(frame.y).toBe(0);
-    // Smaller than the minimum-size frame grown by MIN_TARGET.
-    expect(frame.width).toBeLessThan(MIN_TARGET);
+  // The part of the frame inside its border, which is all the user sees through.
+  const clearOfBorder = (frame: Rect, scale: number): Rect => {
+    const border = HIGHLIGHT_BORDER * scale;
+    return { x: frame.x + border, y: frame.y + border, width: frame.width - 2 * border, height: frame.height - 2 * border };
+  };
+  const contains = (outer: Rect, inner: Rect) =>
+    outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.width >= inner.x + inner.width && outer.y + outer.height >= inner.y + inner.height;
+
+  it('wraps a menu bar item closely instead of growing it to the minimum size', () => {
+    const item = icons['menu bar item'];
+    for (const scale of [1, 1.25, 2]) {
+      const { frame } = magnify(item, screen, scale, 'fit');
+      const pad = (FIT_PADDING + HIGHLIGHT_BORDER) * scale;
+      expect(frame).toEqual({ x: item.x - pad, y: item.y - pad, width: item.width + 2 * pad, height: item.height + 2 * pad });
+      expect(frame.height).toBeLessThan(MIN_TARGET * scale);
+    }
   });
 
-  it('centres the fitted frame on an item away from the edges', () => {
-    const item = { x: 780, y: 480, width: 40, height: 40 };
-    const { frame } = magnify(item, screen, 1.25, 'fit');
-    expect(frame.width).toBe(40 + 12);
-    expect(frame.height).toBe(40 + 12);
-    expect(frame.x + frame.width / 2).toBe(800);
-    expect(frame.y + frame.height / 2).toBe(500);
+  it('leaves every item clear of the border, with the padding to spare, at every scale', () => {
+    for (const scale of [1, 1.25, 2])
+      for (const [name, icon] of Object.entries(icons)) {
+        const { frame } = magnify(icon, screen, scale, 'fit');
+        const padding = FIT_PADDING * scale;
+        const clear = clearOfBorder(frame, scale);
+        expect(contains(clear, { x: icon.x - padding, y: icon.y - padding, width: icon.width + 2 * padding, height: icon.height + 2 * padding }), `${name} at ${scale}`).toBe(true);
+      }
   });
 
-  it('covers the whole item at every tested scale and never pulls the item off-screen', () => {
+  it('lets the border of an item on the screen edge fall off the screen rather than onto the item', () => {
+    const { frame } = magnify(icons['top left corner'], screen, 1.25, 'fit');
+    expect(frame.x).toBeLessThan(0);
+    expect(frame.y).toBeLessThan(0);
+  });
+
+  it('never covers the item or its frame with the panel', () => {
     for (const scale of [1, 1.25, 2])
       for (const [name, icon] of Object.entries(icons)) {
         const { frame, panel } = magnify(icon, screen, scale, 'fit');
-        // Item is inside the frame.
-        expect(frame.x, name).toBeLessThanOrEqual(icon.x);
-        expect(frame.y, name).toBeLessThanOrEqual(icon.y);
-        expect(frame.x + frame.width, name).toBeGreaterThanOrEqual(icon.x + icon.width);
-        expect(frame.y + frame.height, name).toBeGreaterThanOrEqual(icon.y + icon.height);
-        // Frame and panel both inside the screen.
-        expect(inside(frame), name).toBe(true);
         expect(inside(panel), name).toBe(true);
-        // Panel never covers the item or the frame.
-        expect(overlaps(panel, icon), name).toBe(false);
         expect(overlaps(panel, frame), name).toBe(false);
       }
   });
 
-  it('does not enforce the minimum-size floor that grow mode does', () => {
-    const tiny = { x: 100, y: 22, width: 22, height: 22 };
-    const grown = magnify(tiny, screen, 1.25, 'grow').frame;
-    const fitted = magnify(tiny, screen, 1.25, 'fit').frame;
-    // Grow pushes both dimensions up to MIN_TARGET * uiScale. Fit stays close to the item.
-    expect(grown.width).toBeGreaterThanOrEqual(MIN_TARGET);
-    expect(fitted.width).toBeLessThan(MIN_TARGET);
-    expect(fitted.height).toBeLessThan(MIN_TARGET);
-  });
-
-  it('defaults to "grow" mode when none is passed, so Dock and Desktop callers keep the minimum-size frame', () => {
-    const item = { x: 800, y: 0, width: 40, height: 22 };
+  it('defaults to "grow", so Dock and Desktop callers keep the minimum-size frame', () => {
+    const item = icons['menu bar item'];
     expect(magnify(item, screen, 1.25)).toEqual(magnify(item, screen, 1.25, 'grow'));
+    expect(magnify(item, screen, 1.25).frame.height).toBeGreaterThanOrEqual(MIN_TARGET * 1.25);
   });
 });
 

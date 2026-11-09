@@ -56,8 +56,12 @@ _Avoid_: Start Box, Wake target, corner target
 Both eyes closed for half a second, which presses the highlighted key or opens the highlighted icon. Natural blinks are too short to count.
 _Avoid_: Click, wink
 
+**Gaze Scan**:
+How the user chooses one of several options without pointing at it. The highlight steps through the options in an order that stays fixed for the whole scan, one every 2 seconds by default (`scanStepMs`, or the learned Scan Pace), back to the first after the last, and a Select Blink chooses the highlighted one. Gaze only decides which set gets scanned, by holding on a target, near the Dock, the menu bar or a Desktop icon, or for 3 seconds on named elements in Chrome when `"chromeScan": true` is set, and never which option in it is chosen, so an inaccurate Gaze Region can't pick the wrong one. The Gaze Keyboard, the Suggested Intents, Icon Scan and the Chrome elements all scan this way. A Chrome element is never opened: choosing one asks for Suggested Intents about it. Each press on the Gaze Keyboard starts again from its first key. Icons are put in Icon Order and Chrome elements nearest the gaze first, fixed when their scan starts, and Suggested Intents that arrive later join the end without moving the highlight. The Stop Gesture ends a scan without choosing anything, and so does Close among the Suggested Intents.
+_Avoid_: Gaze Snap, snapping, auto-scan, cycling
+
 **Icon Scan**:
-Looking near the macOS Dock, anywhere along the menu bar, or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. A menu bar item that opens a menu starts a second scan over its commands. The agent stays awake afterwards.
+Looking near the macOS Dock, anywhere along the menu bar (with Chrome in front, only with the gaze centre on it or past the top edge, so the tabs and address bar just under it keep their 1 second hold), or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. A menu bar item that opens a menu starts a second scan over its commands. The agent stays awake afterwards.
 _Avoid_: Dock Scan, Dock snap, dock mode
 
 **Icon Order**:
@@ -81,7 +85,7 @@ Gaze off the screen for 5 seconds, which stops the agent. Losing the user's face
 _Avoid_: Cancel, abort
 
 **Look Away**:
-Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture. Only ever means off the screen. During an Icon Scan, gaze just past the edge next to the scanned icons counts as on them, not as Look Away.
+Gaze staying off the screen. Held for 5 seconds, it's the Stop Gesture. Only ever means off the screen. During an Icon Scan, gaze just past the edge next to the scanned icons counts as on them, not as Look Away. Not during a scan of Chrome elements, which never sit on the edge.
 _Avoid_: Look away (for leaving a key)
 
 **Move Off**:

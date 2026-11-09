@@ -13,6 +13,7 @@ import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { createMainNeuralLayer } from './neural';
+import { createChromeScan } from './chrome-scan';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -136,14 +137,23 @@ function releaseDock() {
   });
 }
 
+// The app in front is reached by its pid: with a second "Google Chrome" (another profile), a lookup by name reaches
+// whichever launched first. Paths keep the name, so Icon Order still knows the item next launch.
+const PROCESS_OF = `const processOf = (name) => {
+  const events = Application('System Events');
+  const front = events.processes.whose({ frontmost: true })[0];
+  return front.name() === name ? events.processes.whose({ unixId: front.unixId() })[0] : events.processes.byName(name);
+};`;
+
 // Menu bar items are found again by their place in the Accessibility tree, [process, menu bar, item], since status
 // items have no name. Commands in an open menu add their place in the menu.
 // shortcut: reads the app in front and Control Center only, so other apps' status items are left out.
-const READ_MENU_BAR = `const events = Application('System Events');
+const READ_MENU_BAR = `${PROCESS_OF}
+const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
   // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
-  const bars = events.processes.byName(process).menuBars;
+  const bars = processOf(process).menuBars;
   if (bars.length === 0) return [];
   const items = bars[0].menuBarItems;
   const sizes = items.size();
@@ -155,9 +165,10 @@ JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
 // Prints the commands of the menu the item opened, leaving out separators and disabled commands. A status item that
 // opens a panel instead prints none.
 // shortcut: a command with a submenu is pressed like any other, scan submenus too if users need them.
-const OPEN_MENU_BAR_ITEM = `function run([path]) {
+const OPEN_MENU_BAR_ITEM = `${PROCESS_OF}
+function run([path]) {
   const [process, bar, item] = JSON.parse(path);
-  const menuBarItem = Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item];
+  const menuBarItem = processOf(process).menuBars[bar].menuBarItems[item];
   menuBarItem.actions.byName('AXPress').perform();
   delay(0.5);
   if (menuBarItem.menus.length === 0) return '[]';
@@ -169,14 +180,16 @@ const OPEN_MENU_BAR_ITEM = `function run([path]) {
     names[i] && enabled[i] ? [{ path: [process, bar, item, i], label: names[i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
 }`;
 
-const PRESS_MENU_COMMAND = `function run([path]) {
+const PRESS_MENU_COMMAND = `${PROCESS_OF}
+function run([path]) {
   const [process, bar, item, command] = JSON.parse(path);
-  Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].menuItems[command].actions.byName('AXPress').perform();
+  processOf(process).menuBars[bar].menuBarItems[item].menus[0].menuItems[command].actions.byName('AXPress').perform();
 }`;
 
-const CLOSE_MENU = `function run([path]) {
+const CLOSE_MENU = `${PROCESS_OF}
+function run([path]) {
   const [process, bar, item] = JSON.parse(path);
-  Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
+  processOf(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
 }`;
 
 type PlacedPath = { path: unknown[]; label: string; x: number; y: number; width: number; height: number };
@@ -219,7 +232,8 @@ const READ_TEXT_BOXES = `function run() {
     const events = Application('System Events');
     const procs = events.processes.whose({ frontmost: true });
     if (procs.length === 0) return '[]';
-    const windows = procs[0].windows;
+    // By pid, not name, so a second Chrome can't stand in for the one in front.
+    const windows = events.processes.whose({ unixId: procs[0].unixId() })[0].windows;
     if (windows.length === 0) return '[]';
     const roles = { AXTextField: 1, AXTextArea: 1, AXSearchField: 1, AXComboBox: 1 };
     const results = [];
@@ -358,7 +372,10 @@ function createHistory(ranker: unknown) {
 const READ_FRONT = `function run(argv) {
   const name = Application("System Events").processes.whose({frontmost: true})[0].name();
   let url = "";
-  if (argv[0] === "per-site" && name === "Google Chrome") {
+  // Chrome's scripting can't pick between two Chrome processes, so with two the site (and the Incognito check) could
+  // come from the wrong one, and the app alone is used.
+  const chromes = Application("System Events").processes.whose({name: "Google Chrome"}).length;
+  if (argv[0] === "per-site" && name === "Google Chrome" && chromes === 1) {
     try {
       const front = Application("Google Chrome").windows[0];
       if (front.mode() !== "incognito") url = front.activeTab.url();
@@ -497,6 +514,12 @@ function createOverlay() {
     enabled: (settings as { neuralLayer?: unknown } | undefined)?.neuralLayer !== false,
     scanStepSet,
   });
+  // Gaze Scan in Chrome (#22). Off unless config.json says "chromeScan": true, since it needs the Swift helper built and
+  // makes Chrome build its Accessibility tree. See docs/chrome-scan.md.
+  const chromeScan =
+    (settings as { chromeScan?: unknown } | undefined)?.chromeScan === true
+      ? createChromeScan({ source: join(app.getAppPath(), 'scripts', 'oculus-ax.swift'), binary: join(app.getPath('userData'), 'oculus-ax'), display: bounds })
+      : null;
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
@@ -529,7 +552,7 @@ function createOverlay() {
       const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
       pendingIntents?.abort();
       const controller = (pendingIntents = new AbortController());
-      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal)
+      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal, action.element)
         .then((intents) => {
           // Looks first, so the tiles have their label and icon the moment the session adds them.
           overlay.webContents.send('intent-looks', Object.fromEntries(intents.map(({ text, look }) => [text, look])));
@@ -540,7 +563,7 @@ function createOverlay() {
           rmSync(saveDir, { recursive: true, force: true });
         });
     } else if (action.type === 'run-intent') {
-      const { intent, region, request, sinceWakeMs, held } = action;
+      const { intent, region, request, sinceWakeMs, held, element } = action;
       // Snapshotted right now, while the hold's gaze samples are still in the raw buffer. A run that takes longer
       // than RAW_GAZE_MS would otherwise lose the samples before runSucceeded tries to look them up.
       neural.snapshotHold(held.from, held.to);
@@ -556,7 +579,7 @@ function createOverlay() {
       running = true;
       currentRun = { request, controller };
       const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
+      void runIntentInElectron(overlay, { intent, region, request, element }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
         if (outcome.ok) neural.runSucceeded(intent, region, held, outcome.firstClick, bounds);
@@ -587,6 +610,7 @@ function createOverlay() {
       );
     }
     // The Dock moves when it shows, so it is read again for the scan.
+    else if (action.type === 'snapshot-gaze') neural.snapshotHold(action.held.from, action.held.to);
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
     else if (action.type === 'release-dock') releaseDock();
     else if (action.type === 'learn') neural.learn(action.signal);
@@ -598,7 +622,8 @@ function createOverlay() {
     else if (action.source === 'menu') {
       openMenu = null;
       runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
-    } else openIcon(action.source, action.name);
+    } else if (action.source === 'dock' || action.source === 'desktop') openIcon(action.source, action.name);
+    // A Chrome element is never opened: the session asks for Suggested Intents about it instead.
   };
   const session = createSession({
     screen: bounds,
@@ -609,7 +634,11 @@ function createOverlay() {
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
-    textBoxes: () => textBoxes,
+    // In Chrome the helper sees the web text boxes the System Events read can't (#13).
+    textBoxes: () => [...textBoxes, ...(chromeScan?.textBoxes() ?? [])],
+    chrome: () => chromeScan?.elements() ?? [],
+    // The front app's menus come first in the menu bar read, named by their path [process, bar, item].
+    chromeInFront: () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true,
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
   });
@@ -625,6 +654,10 @@ function createOverlay() {
     // The Stop Gesture, the Gaze Keyboard or a run ended the wait, so the answer would be dropped anyway.
     // The picker can be up already, with past Intents, while Claude is still answering.
     if (state.phase !== 'thinking' && state.phase !== 'choosing') pendingIntents?.abort();
+    // Chrome elements are looked up only while a target can be picked, around the gaze the session just saw.
+    if (state.phase === 'waiting-for-target') {
+      if (input.type === 'gaze') chromeScan?.look(input.region);
+    } else chromeScan?.clear();
     overlay.webContents.send('overlay-state', state);
   };
 
@@ -665,7 +698,10 @@ function createOverlay() {
       });
     }
   }
-  overlay.on('closed', () => timers.forEach(clearInterval));
+  overlay.on('closed', () => {
+    timers.forEach(clearInterval);
+    chromeScan?.stop();
+  });
   // Pending debounced saves must reach disk before the process ends, or the tail of a typing burst or an icon scan
   // is lost.
   app.on('will-quit', () => neural.flush());

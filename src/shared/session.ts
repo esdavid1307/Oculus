@@ -21,7 +21,8 @@ export type OverlayState = (
   stopInMs?: number;
 };
 
-// Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
+// Something on screen a scan steps through: a Dock or Desktop icon, a menu bar item or a command in an open menu, which
+// a Select Blink opens, or a Chrome element near the gaze, which a Select Blink makes the target of Suggested Intents.
 // The name is what the outside world needs to find it again, in overlay coordinates. The label is what a person reads:
 // the name itself can be a lookup key, as for menu bar items.
 export type Icon = { name: string; rect: Rect; label?: string };
@@ -30,8 +31,11 @@ export type Icon = { name: string; rect: Rect; label?: string };
 // used to focus the box again before typing lands.
 export type TextBox = { name: string; rect: Rect };
 
-// 'menu' is the menu a menu bar item just opened.
-export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu';
+// 'menu' is the menu a menu bar item just opened. 'chrome' is the Chrome elements near the gaze (Gaze Scan in Chrome).
+export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu' | 'chrome';
+
+// The Chrome element a Gaze Scan chose, which goes to the model next to the Gaze Region. rect is in overlay coordinates.
+export type ElementHint = { name: string; rect: Rect };
 
 // A select comes from a Select Blink, which real tracking detects outside the GazeEvent format.
 // menu-opened reports the commands of the menu a menu bar item opened.
@@ -60,16 +64,19 @@ export type AgentAction =
   // evicted the samples.
   | { type: 'focus-text-box'; name: string; rect: Rect; held: { from: number; to: number } }
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
-  | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[] }
+  // element is the Chrome element the Suggested Intents are for, when a Gaze Scan in Chrome chose it.
+  | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[]; element?: ElementHint }
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
   // sinceWakeMs is the time from the Start Gesture waking the agent (or the last icon opened) to the Select Blink that
   // chose this Intent, for Time to Action.
   // held is when the user held their gaze on that target, so a run that went well can teach Gaze Correction.
-  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number; held: { from: number; to: number } }
+  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number; held: { from: number; to: number }; element?: ElementHint }
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
+  // A hold whose uncorrected gaze must be kept now, since it may only teach Gaze Correction long after.
+  | { type: 'snapshot-gaze'; held: { from: number; to: number } }
   | { type: 'release-dock' }
   | { type: 'close-menu' }
   // A confirmed choice for the Neural Layer to learn from. See src/shared/neural/layer.ts.
@@ -82,6 +89,9 @@ export type Suggest = (text: string) => string[];
 export type SuggestPhrases = (text: string) => string[];
 
 const MAX_INTENTS = 3;
+
+// The sources an icon hold can stick to.
+type HeldSource = 'dock' | 'desktop' | 'menubar' | 'chrome';
 const MAX_PAST_INTENTS = 2;
 
 // Shaky gaze leaves a target for a moment, or lands closer to another one, without the user meaning to.
@@ -141,10 +151,13 @@ function nearIcon(region: GazeRegion | null, icons: Icon[], screen: Screen) {
   return region !== null && iconDistance(region, icons, screen) <= region.radius;
 }
 
-// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them.
-function menuBarDistance(region: GazeRegion | null, items: Icon[], screen: Screen) {
-  if (items.length === 0) return Infinity;
+// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them. With centreOnly,
+// only the gaze centre on it or past the top counts, not a whole radius below: in Chrome the tabs, the address bar and a
+// page's search box sit within one radius of it and need their own 1 second hold.
+function menuBarDistance(region: GazeRegion | null, items: Icon[], screen: Screen, centreOnly = false) {
+  if (region === null || items.length === 0) return Infinity;
   const height = Math.max(...items.map(({ rect }) => rect.y + rect.height));
+  if (centreOnly && region.y > height) return Infinity;
   return iconDistance(region, [{ name: '', rect: { x: 0, y: 0, width: screen.width, height } }], screen);
 }
 
@@ -162,6 +175,8 @@ export function createSession({
   desktop = () => [],
   menubar = () => [],
   textBoxes = () => [],
+  chrome = () => [],
+  chromeInFront = () => false,
   orderIcons = (_source, names) => names.map((_, i) => i),
   scanPace,
 }: {
@@ -177,6 +192,11 @@ export function createSession({
   menubar?: () => Icon[];
   // Text fields the Gaze Keyboard can type into, read from the app in front.
   textBoxes?: () => TextBox[];
+  // The named Chrome elements near the latest gaze, read by an Accessibility lookup. Empty when Chrome isn't in front or
+  // "chromeScan" is off, which leaves the 1 second target hold as it was.
+  chrome?: () => Icon[];
+  // Whether Chrome is the app in front, whose tabs and address bar sit just under the menu bar.
+  chromeInFront?: () => boolean;
   // The Neural Layer's Icon Order: icon names in screen order in, the indices to scan them in out. Indices, not names,
   // so two icons sharing a name can still be reordered without collapsing to one.
   orderIcons?: (source: IconSource, names: string[]) => number[];
@@ -184,10 +204,10 @@ export function createSession({
   scanPace?: () => number;
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
-  const iconsOf = { dock, desktop, menubar };
-  const distance = (region: GazeRegion | null, from: 'dock' | 'desktop' | 'menubar') =>
-    from === 'menubar' ? menuBarDistance(region, menubar(), screen) : iconDistance(region, iconsOf[from](), screen);
-  const near = (region: GazeRegion | null, from: 'dock' | 'desktop' | 'menubar') =>
+  const iconsOf = { dock, desktop, menubar, chrome };
+  const distance = (region: GazeRegion | null, from: HeldSource) =>
+    from === 'menubar' ? menuBarDistance(region, menubar(), screen, chromeInFront()) : iconDistance(region, iconsOf[from](), screen);
+  const near = (region: GazeRegion | null, from: HeldSource) =>
     region !== null && distance(region, from) <= region.radius;
   let phase: OverlayState['phase'] = 'idle';
   let holdStart: number | null = null;
@@ -207,8 +227,10 @@ export function createSession({
   let stepMs = scanStepMs;
   // A text box the user looked at, which teaches Gaze Correction once Done confirms what was typed into it.
   let textBoxGaze: { from: number; to: number; target: { x: number; y: number } } | null = null;
-  // When the gaze settled on the target the Suggested Intents are for.
+  // When the gaze settled on the target the Suggested Intents are for, or on the icons or Chrome elements of the latest scan.
   let held = { from: 0, to: 0 };
+  // The Gaze Region radius of the hold that started the latest scan of icons or Chrome elements.
+  let heldRadius = 0;
   // Every icon of the current Icon Scan, in screen order. scannedInOrder keeps the Icon objects themselves so the
   // chosen index can be found by identity, even when two icons share a name.
   let scanned: string[] = [];
@@ -223,6 +245,7 @@ export function createSession({
   let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
+  let askedElement: ElementHint | undefined;
   let turnedDown: string[] = [];
   // Numbers each request, so a late answer to an earlier one is dropped.
   let request = 0;
@@ -231,7 +254,7 @@ export function createSession({
   let wokeAt = 0;
   let activity = '';
   // seen is when the gaze was last near the held icon target.
-  let iconHold: { source: 'dock' | 'desktop' | 'menubar'; start: number; seen: number } | null = null;
+  let iconHold: { source: HeldSource; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
   let dockShown = false;
   // Copied when the icon scan starts, so the icons can't shift under the highlight.
@@ -266,12 +289,14 @@ export function createSession({
     if (all.length === 0) return;
     phase = 'icons';
     source = from;
-    const inScreenOrder = [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
+    // Chrome elements come nearest the gaze first, so the scan starts on what the user looked at.
+    const inScreenOrder = from === 'chrome' ? all : [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
     scanned = inScreenOrder.map(({ name }) => name);
     scannedInOrder = inScreenOrder;
     // The icons this user opens most come first. Ordering by index, not by name, so two icons sharing a name still get
     // ranked; the ranker ties on their shared score and the input-order tie-break keeps them adjacent.
-    const orderedIndices = orderIcons(from, scanned);
+    // Chrome elements change with every page, so there is no order to learn for them.
+    const orderedIndices = from === 'chrome' ? [] : orderIcons(from, scanned);
     icons = orderedIndices.length === inScreenOrder.length ? orderedIndices.map((i) => inScreenOrder[i]) : inScreenOrder;
     restartScan(t);
     scan(t);
@@ -281,8 +306,12 @@ export function createSession({
   // of its icons. Where two are near, as with a Desktop icon just under the menu bar, the closer one wins.
   // Returns whether an icon hold is going, which then takes the place of a target hold.
   function holdIcons(region: GazeRegion | null, t: number) {
-    const nearest = (['dock', 'menubar', 'desktop'] as const)
-      .filter((from) => near(region, from))
+    // A text box keeps its 1 second hold to the Gaze Keyboard, even among Chrome elements.
+    const onTextBox = region !== null && textBoxAt(region) !== undefined;
+    // The hold grace lets it finish on a sample with no gaze, so the radius is the last one seen.
+    if (region !== null) heldRadius = region.radius;
+    const nearest = (['dock', 'menubar', 'desktop', 'chrome'] as const)
+      .filter((from) => !(from === 'chrome' && onTextBox) && near(region, from))
       .sort((a, b) => distance(region, a) - distance(region, b))[0];
     // Other apps can hide the Dock just past the bottom edge, so looking down starts a hold on it. Asks for it to
     // show, as the mouse would. Whether it's hidden right now is checked on the spot, outside the session.
@@ -294,7 +323,12 @@ export function createSession({
       }
       iconHold = nearest === undefined ? null : { source: nearest, start: t, seen: t };
     }
-    if (iconHold !== null && t - iconHold.start >= iconHoldMs) scanIcons(iconHold.source, iconsOf[iconHold.source](), t);
+    if (iconHold !== null && t - iconHold.start >= iconHoldMs) {
+      held = { from: iconHold.start, to: t };
+      scanIcons(iconHold.source, iconsOf[iconHold.source](), t);
+      // A Chrome scan can loop past the 30 s of raw gaze kept, so a run that goes well later still has this hold.
+      if (phase === 'icons' && source === 'chrome') act({ type: 'snapshot-gaze', held });
+    }
     return iconHold !== null;
   }
 
@@ -345,21 +379,22 @@ export function createSession({
   // The picker goes on the half of the screen the target isn't on.
   const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
 
-  function suggestIntents(region: GazeRegion, passedOver: string[]) {
+  function suggestIntents(region: GazeRegion, passedOver: string[], element?: ElementHint) {
     asked = region;
+    askedElement = element;
     turnedDown = passedOver;
-    act({ type: 'suggest-intents', region, request: ++request, turnedDown });
+    act({ type: 'suggest-intents', region, request: ++request, turnedDown, ...(element && { element }) });
     phase = 'thinking';
   }
 
   function choose(key: KeyId, t: number) {
-    if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
+    if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents], askedElement);
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
     intent = intents[Number(key.replace('intent-', ''))];
     activity = '';
     phase = 'running';
-    act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt, held });
+    act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt, held, ...(askedElement && { element: askedElement }) });
   }
 
   // The text box the Gaze Region touches, nearest first, so staring between two picks the one closer in.
@@ -488,6 +523,7 @@ export function createSession({
         // Look Away. Elsewhere, past the edge is still off the screen, so the Stop Gesture works over the Dock too.
         const onEdgeIcon =
           phase === 'icons' &&
+          source !== 'chrome' &&
           (source === 'menubar' ? nearMenuBar(input.region, icons, screen) : nearIcon(input.region, icons, screen));
         const away = offScreen(input.region, screen) && !onEdgeIcon;
         awaySince = away ? (awaySince ?? input.t) : null;
@@ -504,17 +540,25 @@ export function createSession({
         scan(input.t);
         if (input.type === 'select') {
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes: false });
-          // Identity, not name, so a Dock with two icons sharing a name teaches on the exact one picked.
-          const chosenIndex = scannedInOrder.indexOf(iconHighlight!);
-          if (chosenIndex >= 0) learn({ kind: 'icon-opened', source, scanned, chosenIndex });
-          act({ type: 'open-icon', source, name: iconHighlight!.name });
-          // The opened app takes the focus, which drops the Dock. Opening also gives back any focus the Dock kept.
-          dockShown = false;
-          // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
-          // opens a menu reports its commands with menu-opened, which scans them next.
-          phase = 'waiting-for-target';
-          // Staying awake stands in for a new Start Gesture, so Time to Action counts from here, not the first wake.
-          wokeAt = input.t;
+          if (source === 'chrome') {
+            // A Chrome element isn't opened: it becomes the target of the Suggested Intents, with its name and bounds as
+            // the hint. Nothing is confirmed yet, so it teaches Gaze Correction only through a run that goes well (held).
+            const { rect, label, name } = iconHighlight!;
+            const centre = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+            suggestIntents({ ...centre, radius: heldRadius }, [], { name: label ?? name, rect });
+          } else {
+            // Identity, not name, so a Dock with two icons sharing a name teaches on the exact one picked.
+            const chosenIndex = scannedInOrder.indexOf(iconHighlight!);
+            if (chosenIndex >= 0) learn({ kind: 'icon-opened', source, scanned, chosenIndex });
+            act({ type: 'open-icon', source, name: iconHighlight!.name });
+            // The opened app takes the focus, which drops the Dock. Opening also gives back any focus the Dock kept.
+            dockShown = false;
+            // Stays awake, so the user can pick the next icon without the Start Gesture again. A menu bar item that
+            // opens a menu reports its commands with menu-opened, which scans them next.
+            phase = 'waiting-for-target';
+            // Staying awake stands in for a new Start Gesture, so Time to Action counts from here, not the first wake.
+            wokeAt = input.t;
+          }
         }
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);

@@ -31,7 +31,7 @@ import {
 import type { Rect } from '../shared/geometry';
 import { fallbackLook, type IntentIcon, type IntentLook } from '../shared/intent-look';
 import { CLOSE_KEY, layoutIntents, layoutKeyboard, PHRASE_KEY, type Key, type KeyId } from '../shared/keyboard';
-import { magnify, type LargeView } from '../shared/large-view';
+import { fitFrame, highlightMode, magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
@@ -314,6 +314,11 @@ function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
   if (state.phase === 'typing') return 'top';
   // The Suggested Intents are a column on one side and the target is on the other half, so the middle is clear.
   if (state.phase === 'choosing') return 'middle';
+  if (state.phase === 'icons' && state.source === 'chrome') {
+    // Chrome elements can be anywhere, so the countdown goes on the half of the screen the highlight isn't on.
+    const { y, height } = state.highlight.rect;
+    return y + height / 2 < innerHeight / 2 ? 'bottom' : 'top';
+  }
   if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
   return 'bottom';
 }
@@ -392,12 +397,15 @@ window.overlay.onLargeView((settings) => {
 });
 
 // textContent only: icon names come from other apps.
-function showIcon({ highlight, source, stepMs }: Extract<OverlayState, { phase: 'icons' }>) {
+function showIcon({ highlight, stepMs, source }: Extract<OverlayState, { phase: 'icons' }>) {
   iconMagnifier.hidden = largeView === undefined;
-  if (largeView === undefined) return place(iconHighlight, highlight.rect);
-  // Menu bar items, menu commands and Chrome elements fit the highlighted bounds; Dock and Desktop icons are grown
-  // to the minimum size so a tiny icon is still easy to see.
-  const mode = source === 'menubar' || source === 'menu' ? 'fit' : 'grow';
+  // A Chrome element is chosen, never opened, so its label says so.
+  iconMagnifier.dataset.source = source;
+  // Menu bar items, menu commands and Chrome elements are fitted, with room for the border, so it never covers them:
+  // a Chrome element can be a 16 point line of text. Dock and Desktop icons are grown so a small one is easy to see.
+  const mode = highlightMode(source);
+  iconHighlight.toggleAttribute('data-fit', mode === 'fit');
+  if (largeView === undefined) return place(iconHighlight, mode === 'fit' ? fitFrame(highlight.rect, 1) : highlight.rect);
   const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale, mode);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);

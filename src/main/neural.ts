@@ -151,7 +151,8 @@ export function createMainNeuralLayer({ file, screen, scanStepMs, enabled, scanS
     // stores the result for the matching learn call later. Called at hold-time (focus-text-box, run-intent) so a long
     // gap between hold and confirmation can't evict the samples.
     snapshotHold(from: number, to: number) {
-      if (!enabled) return;
+      // The first snapshot of a hold is kept: a later one may find part of its samples already evicted.
+      if (!enabled || snapshots.has(snapshotKey(from, to))) return;
       const at = rawGaze(from, to);
       if (!at) return;
       snapshots.set(snapshotKey(from, to), at);

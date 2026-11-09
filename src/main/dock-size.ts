@@ -19,9 +19,10 @@ function currentSize(): number | null {
 }
 
 // System Events resizes the running Dock in place, so it never disappears the way a killall Dock restart does.
-// Its dock size runs 0 to 1 over tilesize 16 to 128.
+// Its dock size runs 0 to 1 over tilesize 16 to 128. The Dock truncates it through a float32, so a quarter tile up
+// keeps 59 at 59 instead of drifting a size smaller every run.
 function resizeDock(tilesize: number) {
-  const size = (tilesize - 16) / 112;
+  const size = (tilesize - 16 + 0.25) / 112;
   execFileSync('osascript', ['-e', `tell application "System Events" to set dock size of dock preferences to ${size}`], { stdio: 'pipe' });
 }
 
