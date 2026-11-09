@@ -90,8 +90,8 @@ export type AgentAction =
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   // A Fixed Intent was chosen. It never goes through Claude, so it teaches neither Gaze Correction nor Intent History.
-  // Close asks nothing of the outside world.
-  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close'> }
+  // Close asks nothing of the outside world, and Cmd only opens the Chrome Commands.
+  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'cmd'> }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
   // A hold whose uncorrected gaze must be kept now, since it may only teach Gaze Correction long after.
@@ -110,6 +110,8 @@ export type SuggestPhrases = (text: string) => string[];
 const MAX_INTENTS = 3;
 // In every picker, in this order, so the user learns where each one is in the scan.
 const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize'];
+// What Cmd opens, in scan order, with Close to leave.
+const CHROME_COMMANDS: FixedIntent[] = ['next-tab', 'close-tab', CLOSE_KEY];
 
 // The sources an icon hold can stick to.
 type HeldSource = 'dock' | 'desktop' | 'menubar' | 'chrome';
@@ -200,6 +202,7 @@ export function createSession({
   chromeInFront = () => false,
   orderIcons = (_source, names) => names.map((_, i) => i),
   scanPace,
+  inChrome = () => false,
 }: {
   screen: Screen;
   timings?: unknown;
@@ -223,6 +226,8 @@ export function createSession({
   orderIcons?: (source: IconSource, names: string[]) => number[];
   // The Neural Layer's Scan Pace: the step to use from the next restart of a scan. scanStepMs when left out.
   scanPace?: () => number;
+  // Whether Google Chrome is in front, read when a picker opens, which then offers Cmd for the Chrome Commands.
+  inChrome?: () => boolean;
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar, chrome };
@@ -267,6 +272,9 @@ export function createSession({
   let recent = 0;
   // How many of the intents come before the Fixed Intents: the past ones, and a suggested "Skip the ad".
   let fixedAt = 0;
+  let fixed: FixedIntent[] = [];
+  // In the Chrome Commands scan, which holds only them, so Claude's late answer stays out of it.
+  let inChromeCommands = false;
   let suggesting = false;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
@@ -403,7 +411,7 @@ export function createSession({
 
   // The picker goes on the half of the screen the target isn't on.
   const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
-  const picker = (): Picker => ({ intents, fixed: FIXED_INTENTS, fixedAt, cells, side: side() });
+  const picker = (): Picker => ({ intents, fixed, fixedAt, cells, side: side() });
 
   function suggestIntents(region: GazeRegion, passedOver: string[], element?: ElementHint) {
     asked = region;
@@ -420,7 +428,22 @@ export function createSession({
     phase = 'choosing';
     intents = past.slice(0, MAX_PAST_INTENTS);
     recent = fixedAt = intents.length;
-    cells = recent + FIXED_INTENTS.length + MAX_INTENTS + 1;
+    // Read once, so a change of front app can't swap tiles under the gaze.
+    fixed = inChrome() ? [...FIXED_INTENTS, 'cmd'] : FIXED_INTENTS;
+    inChromeCommands = false;
+    cells = recent + fixed.length + MAX_INTENTS + 1;
+    restartScan(t);
+    scan(t);
+  }
+
+  // Cmd opens a scan of the Chrome Commands alone, like a menu bar item opens its menu.
+  function openChromeCommands(t: number) {
+    inChromeCommands = true;
+    suggesting = false;
+    intents = [];
+    recent = fixedAt = 0;
+    fixed = CHROME_COMMANDS;
+    cells = fixed.length + 1;
     restartScan(t);
     scan(t);
   }
@@ -453,15 +476,18 @@ export function createSession({
 
   function choose(key: KeyId, t: number) {
     if (key === 'something-else') {
+      // There are no fresh Chrome Commands to ask for, so it just closes.
+      if (inChromeCommands) return stop();
       suggestIntents(asked!, [...turnedDown, ...intents], askedElement);
       // The past Intents were just turned down, so only the Fixed Intents show while Claude finds different ones.
       return openPicker([], t);
     }
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
-    if (key === 'home' || key === 'minimize') {
+    if (key === 'cmd') return openChromeCommands(t);
+    if (key === 'home' || key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
       act({ type: 'fixed-intent', name: key });
-      // Home goes back to the start. So does Minimize, for the same reason as Close.
+      // Home goes back to the start. The others do too, for the same reason as Close.
       return stop();
     }
     intent = intents[Number(key.replace('intent-', ''))];
@@ -517,6 +543,7 @@ export function createSession({
     textBoxGaze = null;
     // A Dock hold in progress ends too, so the Dock is released at the end of this input and not left forced open.
     iconHold = null;
+    inChromeCommands = false;
   }
 
   function shown(): OverlayState {
@@ -549,7 +576,7 @@ export function createSession({
       // Only before Claude has answered: after that the picker is already up and the past ones would be reordering it.
       if (phase === 'thinking' && input.request === request) openPicker(input.intents, input.t);
     } else if (input.type === 'intents') {
-      if ((phase === 'thinking' || phase === 'choosing') && input.request === request) {
+      if ((phase === 'thinking' || phase === 'choosing') && input.request === request && !inChromeCommands) {
         // Claude was quicker than the past Intents, or there were none to read.
         if (phase === 'thinking') openPicker([], input.t);
         addSuggestions(input.intents, input.t);

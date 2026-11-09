@@ -6,7 +6,7 @@ Close, Home and Minimize show in every picker (#64), the moment a target is pick
 
 1. Up to 2 Intents from Intent History.
 2. A suggested "Skip the ad", if Claude offers one. It goes ahead of the Fixed Intents and takes the highlight, which starts its step again.
-3. Close, Home and Minimize.
+3. Close (shown as Cancel, since Claude often offers to close the window), Home and Minimize, then Cmd when Chrome is in front, which opens a scan of Next Tab, Close Tab and Close.
 4. Claude's other Suggested Intents, joining after them. The highlight doesn't move when they do, and "Finding more…" shows in the first empty cell until they arrive.
 5. Something else, always last. It opens the picker again at once with the Fixed Intents, while Claude thinks of different ones.
 

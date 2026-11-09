@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Ban,
   Camera,
   Copy,
   createElement,
@@ -222,9 +223,13 @@ window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, lo
 type TileLook = { label: string; glyph: IconNode };
 
 const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
-  close: { label: 'Close', glyph: X },
+  // Not an X: Claude's "Close the window" tiles use that, and this only puts the picker away.
+  close: { label: 'Cancel', glyph: Ban },
   home: { label: 'Home', glyph: House },
   minimize: { label: 'Minimize', glyph: Minimize2 },
+  cmd: { label: 'Cmd', glyph: Terminal },
+  'next-tab': { label: 'Next Tab', glyph: SkipForward },
+  'close-tab': { label: 'Close Tab', glyph: X },
 };
 
 function lookOf({ id, label }: Key): TileLook {
@@ -445,7 +450,9 @@ window.overlay.onState((state) => {
     if (noIntents.textContent !== note) noIntents.textContent = note;
     place(noIntents, onSheet(layoutIntents(screenSize, { ...state, intents: [...intents, ''] }).at(-2)!.rect));
   }
-  noIntents.hidden = state.phase !== 'choosing' || !(state.suggesting || state.intents.length === 0);
+  // The Chrome Commands scan has no cell kept for Intents, so no note.
+  noIntents.hidden =
+    state.phase !== 'choosing' || !(state.suggesting || state.intents.length === 0) || state.intents.length + state.fixed.length + 1 >= state.cells;
   showStatus(state);
   showStopHint(state);
   if (!entering) return;

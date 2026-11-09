@@ -822,7 +822,7 @@ describe('Suggested Intents', () => {
     expect(state).toMatchObject({ phase: 'choosing', intents: ['Open a related video', 'Pause', 'Like the video'], highlight: 'close', suggesting: false });
     expect(keysOf(state)).toEqual(['close', 'home', 'minimize', 'intent-0', 'intent-1', 'intent-2', 'something-else']);
     expect(layoutIntents(screen, state as Extract<OverlayState, { phase: 'choosing' }>).map(({ label }) => label)).toEqual([
-      'Close',
+      'Cancel',
       'Home',
       'Minimize',
       'Open a related video',
@@ -1376,7 +1376,7 @@ describe('Suggested Intents side panel', () => {
     for (const side of ['left', 'right'] as const) {
       const keys = layoutIntents(screen, { intents: ['Skip the ad', 'Pause'], fixed: FIXED, fixedAt: 1, cells: 0, side });
       expect(keys.map(({ id }) => id)).toEqual(['intent-0', 'close', 'home', 'minimize', 'intent-1', 'something-else']);
-      expect(keys.map(({ label }) => label)).toEqual(['Skip the ad', 'Close', 'Home', 'Minimize', 'Pause', 'Something else']);
+      expect(keys.map(({ label }) => label)).toEqual(['Skip the ad', 'Cancel', 'Home', 'Minimize', 'Pause', 'Something else']);
       const panel = { x: side === 'left' ? 0 : screen.width - Math.floor(screen.width / 3), width: Math.floor(screen.width / 3) };
       for (const { rect } of keys) {
         // Inside a third of the screen against its own edge.
