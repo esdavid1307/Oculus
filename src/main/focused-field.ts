@@ -6,19 +6,29 @@ import type { FieldKind } from '../shared/session';
 export type FocusedField = (FieldKind & { sends?: boolean }) | null;
 
 // What a read of the focused field found: a field; no field (nothing focused, not a field, or a page Chrome can't run
-// the read in); Chrome refusing to run the page read at all; or the read failing (timed out, osascript failed, a second
-// Chrome running). Only a refusal leaves the Text Box the keyboard was opened on as a clue: in every other case it may
-// no longer be where the focus is.
-export type FieldRead = { kind: 'field'; field: NonNullable<FocusedField> } | { kind: 'none' } | { kind: 'javascript-off' } | { kind: 'failed' };
+// the read in); Chrome's page not having the focus, which is then in Chrome's own UI such as the address bar; Chrome
+// refusing to run the page read at all; or the read failing (timed out, osascript failed, a second Chrome running).
+// Only an unfocused page or a refusal leaves the Text Box the keyboard was opened on as a clue: in every other case it
+// may no longer be where the focus is.
+export type FieldRead =
+  | { kind: 'field'; field: NonNullable<FocusedField> }
+  | { kind: 'none' }
+  | { kind: 'page-unfocused' }
+  | { kind: 'javascript-off' }
+  | { kind: 'failed' };
 
 // What READ_FOCUSED_FIELD prints when Chrome is in front and won't run the page read, which is Chrome's default.
 export const CHROME_JAVASCRIPT_OFF = 'chrome-javascript-off';
 
+// What PAGE_FOCUS prints when Chrome's front tab doesn't have the focus.
+export const CHROME_PAGE_UNFOCUSED = 'chrome-page-unfocused';
+
 // Run in Chrome's front tab. Prints the focused field as Accessibility would show it with Chrome's tree on: the role,
-// the subrole and "sends", one per line, or nothing when no field has focus or it can't be told. It goes into
+// the subrole and "sends", one per line, CHROME_PAGE_UNFOCUSED when the page doesn't have the focus, or nothing when no
+// field on it has focus or it can't be told. It goes into
 // same-origin frames and shadow roots, where the focus really is, but not cross-origin frames, which it can't see into.
 export const PAGE_FOCUS = `(() => {
-  if (!document.hasFocus()) return '';
+  if (!document.hasFocus()) return '${CHROME_PAGE_UNFOCUSED}';
   let el = document.activeElement;
   for (let depth = 0; el && depth < 10; depth++) {
     if (el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
@@ -85,6 +95,7 @@ const NOTHING = new Set(['null', 'undefined', 'missing value']);
 export function parseFieldRead(stdout: string): FieldRead {
   const trimmed = stdout.trim();
   if (trimmed === CHROME_JAVASCRIPT_OFF) return { kind: 'javascript-off' };
+  if (trimmed === CHROME_PAGE_UNFOCUSED) return { kind: 'page-unfocused' };
   if (NOTHING.has(trimmed)) return { kind: 'none' };
   const [role = '', subrole = '', sends = ''] = stdout.split('\n').map((line) => line.trim());
   if (role === '' && subrole === '') return { kind: 'none' };
@@ -116,12 +127,13 @@ export function pressesReturn(field: FocusedField, submit = false): boolean {
 
 // What Done does with the text, from what the read found and the Text Box the keyboard was opened on (if any). Learning
 // goes only by the field read now: the box was read earlier, and the page may have changed it since. Return goes by the
-// field read now too, and by the box only when Chrome refused the page read, since it is then the only clue. When the
-// page says no field has focus, or the read failed, Return is not pressed: it could land on a button. The exception is
-// inMessages, while Messages is in front: Done always sends there, since its compose box takes many lines and the field
-// alone would never press Return. Learning still goes by the field read now, so a password is never learned.
+// field read now too, and by the box only when Chrome refused the page read or its page doesn't have the focus, since it
+// is then the only clue: a Text Box the page can't see, such as the address bar, is Chrome's own. Without a box, or when
+// the page says no field has focus, or the read failed, Return is not pressed: it could land on a button. The exception
+// is inMessages, while Messages is in front: Done always sends there, since its compose box takes many lines and the
+// field alone would never press Return. Learning still goes by the field read now, so a password is never learned.
 export function onDone(read: FieldRead, box: FieldKind | undefined, submit: boolean, inMessages = false): { submit: boolean; learn: boolean } {
   const field = read.kind === 'field' ? read.field : null;
-  const known = field ?? (read.kind === 'javascript-off' ? (box ?? null) : null);
+  const known = field ?? (read.kind === 'javascript-off' || read.kind === 'page-unfocused' ? (box ?? null) : null);
   return { submit: pressesReturn(known, submit || inMessages), learn: !isSecure(field) };
 }

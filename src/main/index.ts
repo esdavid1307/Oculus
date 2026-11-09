@@ -583,7 +583,7 @@ function createOverlay() {
         const inMessages = messagesFront();
         const { submit, learn } = onDone(read, action.box, action.submit === true && chromeFront(), inMessages);
         const field = read.kind === 'field' ? `${read.field.role}/${read.field.subrole}` : read.kind;
-        console.log(`[type-text] field=${field}${read.kind === 'javascript-off' && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
+        console.log(`[type-text] field=${field}${(read.kind === 'javascript-off' || read.kind === 'page-unfocused') && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
         typeText(action.text, submit, inMessages ? 'Messages' : undefined);
         if (!words.enabled || !learn) return;
         // A failed save must not stop the text being typed, so it only warns.

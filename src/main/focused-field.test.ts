@@ -47,6 +47,12 @@ describe('the focused field', () => {
     expect(parseFieldRead(`${CHROME_JAVASCRIPT_OFF}\n`)).toEqual({ kind: 'javascript-off' });
   });
 
+  it("tells a page without the focus, as when it's in the address bar, from a page with no field focused", () => {
+    expect(parseFieldRead(pageFocus({ tagName: 'INPUT', type: 'text' }, false))).toEqual({ kind: 'page-unfocused' });
+    expect(parseFieldRead(pageFocus(null, false))).toEqual({ kind: 'page-unfocused' });
+    expect(parseFieldRead(pageFocus({ tagName: 'BODY' }))).toEqual({ kind: 'none' });
+  });
+
   it('presses Return after the text in a single-line text, search or combo box', () => {
     expect(pressesReturn({ role: 'AXTextField', subrole: '' })).toBe(true);
     expect(pressesReturn({ role: 'AXTextField', subrole: 'AXSearchField' })).toBe(true);
@@ -157,6 +163,14 @@ describe('Done', () => {
     expect(onDone({ kind: 'javascript-off' }, textField, false)).toEqual({ submit: true, learn: false });
     expect(onDone({ kind: 'javascript-off' }, password, false)).toEqual({ submit: false, learn: false });
     expect(onDone({ kind: 'javascript-off' }, undefined, false)).toEqual({ submit: false, learn: false });
+  });
+
+  it("goes by the Text Box when the page doesn't have the focus, so a search typed in the address bar runs", () => {
+    expect(onDone({ kind: 'page-unfocused' }, textField, false)).toEqual({ submit: true, learn: false });
+    // Opened with Type, on no Text Box: the focus may be on a toolbar button.
+    expect(onDone({ kind: 'page-unfocused' }, undefined, false)).toEqual({ submit: false, learn: false });
+    expect(onDone({ kind: 'page-unfocused' }, textArea, false)).toEqual({ submit: false, learn: false });
+    expect(onDone({ kind: 'page-unfocused' }, password, false)).toEqual({ submit: false, learn: false });
   });
 
   it('never presses Return when the page says no field has focus, or the read failed, whatever the Text Box was', () => {
