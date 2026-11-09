@@ -44,6 +44,18 @@ _Avoid_: Gaze point, cursor
 The personal adjustment learned from a user's confirmed selections that makes their Gaze Region more accurate.
 _Avoid_: Adaptation, personalization, training
 
+**Neural Layer**:
+The on-device learning every confirmed choice feeds: Gaze Correction, Icon Order and Scan Pace, alongside Suggested Words and Intent History. It changes nothing until it has evidence, and `"neuralLayer": false` turns it off.
+_Avoid_: AI layer, brain, personalization
+
+**Icon Order**:
+The order an Icon Scan reaches icons in, learned from the icons this user opens, with screen order breaking ties.
+_Avoid_: Sorting, favourites
+
+**Scan Pace**:
+The scan step learned from how fast this user presses once their key is highlighted, faster only when that saves at least a tenth of the step.
+_Avoid_: Speed, adaptive timing
+
 **Gaze Dot**:
 The on-screen marker showing the user the centre of their Gaze Region.
 _Avoid_: Cursor, pointer
