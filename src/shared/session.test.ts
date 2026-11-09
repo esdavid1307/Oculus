@@ -1482,7 +1482,7 @@ describe('Text box target', () => {
     expect(session(gaze(4099, onBox)).phase).toBe('waiting-for-target');
     expect(actions).toEqual([]);
     expect(session(gaze(4100, onBox))).toMatchObject({ phase: 'typing', text: '', group: null, highlight: 'abcde' });
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect, held: { from: 3100, to: 4100 } }]);
     // The model is never asked on this path, so no fake-model reply would ever be read.
     expect(actions.some(({ type }) => type === 'suggest-intents')).toBe(false);
   });
@@ -1511,7 +1511,7 @@ describe('Text box target', () => {
     tickTo('klmno');
     tickTo('k');
     tickTo('done');
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }, { type: 'type-text', text: 'k' }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect, held: { from: 3100, to: 4100 } }, { type: 'type-text', text: 'k' }]);
   });
 
   it('ignores a text box the Gaze Region does not touch', () => {
@@ -1528,7 +1528,7 @@ describe('Text box target', () => {
     const { session, actions } = awake([far, near]);
     session(gaze(3100, { x: 700, y: 120, radius: 120 }));
     session(gaze(4100, { x: 700, y: 120, radius: 120 }));
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'near', rect: near.rect }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'near', rect: near.rect, held: { from: 3100, to: 4100 } }]);
   });
 
   it('closes without typing on the Stop Gesture while typing in a text box', () => {
@@ -1537,7 +1537,7 @@ describe('Text box target', () => {
     session(gaze(4100, onBox));
     session(gaze(4200, offScreen));
     expect(session(gaze(9200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
-    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect }]);
+    expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect, held: { from: 3100, to: 4100 } }]);
   });
 
   it('starts fresh text when opened by a second text box target later', () => {
@@ -1554,8 +1554,8 @@ describe('Text box target', () => {
     const state = session(gaze(13_400, onBox));
     expect(state).toMatchObject({ phase: 'typing', text: '' });
     expect(actions.filter(({ type }) => type === 'focus-text-box')).toEqual([
-      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
-      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect },
+      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect, held: { from: 3100, to: 4100 } },
+      { type: 'focus-text-box', name: 'YouTube search', rect: box.rect, held: { from: 12_400, to: 13_400 } },
     ]);
   });
 });
@@ -1603,7 +1603,7 @@ describe('Learning signals', () => {
 
   it('scans icons in the learned order, and reports which one was opened among all scanned, in screen order', () => {
     const items = ['Finder', 'Safari', 'Notes'].map((name, i) => ({ name, rect: { x: 600 + i * 70, y: 910, width: 66, height: 82 } }));
-    const { session, actions } = setup({ dock: () => items, orderIcons: (_source, names) => [...names].reverse() });
+    const { session, actions } = setup({ dock: () => items, orderIcons: (_source, names) => names.map((_, i) => names.length - 1 - i) });
     session(gaze(0, inBox));
     session(gaze(3000, inBox));
     session(gaze(3100, { x: 700, y: 820, radius: 120 }));
@@ -1611,7 +1611,7 @@ describe('Learning signals', () => {
     session(select(6200));
     expect(signals(actions).slice(-2)).toEqual([
       { kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false },
-      { kind: 'icon-opened', source: 'dock', scanned: ['Finder', 'Safari', 'Notes'], chosen: 'Notes' },
+      { kind: 'icon-opened', source: 'dock', scanned: ['Finder', 'Safari', 'Notes'], chosenIndex: 2 },
     ]);
   });
 

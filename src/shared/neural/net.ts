@@ -83,7 +83,9 @@ export function createRanker(prior: number[], hidden: number, seed: number): Ran
     linear: [...prior],
     hidden: Array.from({ length: hidden }, () => prior.map(() => random() * 0.6)),
     hiddenBias: Array(hidden).fill(0),
-    out: Array(hidden).fill(0),
+    // Small non-zero, so the hidden layer's backward pass carries real gradient on the very first training step.
+    // Still small enough that the untrained hidden layer barely nudges the ranker's starting linear order.
+    out: Array.from({ length: hidden }, () => random() * 0.05),
   };
 }
 

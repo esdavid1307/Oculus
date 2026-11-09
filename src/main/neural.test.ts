@@ -53,18 +53,30 @@ describe('Neural Layer in the main process', () => {
 
   it('saves Icon Order and Scan Pace to its file', () => {
     const neural = layer();
-    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosen: 'B' });
+    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosenIndex: 1 });
+    // Saves are debounced during normal use; flush forces the write immediately for the test.
+    neural.flush();
     const saved = JSON.parse(readFileSync(join(dir, 'neural-layer.json'), 'utf8'));
     expect(saved.icons.uses.dock.B.count).toBe(1);
+  });
+
+  it('coalesces repeated save requests into a single write', () => {
+    const neural = layer();
+    const file = join(dir, 'neural-layer.json');
+    for (let i = 0; i < 5; i++) neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosenIndex: 1 });
+    // The debounced save has not fired yet, so no file is on disk.
+    expect(() => readFileSync(file, 'utf8')).toThrow();
+    neural.flush();
+    expect(JSON.parse(readFileSync(file, 'utf8')).icons.uses.dock.B.count).toBe(5);
   });
 
   it('changes nothing when switched off', () => {
     const neural = layer(false);
     teach(neural);
-    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosen: 'B' });
+    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosenIndex: 1 });
     for (let i = 0; i < 30; i++) neural.learn({ kind: 'select', offsetMs: 200, stepMs: 2000, undoes: false });
     expect(neural.correct({ x: 620, y: 340, radius: 120 })).toEqual({ x: 620, y: 340, radius: 120 });
-    expect(neural.orderIcons('dock', ['A', 'B'])).toEqual(['A', 'B']);
+    expect(neural.orderIcons('dock', ['A', 'B'])).toEqual([0, 1]);
     expect(neural.scanPace()).toBe(2000);
   });
 });

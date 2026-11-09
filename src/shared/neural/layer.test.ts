@@ -43,21 +43,35 @@ describe('Gaze Correction', () => {
 describe('Icon Order', () => {
   const names = ['Finder', 'Safari', 'Notes', 'Mail'];
 
+  const byName = (indices: number[], from: string[]) => indices.map((i) => from[i]);
+
   it('puts the icon this user keeps opening first, and keeps screen order for the rest', () => {
     const order = createIconOrder();
-    for (let i = 0; i < 4; i++) order.learn('dock', names, 'Mail', i * 1000);
-    expect(order.order('dock', names, 5000)).toEqual(['Mail', 'Finder', 'Safari', 'Notes']);
+    for (let i = 0; i < 4; i++) order.learn('dock', names, names.indexOf('Mail'), i * 1000);
+    expect(byName(order.order('dock', names, 5000), names)).toEqual(['Mail', 'Finder', 'Safari', 'Notes']);
   });
 
   it('keeps each Icon Scan source apart', () => {
     const order = createIconOrder();
-    order.learn('desktop', names, 'Mail', 0);
-    expect(order.order('dock', names, 1000)).toEqual(names);
+    order.learn('desktop', names, names.indexOf('Mail'), 0);
+    expect(order.order('dock', names, 1000)).toEqual(names.map((_, i) => i));
+  });
+
+  it('still orders a scan with two icons sharing a name, keeping them in screen order', () => {
+    const order = createIconOrder();
+    const withDup = ['Finder', 'Safari', 'Finder', 'Mail'];
+    // User always picks the second Finder (index 2). Index-based learning tells it apart from index 0.
+    for (let i = 0; i < 4; i++) order.learn('dock', withDup, 2, i * 1000);
+    const ordered = order.order('dock', withDup, 5000);
+    // Both Finders rank together (same name, same heat), and the input-order tie-break keeps them adjacent in screen
+    // order (index 0 before index 2). Their shared name ranks ahead of Safari and Mail.
+    expect(ordered.slice(0, 2)).toEqual([0, 2]);
+    expect(new Set(ordered)).toEqual(new Set([0, 1, 2, 3]));
   });
 
   it('survives a round trip through JSON, and starts fresh from anything malformed', () => {
     const order = createIconOrder();
-    order.learn('dock', names, 'Notes', 0);
+    order.learn('dock', names, names.indexOf('Notes'), 0);
     const restored = createIconOrder(readIconOrder(JSON.parse(JSON.stringify(order.model()))));
     expect(restored.order('dock', names, 1000)).toEqual(order.order('dock', names, 1000));
     for (const raw of [null, 'x', { version: 2 }]) expect(readIconOrder(raw).uses).toEqual({});
@@ -107,9 +121,9 @@ describe('Neural Layer', () => {
 
   it('routes each confirmed choice to its learner', () => {
     const neural = layer();
-    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B', 'C'], chosen: 'C' }, undefined, 0);
-    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B', 'C'], chosen: 'C' }, undefined, 10);
-    expect(neural.orderIcons('dock', ['A', 'B', 'C'], 20)[0]).toBe('C');
+    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B', 'C'], chosenIndex: 2 }, undefined, 0);
+    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B', 'C'], chosenIndex: 2 }, undefined, 10);
+    expect(neural.orderIcons('dock', ['A', 'B', 'C'], 20)[0]).toBe(2);
     for (let i = 0; i < 30; i++) neural.learn({ kind: 'select', offsetMs: 300, stepMs: neural.scanStepMs(), undoes: false });
     expect(neural.scanStepMs()).toBeLessThan(2000);
   });
@@ -125,10 +139,10 @@ describe('Neural Layer', () => {
 
   it('keeps Icon Order and Scan Pace through a recalibration and a save', () => {
     const neural = layer();
-    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosen: 'B' }, undefined, 0);
+    neural.learn({ kind: 'icon-opened', source: 'dock', scanned: ['A', 'B'], chosenIndex: 1 }, undefined, 0);
     neural.recalibrated();
     const restored = createNeuralLayer({ screen, scanStepMs: 2000, model: readNeuralLayer(JSON.parse(JSON.stringify(neural.model()))) });
-    expect(restored.orderIcons('dock', ['A', 'B'], 10)).toEqual(['B', 'A']);
+    expect(restored.orderIcons('dock', ['A', 'B'], 10)).toEqual([1, 0]);
     expect(readNeuralLayer({ version: 9 })).toEqual(emptyNeuralLayer());
   });
 });

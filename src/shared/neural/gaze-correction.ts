@@ -31,14 +31,21 @@ export function createGazeCorrection(screen: Screen, seed = 11) {
     const scale = length > MAX_SHIFT_PX ? MAX_SHIFT_PX / length : 1;
     return { x: dx * scale, y: dy * scale };
   };
-  const fit = (batch: GazeExample[]) => {
-    const model = createNet(2, HIDDEN, 2, seed);
+  const fit = (batch: GazeExample[], from?: Net) => {
+    // Warm-starting from the last fit halves the epochs needed: the weights are already near the data, so training
+    // converges on the tail of the loss curve instead of from scratch each time.
+    const model = from ? { w1: from.w1.map((row) => [...row]), b1: [...from.b1], w2: from.w2.map((row) => [...row]), b2: [...from.b2] } : createNet(2, HIDDEN, 2, seed);
+    // Each example's gradient in trainRegression is divided by the batch total, so adding more examples silently
+    // shrinks the per-example step. Scale the learning rate by sqrt(N / MIN_EXAMPLES) so the full ring trains with
+    // enough step size to keep tracking a slowly drifting calibration, without overshooting on tiny batches.
+    const learningRate = TRAINING.learningRate * Math.sqrt(batch.length / MIN_EXAMPLES);
+    const epochs = from ? Math.round(TRAINING.epochs / 2) : TRAINING.epochs;
     trainRegression(
       model,
       batch.map(({ gaze }) => toInput(gaze)),
       batch.map(({ gaze, target }) => [(target.x - gaze.x) / MAX_SHIFT_PX, (target.y - gaze.y) / MAX_SHIFT_PX]),
       batch.map(({ weight }) => weight),
-      TRAINING,
+      { ...TRAINING, learningRate, epochs },
     );
     return model;
   };
@@ -49,6 +56,7 @@ export function createGazeCorrection(screen: Screen, seed = 11) {
     }, 0) / batch.length;
 
   function retrain() {
+    const previous = net;
     net = null;
     if (examples.length < MIN_EXAMPLES) return;
     // Validated on the newest selections, the ones most like what comes next.
@@ -56,9 +64,10 @@ export function createGazeCorrection(screen: Screen, seed = 11) {
     const training = examples.slice(0, -held);
     const holdout = examples.slice(-held);
     const before = meanError(holdout, null);
-    const after = meanError(holdout, fit(training));
+    // Warm-start from the previous fit so retraining after each new example converges in fewer epochs.
+    const after = meanError(holdout, fit(training, previous ?? undefined));
     validated = { before, after };
-    if (after < before * MIN_GAIN) net = fit(examples);
+    if (after < before * MIN_GAIN) net = fit(examples, previous ?? undefined);
   }
 
   return {

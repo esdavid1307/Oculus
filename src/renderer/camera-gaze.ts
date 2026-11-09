@@ -59,7 +59,13 @@ export async function startCameraGaze(
     await calibrate(tracker, { width: window.innerWidth, height: window.innerHeight }, placeDot);
     dot.hidden = true;
     delete root.dataset.calibrating;
-    onSample = createGazeSource(send, runCalibration, () => {});
+    // Draw the uncorrected estimate locally as an immediate preview, so the dot never lags an IPC hop behind the eye.
+    // The main process sends the corrected position over `gaze-dot` right after, which overrides this placement.
+    onSample = createGazeSource(send, runCalibration, (estimate) => {
+      if (root.dataset.calibrating !== undefined) return;
+      dot.hidden = !estimate;
+      if (estimate) placeDot(estimate.x, estimate.y);
+    });
   };
   await runCalibration();
 }

@@ -47,8 +47,19 @@ const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
 // shortcut: OCULUS_MOUSE_SHIFT="-100,60" makes the mouse input read off like a badly calibrated webcam, to watch Gaze
-// Correction learn it.
-const [mouseShiftX = 0, mouseShiftY = 0] = (process.env.OCULUS_MOUSE_SHIFT ?? '').split(',').map((n) => Number(n) || 0);
+// Correction learn it. A malformed value (typo, non-finite) warns and falls back to 0, so it never silently distorts the
+// gaze or sends every region off-screen through Infinity.
+function parseMouseShift(raw: string | undefined): [number, number] {
+  if (!raw) return [0, 0];
+  const parts = raw.split(',');
+  const parsed = parts.map((n) => Number(n.trim()));
+  if (parsed.some((n) => !Number.isFinite(n))) {
+    console.warn(`Ignoring OCULUS_MOUSE_SHIFT=${JSON.stringify(raw)}: expected two finite numbers like "-100,60"`);
+    return [0, 0];
+  }
+  return [parsed[0] ?? 0, parsed[1] ?? 0];
+}
+const [mouseShiftX, mouseShiftY] = parseMouseShift(process.env.OCULUS_MOUSE_SHIFT);
 
 function readTimingsFile(): unknown {
   const file = join(app.getPath('userData'), 'config.json');
@@ -522,6 +533,9 @@ function createOverlay() {
         });
     } else if (action.type === 'run-intent') {
       const { intent, region, request, sinceWakeMs, held } = action;
+      // Snapshotted right now, while the hold's gaze samples are still in the raw buffer. A run that takes longer
+      // than RAW_GAZE_MS would otherwise lose the samples before runSucceeded tries to look them up.
+      neural.snapshotHold(held.from, held.to);
       // Taken now: by the time the run ends, Something else could have asked about a new target.
       const context = askedContext;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
@@ -555,7 +569,10 @@ function createOverlay() {
     } else if (action.type === 'focus-text-box') {
       // Clicks the centre of the box the user looked at, at the HID tap, so the focus lands beneath the click-through
       // overlay before typing. The session sends the rect it matched, so a later read can't swap the box.
-      const { rect } = action;
+      const { rect, held } = action;
+      // Snapshotted right now, while the hold samples are still in the raw buffer. A slow typist pressing Done 45 s
+      // later would otherwise find the samples evicted and the Gaze Correction label dropped.
+      neural.snapshotHold(held.from, held.to);
       const at = { x: bounds.x + rect.x + rect.width / 2, y: bounds.y + rect.y + rect.height / 2 };
       void execute({ type: 'click', at, button: 'left', count: 1, modifiers: [] }).catch((error: Error) =>
         console.error('Could not focus the text box:', error.message),
@@ -643,6 +660,9 @@ function createOverlay() {
     }
   }
   overlay.on('closed', () => timers.forEach(clearInterval));
+  // Pending debounced saves must reach disk before the process ends, or the tail of a typing burst or an icon scan
+  // is lost.
+  app.on('will-quit', () => neural.flush());
   return overlay;
 }
 
