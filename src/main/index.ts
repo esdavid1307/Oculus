@@ -646,9 +646,15 @@ function createOverlay() {
         console.error('Could not focus the text box:', error.message),
       );
     }
-    // The Dock moves when it shows, so it is read again for the scan.
     else if (action.type === 'snapshot-gaze') neural.snapshotHold(action.held.from, action.held.to);
-    else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
+    else if (action.type === 'show-dock')
+      // The Dock moves when it shows, so it is read again, and the session told, for a scan that started before it had.
+      showDock(bounds, () =>
+        readIcons('dock', bounds, (read) => {
+          icons.dock = read;
+          advance({ type: 'dock-shown', t: Date.now(), icons: read });
+        }),
+      );
     else if (action.type === 'release-dock') releaseDock();
     else if (action.type === 'learn') neural.learn(action.signal);
     else if (action.type === 'close-menu') {
