@@ -21,6 +21,11 @@ describe('parseKeyCombo', () => {
     expect(parseKeyCombo('Alt+F4')).toEqual({ keyCode: 118, flags: MODIFIER_FLAGS.alt });
   });
 
+  it('sends the Mission Control key with the Fn flag, or the Dock ignores it', () => {
+    expect(parseKeyCombo('cmd+mission_control')).toEqual({ keyCode: 160, flags: MODIFIER_FLAGS.cmd | 0x800000 });
+    expect(parseKeyCombo('F3')).toEqual({ keyCode: 99, flags: 0 });
+  });
+
   it('adds no implied shift for capitals', () => {
     expect(parseKeyCombo('A')).toEqual({ keyCode: 0, flags: 0 });
   });

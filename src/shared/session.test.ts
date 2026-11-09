@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import type { Rect } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, type FixedIntent } from './keyboard';
 import { readLargeView } from './large-view';
 import { createSession, type AgentAction, type OverlayState, type SessionInput } from './session';
 
@@ -18,6 +18,9 @@ const record = (into: AgentAction[]) => (action: AgentAction) => {
 const typedText = (state: OverlayState) => (state.phase === 'typing' ? state.text : null);
 const tick = (t: number) => ({ type: 'tick', t }) as const;
 const gaze = (t: number, region: GazeEvent['region']): GazeEvent => ({ type: 'gaze', t, region });
+const FIXED: FixedIntent[] = ['close', 'home', 'minimize'];
+// The picker's keys in scan order.
+const keysOf = (state: OverlayState) => (state.phase === 'choosing' ? layoutIntents(screen, state).map(({ id }) => id) : []);
 
 describe('Start Gesture', () => {
   it('wakes the agent after 3 seconds on the centre box', () => {
@@ -794,31 +797,44 @@ describe('Suggested Intents', () => {
 
   const select = (t: number) => ({ type: 'select', t }) as const;
 
-  it('shows up to 3 Suggested Intents from the model, plus Something else, highlighting the first', () => {
-    const { session } = thinking();
-    const intents = ['Skip the ad', 'Open a related video', 'Pause', 'Like the video'];
-    expect(session({ type: 'intents', t: 5000, request: 1, intents })).toEqual({
+  it('opens the picker with Close, Home and Minimize as soon as the past Intents are read, even none, before Claude answers', () => {
+    const { session, actions } = thinking();
+    expect(session({ type: 'past-intents', t: 4300, request: 1, intents: [] })).toEqual({
       phase: 'choosing',
       wakeProgress: 0,
-      intents: ['Skip the ad', 'Open a related video', 'Pause'],
-      highlight: 'intent-0',
-      cells: 4,
+      intents: [],
+      fixed: FIXED,
+      fixedAt: 0,
+      highlight: 'close',
+      cells: 7,
       recent: 0,
+      suggesting: true,
       side: 'right',
       stepProgress: 0,
     });
-    expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
-      'Skip the ad',
+    expect(keysOf(session(tick(4300)))).toEqual(['close', 'home', 'minimize', 'something-else']);
+    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
+  });
+
+  it("adds up to 3 of Claude's Suggested Intents after the Fixed Intents, with Something else last", () => {
+    const { session } = thinking();
+    const state = session({ type: 'intents', t: 5000, request: 1, intents: ['Open a related video', 'Pause', 'Like the video', 'Share'] });
+    expect(state).toMatchObject({ phase: 'choosing', intents: ['Open a related video', 'Pause', 'Like the video'], highlight: 'close', suggesting: false });
+    expect(keysOf(state)).toEqual(['close', 'home', 'minimize', 'intent-0', 'intent-1', 'intent-2', 'something-else']);
+    expect(layoutIntents(screen, state as Extract<OverlayState, { phase: 'choosing' }>).map(({ label }) => label)).toEqual([
+      'Close',
+      'Home',
+      'Minimize',
       'Open a related video',
       'Pause',
+      'Like the video',
       'Something else',
-      'Close',
     ]);
   });
 
-  // Suggestions arrive at 5000 ms, so the scan reaches intent-1 at 7000, intent-2 at 9000, Something else at 11000 and
-  // Close at 13000.
-  const choosing = (intents = ['Skip the ad', 'Open a related video', 'Pause']) => {
+  // Suggestions arrive at 5000 ms, with no past Intents read before, so the scan is on Close at 5000, Home at 7000,
+  // Minimize at 9000, the three intents at 11000, 13000 and 15000, and Something else at 17000.
+  const choosing = (intents = ['Open a related video', 'Pause', 'Like the video']) => {
     const woken = thinking();
     woken.session({ type: 'intents', t: 5000, request: 1, intents });
     return woken;
@@ -826,34 +842,36 @@ describe('Suggested Intents', () => {
 
   it('moves the highlight to the next choice every 2 seconds, and wraps round', () => {
     const { session } = choosing();
-    expect(session(tick(6999))).toMatchObject({ highlight: 'intent-0' });
-    expect(session(tick(7000))).toMatchObject({ highlight: 'intent-1' });
-    expect(session(tick(11_000))).toMatchObject({ highlight: 'something-else' });
-    expect(session(tick(13_000))).toMatchObject({ highlight: 'close' });
-    expect(session(tick(15_000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(6999))).toMatchObject({ highlight: 'close' });
+    expect(session(tick(7000))).toMatchObject({ highlight: 'home' });
+    expect(session(tick(9000))).toMatchObject({ highlight: 'minimize' });
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(17_000))).toMatchObject({ highlight: 'something-else' });
+    expect(session(tick(19_000))).toMatchObject({ highlight: 'close' });
   });
 
   it('scans only the choices on screen when the model offers fewer than 3', () => {
     const { session } = choosing(['Pause']);
-    expect(session(tick(7000))).toMatchObject({ highlight: 'something-else' });
-    expect(session(tick(9000))).toMatchObject({ highlight: 'close' });
     expect(session(tick(11_000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(13_000))).toMatchObject({ highlight: 'something-else' });
+    expect(session(tick(15_000))).toMatchObject({ highlight: 'close' });
   });
 
   it('runs the highlighted Suggested Intent on a Select Blink, which is the confirmation', () => {
     const { session, actions } = choosing();
-    session(tick(9000));
+    session(tick(13_000));
     expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
-    expect(session(select(9100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
-    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2, sinceWakeMs: 6100, held: { from: 3100, to: 4100 } });
+    expect(session(select(13_100))).toEqual({ phase: 'running', wakeProgress: 0, intent: 'Pause', activity: '' });
+    expect(actions.at(-1)).toEqual({ type: 'run-intent', intent: 'Pause', region: target, request: 2, sinceWakeMs: 10_100, held: { from: 3100, to: 4100 } });
   });
 
   it('counts Time to Action from the Start Gesture through every wait, including after Something else', () => {
     const { session, actions } = choosing();
-    session(select(11_000));
-    session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] });
-    session(select(12_100));
-    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Mute', sinceWakeMs: 9100 });
+    session(select(17_000));
+    // The picker opens again on Close at 17000, so Mute, after the Fixed Intents, is lit at 23000.
+    session({ type: 'intents', t: 18_000, request: 2, intents: ['Mute'] });
+    session(select(23_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Mute', sinceWakeMs: 20_100 });
   });
 
   it('counts Time to Action from the last icon opened when the agent stayed awake after it', () => {
@@ -868,13 +886,13 @@ describe('Suggested Intents', () => {
     session(gaze(60_000, target));
     expect(session(gaze(61_000, target)).phase).toBe('thinking');
     session({ type: 'intents', t: 62_000, request: 1, intents: ['Pause'] });
-    session(select(62_100));
-    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Pause', sinceWakeMs: 62_100 - 6200 });
+    session(select(68_100));
+    expect(actions.at(-1)).toMatchObject({ type: 'run-intent', intent: 'Pause', sinceWakeMs: 68_100 - 6200 });
   });
 
   it('presses nothing by looking at a choice', () => {
     const { session, actions } = choosing();
-    const { x, y, width, height } = layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause'])[2].rect;
+    const { x, y, width, height } = layoutIntents(screen, { intents: ['Open a related video', 'Pause', 'Like the video'], fixed: FIXED, fixedAt: 0, cells: 7, side: 'right' })[4].rect;
     const onPause = { x: x + width / 2, y: y + height / 2, radius: 120 };
     session(gaze(5100, onPause));
     expect(session(gaze(8100, onPause)).phase).toBe('choosing');
@@ -883,39 +901,40 @@ describe('Suggested Intents', () => {
 
   it('fetches fresh suggestions for the same target on Something else, passing over the ones shown', () => {
     const { session, actions } = choosing();
-    session(tick(11_000));
-    expect(session(select(11_000)).phase).toBe('thinking');
+    session(tick(17_000));
+    expect(session(select(17_000)).phase).toBe('choosing');
     expect(actions).toEqual([
       { type: 'suggest-intents', region: target, request: 1, turnedDown: [] },
-      { type: 'suggest-intents', region: target, request: 2, turnedDown: ['Skip the ad', 'Open a related video', 'Pause'] },
+      { type: 'suggest-intents', region: target, request: 2, turnedDown: ['Open a related video', 'Pause', 'Like the video'] },
     ]);
   });
 
   it('keeps passing over everything turned down for this target, and forgets it for a new target', () => {
     const { session, actions } = choosing();
-    session(select(11_000));
-    session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] });
-    session(select(14_000));
+    session(select(17_000));
+    session({ type: 'intents', t: 18_000, request: 2, intents: ['Mute'] });
+    // Close, Home, Minimize and Mute from 17000, so Something else at 25000.
+    session(select(25_000));
     expect(actions.at(-1)).toEqual({
       type: 'suggest-intents',
       region: target,
       request: 3,
-      turnedDown: ['Skip the ad', 'Open a related video', 'Pause', 'Mute'],
+      turnedDown: ['Open a related video', 'Pause', 'Like the video', 'Mute'],
     });
 
-    session(gaze(14_100, offScreen));
-    session(gaze(19_100, offScreen));
-    session(gaze(19_200, inBox));
-    session(gaze(22_200, inBox));
-    session(gaze(22_300, target));
-    session(gaze(23_300, target));
+    session(gaze(25_100, offScreen));
+    session(gaze(30_100, offScreen));
+    session(gaze(30_200, inBox));
+    session(gaze(33_200, inBox));
+    session(gaze(33_300, target));
+    session(gaze(34_300, target));
     expect(actions.at(-1)).toEqual({ type: 'suggest-intents', region: target, request: 4, turnedDown: [] });
   });
 
-  it('starts the scan again from the first choice when fresh suggestions arrive', () => {
+  it('opens the picker again at once on Something else, from its first choice, without the Intents turned down', () => {
     const { session } = choosing();
-    session(select(11_000));
-    expect(session({ type: 'intents', t: 12_000, request: 2, intents: ['Mute'] })).toMatchObject({ phase: 'choosing', highlight: 'intent-0' });
+    expect(session(select(17_000))).toMatchObject({ phase: 'choosing', intents: [], recent: 0, fixedAt: 0, cells: 7, highlight: 'close', suggesting: true });
+    expect(session({ type: 'intents', t: 18_000, request: 2, intents: ['Mute'] })).toMatchObject({ intents: ['Mute'], highlight: 'close', suggesting: false });
   });
 
   it('ignores a Select Blink while thinking', () => {
@@ -932,7 +951,9 @@ describe('Suggested Intents', () => {
     [
       'running',
       () => {
-        const woken = choosing();
+        const woken = thinking();
+        // A past Intent comes first, so a Select Blink at once runs it.
+        woken.session({ type: 'past-intents', t: 5000, request: 1, intents: ['Pause'] });
         woken.session(select(5100));
         return woken;
       },
@@ -971,88 +992,107 @@ describe('Suggested Intents', () => {
     };
     const claude = (t: number, intents: string[]) => ({ type: 'intents', t, request: 1, intents }) as const;
 
-    it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
+    const picker = (intents: string[], fixedAt: number, cells: number) => ({ intents, fixed: FIXED, fixedAt, cells, side: 'right' as const });
+
+    it('opens at once with the past Intents first, then Close, Home and Minimize, keeping room for Claude in a 9-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, recent: 2, side: 'right', stepProgress: 0 });
+      const state = session(tick(4500));
+      expect(state).toEqual({
+        phase: 'choosing',
+        wakeProgress: 0,
+        intents: ['Pause', 'Mute'],
+        fixed: FIXED,
+        fixedAt: 2,
+        highlight: 'intent-0',
+        cells: 9,
+        recent: 2,
+        suggesting: true,
+        side: 'right',
+        stepProgress: 0,
+      });
+      expect(keysOf(state)).toEqual(['intent-0', 'intent-1', 'close', 'home', 'minimize', 'something-else']);
       // The ring around the lit choice fills over its scan step and starts again on the next one.
       expect(session(tick(5500))).toMatchObject({ highlight: 'intent-0', stepProgress: 0.5 });
       expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1', stepProgress: 0 });
-      expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'close' });
+      expect(session(tick(14_500))).toMatchObject({ highlight: 'something-else' });
     });
 
-    it('shows at most 2 past Intents, and ignores an empty list or another request', () => {
+    it('shows at most 2 past Intents, opens with only the Fixed Intents on an empty list, and ignores another request', () => {
       expect(past(['a', 'b', 'c']).session(tick(4500))).toMatchObject({ intents: ['a', 'b'] });
-      expect(past([]).session(tick(4500)).phase).toBe('thinking');
+      expect(past([]).session(tick(4500))).toMatchObject({ phase: 'choosing', intents: [], highlight: 'close', cells: 7 });
       const { session } = thinking();
       expect(session({ type: 'past-intents', t: 4500, request: 9, intents: ['a'] }).phase).toBe('thinking');
     });
 
-    it("appends up to 3 of Claude's Intents after the past ones, dropping duplicates ignoring case", () => {
+    it("appends up to 3 of Claude's Intents after the Fixed Intents, dropping duplicates ignoring case", () => {
       const { session } = past();
-      expect(session(claude(5000, ['pause', 'Open it', 'Like', 'Share', 'Save']))).toMatchObject({
-        phase: 'choosing',
-        intents: ['Pause', 'Mute', 'Open it', 'Like', 'Share'],
-      });
+      const state = session(claude(5000, ['pause', 'Open it', 'Like', 'Share', 'Save']));
+      expect(state).toMatchObject({ phase: 'choosing', intents: ['Pause', 'Mute', 'Open it', 'Like', 'Share'], fixedAt: 2, suggesting: false });
+      expect(keysOf(state)).toEqual(['intent-0', 'intent-1', 'close', 'home', 'minimize', 'intent-2', 'intent-3', 'intent-4', 'something-else']);
     });
 
     it("keeps the same key highlighted, with the time it had, when Claude's Intents arrive", () => {
       const { session } = past();
-      session(tick(7000));
-      expect(session(claude(7000, ['Like', 'Share']))).toMatchObject({ highlight: 'intent-1' });
-      expect(session(tick(8499))).toMatchObject({ highlight: 'intent-1' });
-      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-2' });
+      expect(session(tick(9000))).toMatchObject({ highlight: 'close' });
+      expect(session(claude(9000, ['Like', 'Share']))).toMatchObject({ highlight: 'close' });
+      expect(session(tick(10_499))).toMatchObject({ highlight: 'close' });
+      expect(session(tick(10_500))).toMatchObject({ highlight: 'home' });
     });
 
     it("keeps Something else highlighted when it is the lit key as Claude's Intents arrive", () => {
       const { session } = past(['Pause']);
-      expect(session(tick(6600))).toMatchObject({ highlight: 'something-else' });
-      expect(session(claude(6600, ['Like', 'Share']))).toMatchObject({ highlight: 'something-else' });
-      expect(session(tick(8499))).toMatchObject({ highlight: 'something-else' });
-      expect(session(tick(8500))).toMatchObject({ highlight: 'close' });
-      expect(session(tick(10_500))).toMatchObject({ highlight: 'intent-0' });
+      expect(session(tick(12_600))).toMatchObject({ highlight: 'something-else' });
+      expect(session(claude(12_600, ['Like', 'Share']))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(14_499))).toMatchObject({ highlight: 'something-else' });
+      expect(session(tick(14_500))).toMatchObject({ highlight: 'intent-0' });
+      expect(session(tick(16_500))).toMatchObject({ highlight: 'close' });
     });
 
     it("keeps every cell where it was when Claude's Intents arrive", () => {
-      const before = layoutIntents(screen, ['Pause', 'Mute'], 6);
-      const after = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6);
-      expect(after.slice(0, 2).map((key) => key.rect)).toEqual(before.slice(0, 2).map((key) => key.rect));
-      // Something else and Close stay put too.
-      expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
-      expect(after).toHaveLength(7);
+      const before = layoutIntents(screen, picker(['Pause', 'Mute'], 2, 9));
+      const after = layoutIntents(screen, picker(['Pause', 'Mute', 'Like', 'Share', 'Save'], 2, 9));
+      // The past Intents and the Fixed Intents.
+      expect(after.slice(0, 5).map((key) => key.rect)).toEqual(before.slice(0, 5).map((key) => key.rect));
+      // Something else stays put too.
+      expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
+      expect(after).toHaveLength(9);
     });
 
-    it('scans a full 7-tile picker in one fixed order, with Close last, which ends it choosing nothing', () => {
+    it('scans a full 9-tile picker in one fixed order, and Close ends it choosing nothing', () => {
       const { session, actions } = past();
       // Claude's 3 join while Pause has been lit for 500 ms, so Mute is next at 6500.
-      expect(session(claude(5000, ['Like', 'Share', 'Save']))).toMatchObject({ intents: ['Pause', 'Mute', 'Like', 'Share', 'Save'], highlight: 'intent-0', cells: 6, recent: 2 });
-      expect(layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6)).toHaveLength(7);
-      const order = ['intent-1', 'intent-2', 'intent-3', 'intent-4', 'something-else', 'close'];
+      const state = session(claude(5000, ['Like', 'Share', 'Save']));
+      expect(state).toMatchObject({ intents: ['Pause', 'Mute', 'Like', 'Share', 'Save'], highlight: 'intent-0', cells: 9, recent: 2 });
+      expect(keysOf(state)).toHaveLength(9);
+      const order = ['intent-1', 'close', 'home', 'minimize', 'intent-2', 'intent-3', 'intent-4', 'something-else', 'intent-0', 'intent-1', 'close'];
       order.forEach((highlight, i) => expect(session(tick(6500 + i * 2000))).toMatchObject({ highlight }));
-      expect(session(select(16_600))).toEqual({ phase: 'idle', wakeProgress: 0 });
+      expect(session(select(26_600))).toEqual({ phase: 'idle', wakeProgress: 0 });
       expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
     });
 
     it("keeps room for exactly Claude's 3 after a single past Intent, so nothing moves when they join", () => {
       const { session } = past(['Pause']);
-      expect(session(tick(4500))).toMatchObject({ cells: 5, recent: 1 });
-      const before = layoutIntents(screen, ['Pause'], 5);
-      const after = layoutIntents(screen, ['Pause', 'Like', 'Share', 'Save'], 5);
-      expect(after).toHaveLength(6);
-      expect(after[0].rect).toEqual(before[0].rect);
-      expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
+      expect(session(tick(4500))).toMatchObject({ cells: 8, recent: 1 });
+      const before = layoutIntents(screen, picker(['Pause'], 1, 8));
+      const after = layoutIntents(screen, picker(['Pause', 'Like', 'Share', 'Save'], 1, 8));
+      expect(after).toHaveLength(8);
+      expect(after.slice(0, 4).map((key) => key.rect)).toEqual(before.slice(0, 4).map((key) => key.rect));
+      expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
     });
 
-    it('does nothing when Claude only repeats the past Intents', () => {
+    it('does nothing when Claude only repeats the past Intents, but stops waiting for it', () => {
       const { session } = past();
       session(tick(7000));
-      expect(session(claude(7000, ['PAUSE']))).toMatchObject({ intents: ['Pause', 'Mute'], highlight: 'intent-1' });
+      expect(session(claude(7000, ['PAUSE']))).toMatchObject({ intents: ['Pause', 'Mute'], highlight: 'intent-1', suggesting: false });
     });
 
-    it('turns down everything shown on Something else, past and new', () => {
+    it('turns down everything shown on Something else, past and new, but no Fixed Intent', () => {
       const { session, actions } = past();
       session(claude(5000, ['Like']));
-      session(tick(10_500));
-      expect(session(select(10_500)).phase).toBe('thinking');
+      // Pause, Mute, Close, Home, Minimize and Like from 4500, so Something else at 16500.
+      session(tick(16_500));
+      expect(session(select(16_500)).phase).toBe('choosing');
       expect(actions.at(-1)).toEqual({ type: 'suggest-intents', region: target, request: 2, turnedDown: ['Pause', 'Mute', 'Like'] });
     });
 
@@ -1065,8 +1105,112 @@ describe('Suggested Intents', () => {
     it('ignores past Intents that arrive after Claude has answered', () => {
       const { session } = thinking();
       session(claude(5000, ['Like']));
-      expect(session({ type: 'past-intents', t: 5100, request: 1, intents: ['Pause'] })).toMatchObject({ intents: ['Like'], cells: 4, recent: 0 });
+      expect(session({ type: 'past-intents', t: 5100, request: 1, intents: ['Pause'] })).toMatchObject({ intents: ['Like'], fixedAt: 0, cells: 7, recent: 0 });
     });
+  });
+});
+
+describe('Fixed Intents', () => {
+  const target = { x: 300, y: 300, radius: 120 };
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  const claude = (t: number, intents: string[]) => ({ type: 'intents', t, request: 1, intents }) as const;
+  // Woken at 3 s, with the target held from 3.1 s to 4.1 s. all keeps the Neural Layer's actions too.
+  const thinking = () => {
+    const actions: AgentAction[] = [];
+    const all: AgentAction[] = [];
+    const session = createSession({
+      screen,
+      act: (action) => {
+        all.push(action);
+        record(actions)(action);
+      },
+    });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, target));
+    session(gaze(4100, target));
+    return { session, actions, all };
+  };
+  // The past Intents read at 4.5 s, so the scan is on Pause at 4500, Mute at 6500, Close at 8500, Home at 10500 and
+  // Minimize at 12500.
+  const past = () => {
+    const woken = thinking();
+    woken.session({ type: 'past-intents', t: 4500, request: 1, intents: ['Pause', 'Mute'] });
+    return woken;
+  };
+
+  it('puts a suggested "Skip the ad" ahead of the Fixed Intents, after the past ones, and moves the highlight to it', () => {
+    const { session } = past();
+    expect(session(tick(9000))).toMatchObject({ highlight: 'close' });
+    const state = session(claude(9000, ['Skip the ad', 'Like']));
+    expect(state).toMatchObject({ intents: ['Pause', 'Mute', 'Skip the ad', 'Like'], fixedAt: 3, recent: 2, highlight: 'intent-2', stepProgress: 0 });
+    expect(keysOf(state)).toEqual(['intent-0', 'intent-1', 'intent-2', 'close', 'home', 'minimize', 'intent-3', 'something-else']);
+    // A full step on it, then the scan goes on in the new order.
+    expect(session(tick(10_999))).toMatchObject({ highlight: 'intent-2' });
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'close' });
+  });
+
+  it('starts the scan on "Skip the ad" when Claude answers before the past Intents are read', () => {
+    const { session } = thinking();
+    const state = session(claude(4500, ['Pause', 'Skip the ad']));
+    expect(state).toMatchObject({ intents: ['Skip the ad', 'Pause'], fixedAt: 1, recent: 0, highlight: 'intent-0' });
+    expect(keysOf(state)).toEqual(['intent-0', 'close', 'home', 'minimize', 'intent-1', 'something-else']);
+    expect(session(select(4600))).toMatchObject({ phase: 'running', intent: 'Skip the ad' });
+  });
+
+  it('runs Home as a Fixed Intent, with no suggest-intents or run-intent, and goes back to the start', () => {
+    const { session, actions } = past();
+    session(tick(10_500));
+    expect(session(select(10_600))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([
+      { type: 'suggest-intents', region: target, request: 1, turnedDown: [] },
+      { type: 'fixed-intent', name: 'home' },
+    ]);
+    // Claude's late answer and the gaze resting on the picker do nothing, and waking needs a full Start Gesture again.
+    expect(session(claude(11_000, ['Like'])).phase).toBe('idle');
+    session(gaze(11_100, inBox));
+    expect(session(gaze(14_099, inBox)).phase).toBe('idle');
+    expect(session(gaze(14_100, inBox)).phase).toBe('waiting-for-target');
+    expect(actions).toHaveLength(2);
+  });
+
+  it('runs Minimize as a Fixed Intent, with no suggest-intents or run-intent, and goes idle like Close', () => {
+    const { session, actions } = past();
+    session(tick(12_500));
+    expect(session(select(12_600))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([
+      { type: 'suggest-intents', region: target, request: 1, turnedDown: [] },
+      { type: 'fixed-intent', name: 'minimize' },
+    ]);
+  });
+
+  it('asks nothing of the outside world on Close', () => {
+    const { session, actions } = past();
+    session(tick(8500));
+    expect(session(select(8600))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
+  });
+
+  it.each([
+    ['close', 8500],
+    ['home', 10_500],
+    ['minimize', 12_500],
+  ] as const)('teaches only Scan Pace when %s is chosen: no Gaze Correction, and nothing for Intent History', (_name, litAt) => {
+    const { session, all } = past();
+    const before = all.length;
+    session(tick(litAt + 300));
+    expect(session(select(litAt + 300)).phase).toBe('idle');
+    const after = all.slice(before);
+    expect(after.filter((action) => action.type === 'learn')).toEqual([{ type: 'learn', signal: { kind: 'select', offsetMs: 300, stepMs: 2000, undoes: false } }]);
+    // Gaze Correction learns from a run that went well and from a hold kept for one, Intent History from a run-intent.
+    expect(after.filter(({ type }) => type === 'run-intent' || type === 'snapshot-gaze' || type === 'suggest-intents')).toEqual([]);
+  });
+
+  it('shows the Fixed Intents again after Something else', () => {
+    const { session } = past();
+    session(claude(5000, ['Like']));
+    // Pause, Mute, Close, Home, Minimize and Like from 4500, so Something else at 16500.
+    expect(keysOf(session(select(16_500)))).toEqual(['close', 'home', 'minimize', 'something-else']);
   });
 });
 
@@ -1228,11 +1372,11 @@ describe('Running an Intent', () => {
 describe('Suggested Intents side panel', () => {
   const overlap = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-  it('sets the choices out in a 2-column grid on the given side, Close last, leaving the rest of the screen clear', () => {
+  it('sets the choices out in a 2-column grid on the given side, Something else last, leaving the rest of the screen clear', () => {
     for (const side of ['left', 'right'] as const) {
-      const keys = layoutIntents(screen, ['Skip the ad', 'Pause'], 4, side);
-      expect(keys.map(({ id }) => id)).toEqual(['intent-0', 'intent-1', 'something-else', 'close']);
-      expect(keys.at(-1)!.label).toBe('Close');
+      const keys = layoutIntents(screen, { intents: ['Skip the ad', 'Pause'], fixed: FIXED, fixedAt: 1, cells: 0, side });
+      expect(keys.map(({ id }) => id)).toEqual(['intent-0', 'close', 'home', 'minimize', 'intent-1', 'something-else']);
+      expect(keys.map(({ label }) => label)).toEqual(['Skip the ad', 'Close', 'Home', 'Minimize', 'Pause', 'Something else']);
       const panel = { x: side === 'left' ? 0 : screen.width - Math.floor(screen.width / 3), width: Math.floor(screen.width / 3) };
       for (const { rect } of keys) {
         // Inside a third of the screen against its own edge.
@@ -1250,13 +1394,17 @@ describe('Suggested Intents side panel', () => {
   });
 
   const labels = (count: number) => Array.from({ length: count }, (_, i) => `Intent ${i}`);
+  // Two past Intents ahead of the Fixed Intents, as the session opens it.
+  const picker = (count: number, cells = 0, side: 'left' | 'right' = 'right') => ({ intents: labels(count), fixed: FIXED, fixedAt: Math.min(count, 2), cells, side });
 
   it('grows the grid with the number of tiles, two across up to 8 and three across up to 3 x 4, drawing every tile', () => {
     for (const side of ['left', 'right'] as const) {
-      for (let count = 0; count <= 10; count++) {
-        const keys = layoutIntents(screen, labels(count), 4, side);
-        const tiles = Math.max(count + 2, 5);
-        expect(keys.map(({ id }) => id)).toEqual([...labels(count).map((_, i) => `intent-${i}`), 'something-else', 'close']);
+      for (let count = 0; count <= 8; count++) {
+        const keys = layoutIntents(screen, picker(count, 7, side));
+        const tiles = Math.max(count + 4, 7);
+        const fixedAt = Math.min(count, 2);
+        const intentIds = labels(count).map((_, i) => `intent-${i}`);
+        expect(keys.map(({ id }) => id)).toEqual([...intentIds.slice(0, fixedAt), ...FIXED, ...intentIds.slice(fixedAt), 'something-else']);
         const columns = new Set(keys.map(({ rect }) => rect.x)).size;
         const rows = new Set(keys.map(({ rect }) => rect.y)).size;
         expect(columns).toBe(tiles > 8 ? 3 : 2);
@@ -1279,18 +1427,19 @@ describe('Suggested Intents side panel', () => {
     }
   });
 
-  it('draws at most 12 tiles, keeping Something else and Close', () => {
-    const keys = layoutIntents(screen, labels(15));
+  it('draws at most 12 tiles, keeping the Fixed Intents and Something else', () => {
+    const keys = layoutIntents(screen, picker(15));
     expect(keys).toHaveLength(12);
-    expect(keys.slice(-3).map(({ id }) => id)).toEqual(['intent-9', 'something-else', 'close']);
+    expect(keys.slice(0, 5).map(({ id }) => id)).toEqual(['intent-0', 'intent-1', ...FIXED]);
+    expect(keys.slice(-3).map(({ id }) => id)).toEqual(['intent-6', 'intent-7', 'something-else']);
   });
 
   it('keeps every tile where it was as Intents fill cells kept for them in a 3 x 4 grid', () => {
-    const before = layoutIntents(screen, labels(4), 11);
-    const after = layoutIntents(screen, labels(10), 11);
+    const before = layoutIntents(screen, picker(2, 12));
+    const after = layoutIntents(screen, picker(8, 12));
     expect(after).toHaveLength(12);
-    expect(after.slice(0, 4).map((key) => key.rect)).toEqual(before.slice(0, 4).map((key) => key.rect));
-    expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
+    expect(after.slice(0, 5).map((key) => key.rect)).toEqual(before.slice(0, 5).map((key) => key.rect));
+    expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
   });
 
   // What a tile holds, in overlay.css before the UI Scale: 12 px of padding on each side, the 44 px icon, a 12 px gap and
@@ -1302,7 +1451,7 @@ describe('Suggested Intents side panel', () => {
     'keeps a full 12-tile picker readable with Large View at the default UI Scale on a %j display',
     (size) => {
       const { uiScale } = readLargeView({});
-      for (const { rect } of layoutIntents(size, labels(10))) {
+      for (const { rect } of layoutIntents(size, picker(8))) {
         const drawnWidth = (rect.width * (size.width - 2 * SHEET_MARGIN)) / size.width;
         const drawnHeight = (rect.height * (size.height - 2 * SHEET_MARGIN)) / size.height;
         expect(Math.min(drawnWidth, drawnHeight)).toBeGreaterThanOrEqual(TILE_CONTENT * uiScale);
@@ -1329,9 +1478,9 @@ describe('Suggested Intents side panel', () => {
 
   it('closes the Suggested Intents on Close, running nothing and asking for nothing more', () => {
     const { session, actions } = choosing({ x: 300, y: 300, radius: 120 });
-    // Skip the ad at 5 s, Pause at 7 s, Something else at 9 s and Close at 11 s.
-    expect(session(tick(11_000))).toMatchObject({ highlight: 'close' });
-    expect(session({ type: 'select', t: 11_100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+    // Skip the ad at 5 s, then Close at 7 s.
+    expect(session(tick(7000))).toMatchObject({ highlight: 'close' });
+    expect(session({ type: 'select', t: 7100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
     expect(actions.filter(({ type }) => type !== 'learn')).toEqual([{ type: 'suggest-intents', region: { x: 300, y: 300, radius: 120 }, request: 1, turnedDown: [] }]);
   });
 });
@@ -1779,11 +1928,12 @@ describe('Gaze Scan in Chrome', () => {
     session(gaze(6100, onThumbs));
     session(select(6200));
     session({ type: 'intents', t: 7000, request: 1, intents: ['Open this video'] });
-    // Open this video, then Something else 2 s later.
-    session(tick(9000));
-    session(select(9000));
-    session({ type: 'intents', t: 10_000, request: 2, intents: ['Play it'] });
-    session(select(10_100));
+    // Close, Home, Minimize and Open this video from 7 s, then Something else at 15 s.
+    session(tick(15_000));
+    session(select(15_000));
+    session({ type: 'intents', t: 16_000, request: 2, intents: ['Play it'] });
+    // The Fixed Intents again from 15 s, then Play it at 21 s.
+    session(select(21_100));
     const element = { name: 'Why bridges stand', rect: { x: 220, y: 300, width: 160, height: 90 } };
     expect(actions.map((action) => ('element' in action ? action.element : null))).toEqual([element, element, element]);
     expect(actions[2]).toMatchObject({ type: 'run-intent', intent: 'Play it', region: { x: 300, y: 345 } });
@@ -1801,7 +1951,8 @@ describe('Gaze Scan in Chrome', () => {
     const signals = all.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));
     expect(signals.slice(1)).toEqual([{ kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false }]);
     session({ type: 'intents', t: 7000, request: 1, intents: ['Open this video'] });
-    session(select(7100));
+    // After Close, Home and Minimize.
+    session(select(13_100));
     expect(all.at(-1)).toMatchObject({ type: 'run-intent', held: { from: 3100, to: 6100 } });
   });
 

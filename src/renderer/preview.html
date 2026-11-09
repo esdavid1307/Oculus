@@ -47,10 +47,13 @@
         choosing: {
           phase: 'choosing',
           wakeProgress: 1,
-          intents: ['Open this video', 'Skip the ad', 'Scroll for more', 'Turn on captions'],
+          intents: ['Open this video', 'Pause the video', 'Skip the ad', 'Scroll for more', 'Turn on captions'],
           highlight: 'intent-0',
-          cells: 6,
+          fixed: ['close', 'home', 'minimize'],
+          fixedAt: 3,
+          cells: 9,
           recent: 2,
+          suggesting: false,
           side: 'right',
           stepProgress: 0.4,
         },
@@ -64,7 +67,7 @@
         });
       await wait();
       if (scene === 'choosing') {
-        window.__push({ phase: 'choosing', wakeProgress: 1, intents: ['Open this video', 'Skip the ad'], highlight: 'intent-0', cells: 6, recent: 2, side: 'right', stepProgress: 0 });
+        window.__push({ ...scenes.choosing, intents: ['Open this video', 'Pause the video'], fixedAt: 2, suggesting: true, stepProgress: 0 });
         window.__push(scenes.choosing);
       } else {
         window.__push(scenes[scene] ?? idle);

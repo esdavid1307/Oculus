@@ -432,6 +432,10 @@ function isSecureField(done: (secure: boolean) => void) {
   });
 }
 
+// Home is macOS's Show Desktop: Cmd and the Mission Control key, which is F3 on Apple keyboards. The F3 keycode itself
+// doesn't do it, and F11, the Keyboard Shortcuts setting, can be turned off. Cmd+M with no window does nothing.
+const FIXED_INTENT_KEYS: Record<Extract<AgentAction, { type: 'fixed-intent' }>['name'], string> = { home: 'cmd+mission_control', minimize: 'cmd+m' };
+
 // Runs never overlap: two would fight over the same cursor.
 let running = false;
 // The Intent run in progress, so the Stop Gesture and quitting can abort it.
@@ -541,11 +545,11 @@ function createOverlay() {
     } else if (action.type === 'suggest-intents') {
       const context = (askedContext = readContext(perSite));
       // Not after Something else: those are the ones the user just turned down. The answer comes after this session
-      // call has returned, because osascript is asynchronous.
+      // call has returned, because osascript is asynchronous. It goes in even when empty, since it opens the picker.
       if (action.turnedDown.length === 0)
         void context.then((name) => {
           const past = name === '' ? [] : history.suggest(name);
-          if (past.length > 0) advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
+          advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
         });
       // A folder per request, so overlapping requests never share a screenshot. It's deleted once answered.
       const saveDir = join(app.getPath('userData'), 'intents', String(action.request));
@@ -593,6 +597,12 @@ function createOverlay() {
           });
         finish(outcome.ok, outcome.summary);
       });
+    } else if (action.type === 'fixed-intent') {
+      // Key presses only, so the overlay, which never takes focus, leaves them to the app in front.
+      console.log(`[fixed-intent] ${action.name}`);
+      void execute({ type: 'key', keys: FIXED_INTENT_KEYS[action.name], repeat: 1 }).catch((error: Error) =>
+        console.error(`Could not run the Fixed Intent ${action.name}:`, error.message),
+      );
     } else if (action.type === 'stop-run') {
       if (currentRun?.request !== action.request) return;
       console.log(`[intent-run] stop request=${action.request}`);

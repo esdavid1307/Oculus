@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  House,
   Keyboard,
   Maximize2,
   Minimize2,
@@ -30,7 +31,7 @@ import {
 } from 'lucide';
 import type { Rect } from '../shared/geometry';
 import { fallbackLook, type IntentIcon, type IntentLook } from '../shared/intent-look';
-import { CLOSE_KEY, layoutIntents, layoutKeyboard, PHRASE_KEY, type Key, type KeyId } from '../shared/keyboard';
+import { layoutIntents, layoutKeyboard, PHRASE_KEY, type FixedIntent, type Key, type KeyId } from '../shared/keyboard';
 import { fitFrame, highlightMode, magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
@@ -218,10 +219,18 @@ const INTENT_ICON_NODES: Record<IntentIcon, IconNode> = {
 const intentLooks = new Map<string, IntentLook>();
 window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, look]) => intentLooks.set(text, look)));
 
-function lookOf({ id, label }: Key): IntentLook {
-  if (id === 'something-else') return { label: 'More', icon: 'more' };
-  if (id === CLOSE_KEY) return { label: 'Close', icon: 'close' };
-  return intentLooks.get(label) ?? fallbackLook(label);
+type TileLook = { label: string; glyph: IconNode };
+
+const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
+  close: { label: 'Close', glyph: X },
+  home: { label: 'Home', glyph: House },
+  minimize: { label: 'Minimize', glyph: Minimize2 },
+};
+
+function lookOf({ id, label }: Key): TileLook {
+  if (id in FIXED_LOOKS) return FIXED_LOOKS[id as FixedIntent];
+  const look = id === 'something-else' ? { label: 'More', icon: 'more' as const } : (intentLooks.get(label) ?? fallbackLook(label));
+  return { label: look.label, glyph: INTENT_ICON_NODES[look.icon] };
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -245,7 +254,7 @@ function drawTile(element: HTMLElement, key: Key) {
     for (const [name, value] of Object.entries({ class: `tile-ring-${part}`, cx: '50', cy: '50', r: '46', pathLength: '1' })) circle.setAttribute(name, value);
     ring.append(circle);
   }
-  const icon = createElement(INTENT_ICON_NODES[look.icon], { class: 'tile-glyph', 'aria-hidden': 'true' });
+  const icon = createElement(look.glyph, { class: 'tile-glyph', 'aria-hidden': 'true' });
   badge.append(ring, icon);
   const label = document.createElement('span');
   label.className = 'tile-label';
@@ -426,14 +435,17 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons' && entering) iconMagnifier.textContent = '';
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    const { side, cells, recent, intents } = state;
-    showKeys(`choosing ${side} ${cells} ${recent} ${intents.join('\n')}`, layoutIntents(screenSize, intents, cells, side), drawTile, recent);
+    const { side, cells, recent, intents, fixed, fixedAt } = state;
+    const keys = layoutIntents(screenSize, state);
+    showKeys(`choosing ${side} ${cells} ${recent} ${fixedAt} ${fixed.join(' ')} ${intents.join('\n')}`, keys, drawTile, recent);
     highlightKey(state.highlight);
     showStepProgress(state.stepProgress);
-    // In the first cell, where an intent would be. The reason is in the log.
-    place(noIntents, onSheet(layoutIntents(screenSize, [''], state.cells, state.side)[0].rect));
+    // In the first empty cell, where Claude's first Intent would be. Why there were none is in the log.
+    const note = state.suggesting ? 'Finding more…' : 'Nothing this time. Blink on More to try again.';
+    if (noIntents.textContent !== note) noIntents.textContent = note;
+    place(noIntents, onSheet(layoutIntents(screenSize, { ...state, intents: [...intents, ''] }).at(-2)!.rect));
   }
-  noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
+  noIntents.hidden = state.phase !== 'choosing' || !(state.suggesting || state.intents.length === 0);
   showStatus(state);
   showStopHint(state);
   if (!entering) return;
