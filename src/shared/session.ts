@@ -65,6 +65,8 @@ export type SessionInput =
   // empty if there are none, for every request with nothing turned down, and opens the picker.
   | { type: 'past-intents'; t: number; request: number; intents: string[] }
   | { type: 'menu-opened'; t: number; icons: Icon[] }
+  // The Dock's icons, read again once a show-dock has brought it up.
+  | { type: 'dock-shown'; t: number; icons: Icon[] }
   // The end of the run-intent request with the same number. summary is one short sentence for the overlay.
   | { type: 'run-finished'; t: number; request: number; ok: boolean; summary: string }
   // A step of the run-intent request with the same number, in a few words for the overlay.
@@ -90,8 +92,9 @@ export type AgentAction =
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   // A Fixed Intent was chosen. It never goes through Claude, so it teaches neither Gaze Correction nor Intent History.
-  // Close asks nothing of the outside world, and Cmd only opens the Chrome Commands.
-  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'cmd'> }
+  // Close asks nothing of the outside world, Cmd only opens the Chrome Commands, and Dock asks for show-dock, as a Dock
+  // hold does.
+  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'cmd' | 'dock'> }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
   // A hold whose uncorrected gaze must be kept now, since it may only teach Gaze Correction long after.
@@ -109,7 +112,7 @@ export type SuggestPhrases = (text: string) => string[];
 
 const MAX_INTENTS = 3;
 // In every picker, in this order, so the user learns where each one is in the scan.
-const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize'];
+const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize', 'dock'];
 // What Cmd opens, in scan order, with Close to leave.
 const CHROME_COMMANDS: FixedIntent[] = ['next-tab', 'close-tab', CLOSE_KEY];
 
@@ -290,6 +293,8 @@ export function createSession({
   let iconHold: { source: HeldSource; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
   let dockShown = false;
+  // Whether the Dock scan running now came from the Dock Fixed Intent and is still waiting for the Dock's shown icons.
+  let dockScanToRefresh = false;
   // Copied when the icon scan starts, so the icons can't shift under the highlight.
   let source: IconSource = 'dock';
   let icons: Icon[] = [];
@@ -436,6 +441,21 @@ export function createSession({
     scan(t);
   }
 
+  // The Dock Fixed Intent: what a completed Dock hold does, without holding the gaze at the screen edge. Shows the Dock
+  // and scans its icons in Icon Order, so a Select Blink opens the highlighted one.
+  function scanDock(t: number) {
+    // A hold gives the Dock 3 seconds to show before its scan; this doesn't, so a hidden Dock is scanned where it was
+    // read, past the bottom edge, until main reads it again.
+    dockScanToRefresh = true;
+    if (!dockShown) {
+      act({ type: 'show-dock' });
+      dockShown = true;
+    }
+    scanIcons('dock', dock(), t);
+    // An empty Dock read leaves nothing to scan, so the picker goes away as after Close.
+    if (phase !== 'icons') stop();
+  }
+
   // Cmd opens a scan of the Chrome Commands alone, like a menu bar item opens its menu.
   function openChromeCommands(t: number) {
     inChromeCommands = true;
@@ -485,6 +505,7 @@ export function createSession({
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
     if (key === 'cmd') return openChromeCommands(t);
+    if (key === 'dock') return scanDock(t);
     if (key === 'home' || key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
       act({ type: 'fixed-intent', name: key });
       // Home goes back to the start. The others do too, for the same reason as Close.
@@ -536,6 +557,7 @@ export function createSession({
   // The Stop Gesture, and recalibrating. Closes the Gaze Keyboard without typing the text, the icon scan without
   // opening anything, and stops a run. Nothing is asked of the outside world after the stop-run.
   function stop() {
+    dockScanToRefresh = false;
     if (phase === 'running') act({ type: 'stop-run', request });
     if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
     phase = 'idle';
@@ -590,6 +612,10 @@ export function createSession({
       }
     } else if (input.type === 'run-progress') {
       if (phase === 'running' && input.request === request) activity = input.activity;
+    } else if (input.type === 'dock-shown') {
+      // Only the scan the Dock Fixed Intent started, and only until the user has moved on from it.
+      if (dockScanToRefresh && phase === 'icons' && source === 'dock' && input.icons.length > 0) scanIcons('dock', input.icons, input.t);
+      dockScanToRefresh = false;
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
@@ -616,6 +642,8 @@ export function createSession({
       } else if (phase === 'icons') {
         scan(input.t);
         if (input.type === 'select') {
+          // Chosen from where it is: a late read of the Dock must not restart a scan the user has moved on from.
+          dockScanToRefresh = false;
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes: false });
           if (source === 'chrome') {
             // A Chrome element isn't opened: it becomes the target of the Suggested Intents, with its name and bounds as

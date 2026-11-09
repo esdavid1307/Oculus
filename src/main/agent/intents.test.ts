@@ -51,7 +51,7 @@ describe('intentsPrompt', () => {
 
   it('keeps the model from repeating the Fixed Intents the picker always shows', () => {
     const prompt = intentsPrompt({ x: 800, y: 250, radius: 120 }, frame, []);
-    expect(prompt).toContain('Showing the Desktop and minimizing the window are always offered already, so never suggest them.');
+    expect(prompt).toContain('Showing the Desktop, minimizing the window and opening the Dock are always offered already, so never suggest them.');
   });
 
   it('tells the model the YouTube rules and keeps the safety lines', () => {

@@ -37,24 +37,24 @@ describe('the Cmd Fixed Intent', () => {
   it('is not offered when Chrome is not in front', () => {
     const { session } = thinking(false);
     const state = session(claude(5000, ['Pause', 'Mute']));
-    expect(state).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'home', 'minimize'] });
+    expect(state).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'home', 'minimize', 'dock'] });
     expect(ids(state)).not.toContain('cmd');
   });
 
   it('is offered in Chrome, after the other Fixed Intents and before Claude’s', () => {
     const { session } = thinking(true);
     const opened = session(pastIntents(4500, ['Pause', 'Mute']));
-    expect(opened).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'home', 'minimize', 'cmd'], recent: 2 });
+    expect(opened).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'home', 'minimize', 'dock', 'cmd'], recent: 2 });
     const state = session(claude(5000, ['Like', 'Share', 'Save']));
-    expect(ids(state)).toEqual(['intent-0', 'intent-1', CLOSE_KEY, 'home', 'minimize', 'cmd', 'intent-2', 'intent-3', 'intent-4', 'something-else']);
+    expect(ids(state)).toEqual(['intent-0', 'intent-1', CLOSE_KEY, 'home', 'minimize', 'dock', 'cmd', 'intent-2', 'intent-3', 'intent-4', 'something-else']);
   });
 
   it('starts a scan over the Chrome Commands, without asking Claude or running anything', () => {
     const { session, fromPicker } = thinking(true);
-    // No past Intents, so Cmd is the fourth tile, lit from 11 s.
+    // No past Intents, so Cmd is the fifth tile, lit from 13 s.
     session(claude(5000, ['Pause']));
-    expect(session(tick(11_000))).toMatchObject({ highlight: 'cmd' });
-    const state = session(select(11_100));
+    expect(session(tick(13_000))).toMatchObject({ highlight: 'cmd' });
+    const state = session(select(13_100));
     expect(state).toMatchObject({ phase: 'choosing', intents: [], fixed: ['next-tab', 'close-tab', CLOSE_KEY], highlight: 'next-tab', suggesting: false });
     expect(ids(state)).toEqual(['next-tab', 'close-tab', CLOSE_KEY, 'something-else']);
     expect(runsOrAsks(fromPicker())).toEqual([]);
@@ -62,16 +62,16 @@ describe('the Cmd Fixed Intent', () => {
 });
 
 describe('the Chrome Commands scan', () => {
-  // In the Chrome Commands scan from 11.1 s: Next Tab lit first, Close Tab from 13.1 s, Close from 15.1 s and
-  // Something else from 17.1 s.
+  // In the Chrome Commands scan from 13.1 s: Next Tab lit first, Close Tab from 15.1 s, Close from 17.1 s and
+  // Something else from 19.1 s.
   const inCommands = () => {
     const started = thinking(true);
     started.session(claude(5000, ['Pause']));
-    started.session(select(11_100));
+    started.session(select(13_100));
     return started;
   };
 
-  for (const [name, at] of [['next-tab', 11_200], ['close-tab', 13_200]] as const)
+  for (const [name, at] of [['next-tab', 13_200], ['close-tab', 15_200]] as const)
     it(`runs ${name} as a Fixed Intent, with no Claude request and no run, and goes back to sleep`, () => {
       const { session, fromPicker } = inCommands();
       expect(session(tick(at))).toMatchObject({ highlight: name });
@@ -82,7 +82,7 @@ describe('the Chrome Commands scan', () => {
 
   it('never teaches Gaze Correction, but still counts each Select Blink for Scan Pace', () => {
     const { session, fromPicker } = inCommands();
-    session(select(11_200));
+    session(select(13_200));
     expect(gazeLabels(fromPicker())).toEqual([]);
     // One for choosing Cmd, one for Next Tab.
     expect(fromPicker().filter((action) => action.type === 'learn' && action.signal.kind === 'select')).toHaveLength(2);
@@ -90,15 +90,15 @@ describe('the Chrome Commands scan', () => {
 
   it('ends on the Stop Gesture without choosing anything', () => {
     const { session, fromPicker } = inCommands();
-    session(gaze(11_200, offScreen));
-    expect(session(gaze(16_199, offScreen)).phase).toBe('choosing');
-    expect(session(gaze(16_200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    session(gaze(13_200, offScreen));
+    expect(session(gaze(18_199, offScreen)).phase).toBe('choosing');
+    expect(session(gaze(18_200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
     expect(fromPicker().filter(({ type }) => type === 'fixed-intent')).toEqual([]);
     expect(runsOrAsks(fromPicker())).toEqual([]);
   });
 
   it('ends on Close or Something else without choosing anything', () => {
-    for (const [key, at] of [[CLOSE_KEY, 15_200], ['something-else', 17_200]] as const) {
+    for (const [key, at] of [[CLOSE_KEY, 17_200], ['something-else', 19_200]] as const) {
       const { session, fromPicker } = inCommands();
       expect(session(tick(at))).toMatchObject({ highlight: key });
       expect(session(select(at + 100))).toEqual({ phase: 'idle', wakeProgress: 0 });
@@ -110,21 +110,21 @@ describe('the Chrome Commands scan', () => {
   it("keeps Claude's late answer out of it, when Cmd was chosen before Claude answered", () => {
     const { session, fromPicker } = thinking(true);
     session(pastIntents(4500, ['Pause', 'Mute']));
-    // Cmd is the sixth tile, lit from 14.5 s.
-    expect(session(tick(14_600))).toMatchObject({ highlight: 'cmd' });
-    session(select(14_700));
-    const state = session(claude(15_000, ['Like', 'Share', 'Save']));
+    // Cmd is the seventh tile, lit from 16.5 s.
+    expect(session(tick(16_600))).toMatchObject({ highlight: 'cmd' });
+    session(select(16_700));
+    const state = session(claude(17_000, ['Like', 'Share', 'Save']));
     expect(state).toMatchObject({ intents: [], fixed: ['next-tab', 'close-tab', CLOSE_KEY] });
     expect(runsOrAsks(fromPicker())).toEqual([]);
   });
 
   it('shows Cmd again, not the Chrome Commands, on the next picker', () => {
     const { session } = inCommands();
-    session(select(11_200));
-    session(gaze(12_000, inBox));
-    session(gaze(15_000, inBox));
-    session(gaze(15_100, target));
-    session(gaze(16_100, target));
-    expect(session({ type: 'intents', t: 17_000, request: 2, intents: ['Pause'] })).toMatchObject({ fixed: [CLOSE_KEY, 'home', 'minimize', 'cmd'] });
+    session(select(13_200));
+    session(gaze(14_000, inBox));
+    session(gaze(17_000, inBox));
+    session(gaze(17_100, target));
+    session(gaze(18_100, target));
+    expect(session({ type: 'intents', t: 19_000, request: 2, intents: ['Pause'] })).toMatchObject({ fixed: [CLOSE_KEY, 'home', 'minimize', 'dock', 'cmd'] });
   });
 });
