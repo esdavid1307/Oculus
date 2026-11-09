@@ -435,7 +435,7 @@ function createOverlay() {
     focusable: false,
     enableLargerThanScreen: true,
     // The tracker must keep running while the user is in another app.
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false, sandbox: false },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -566,6 +566,7 @@ function createOverlay() {
     // The Dock moves when it shows, so it is read again for the scan.
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
     else if (action.type === 'release-dock') releaseDock();
+    else if (action.type === 'learn') neural.learn(action.signal);
     else if (action.type === 'close-menu') {
       if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
       openMenu = null;
@@ -574,8 +575,7 @@ function createOverlay() {
     else if (action.source === 'menu') {
       openMenu = null;
       runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
-    } else if (action.type === 'learn') neural.learn(action.signal);
-    else openIcon(action.source, action.name);
+    } else openIcon(action.source, action.name);
   };
   const session = createSession({
     screen: bounds,
@@ -623,8 +623,6 @@ function createOverlay() {
       if (input?.type === 'gaze') {
         neural.seen(input.t, input.region);
         const region = neural.correct(input.region);
-        // The Gaze Dot shows the corrected gaze, so it sits where choices will land.
-        overlay.webContents.send('gaze-dot', region && { x: region.x, y: region.y });
         advance({ ...input, region });
       } else if (input?.type === 'select') advance(input);
       else if (input?.type === 'recalibrate') {
