@@ -7,7 +7,7 @@ import type { Rect } from '../shared/geometry';
 import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
-import { createSession, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
+import { createSession, type AgentAction, type FixedIntent, type Icon, type SessionInput, type TextBox } from '../shared/session';
 import { execute } from './agent/executor';
 import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
@@ -367,6 +367,14 @@ function createHistory(ranker: unknown) {
   };
 }
 
+// Presses the key combos for the Chrome Commands Fixed Intents: next-tab is ^Tab (keyCode 48 with control down) and
+// close-tab is ⌘W (keyCode 13 with command down). Sent through System Events like the Gaze Keyboard typing, so it needs
+// Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
+const CHROME_COMMAND_SCRIPTS: Partial<Record<FixedIntent, string>> = {
+  'next-tab': `Application('System Events').keyCode(48, { using: 'control down' })`,
+  'close-tab': `Application('System Events').keyCode(13, { using: 'command down' })`,
+};
+
 // The app in front, and with "per-site" the URL of Chrome's front tab. One osascript, so a browser costs no extra
 // launch. An Incognito window gives no URL, so private browsing is never written to the history file.
 const READ_FRONT = `function run(argv) {
@@ -479,12 +487,26 @@ function createOverlay() {
   // Walking the front window's AX tree is costly, so text boxes are only read from the Start Gesture until the session
   // goes back to idle, not all the time. The 3 s Start Gesture gives the first read time to land before a target hold.
   let wantTextBoxes = false;
+  // Whether Google Chrome is in front, from the menu bar read every ICON_READ_MS: its first item is the front app's
+  // menu. Used for the Chrome menu bar rule and for the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
+  const chromeFront = () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true;
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
     if (wantTextBoxes) refreshTextBoxes();
+  };
+  // Fires a Chrome Commands key combo through System Events. Logs a failure but never surfaces it to the overlay.
+  const runFixedIntent = (name: FixedIntent) => {
+    const script = CHROME_COMMAND_SCRIPTS[name];
+    if (!script) return console.warn(`[fixed-intent] no script for ${name}`);
+    // The keys go to whatever app is in front. The user may have spent several scan steps in the Chrome Commands, and
+    // Chrome may have lost the front (its last tab closed, a notification clicked), so ⌘W must not close another app.
+    if (!chromeFront()) return console.warn(`[fixed-intent] ${name} skipped: Google Chrome is no longer in front`);
+    execFile('osascript', ['-l', 'JavaScript', '-e', script], (error) => {
+      if (error) console.error(`Could not run the ${name} Fixed Intent:`, error.message);
+    });
   };
   const settings = readTimingsFile();
   const largeView = readLargeView(settings);
@@ -617,7 +639,8 @@ function createOverlay() {
     else if (action.type === 'close-menu') {
       if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
       openMenu = null;
-    } else if (action.source === 'menubar')
+    } else if (action.type === 'fixed-intent') runFixedIntent(action.name);
+    else if (action.source === 'menubar')
       openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
     else if (action.source === 'menu') {
       openMenu = null;
@@ -638,9 +661,10 @@ function createOverlay() {
     textBoxes: () => [...textBoxes, ...(chromeScan?.textBoxes() ?? [])],
     chrome: () => chromeScan?.elements() ?? [],
     // The front app's menus come first in the menu bar read, named by their path [process, bar, item].
-    chromeInFront: () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true,
+    chromeInFront: chromeFront,
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
+    inChrome: chromeFront,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);

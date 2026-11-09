@@ -801,6 +801,7 @@ describe('Suggested Intents', () => {
       phase: 'choosing',
       wakeProgress: 0,
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
+      fixedIntents: [],
       highlight: 'intent-0',
       cells: 4,
       recent: 0,
@@ -973,7 +974,7 @@ describe('Suggested Intents', () => {
 
     it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, recent: 2, side: 'right', stepProgress: 0 });
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], fixedIntents: [], highlight: 'intent-0', cells: 6, recent: 2, side: 'right', stepProgress: 0 });
       // The ring around the lit choice fills over its scan step and starts again on the next one.
       expect(session(tick(5500))).toMatchObject({ highlight: 'intent-0', stepProgress: 0.5 });
       expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1', stepProgress: 0 });

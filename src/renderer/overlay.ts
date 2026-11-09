@@ -30,7 +30,7 @@ import {
 } from 'lucide';
 import type { Rect } from '../shared/geometry';
 import { fallbackLook, type IntentIcon, type IntentLook } from '../shared/intent-look';
-import { CLOSE_KEY, layoutIntents, layoutKeyboard, PHRASE_KEY, type Key, type KeyId } from '../shared/keyboard';
+import { CLOSE_KEY, FIXED_KEY, FIXED_LABELS, layoutIntents, layoutKeyboard, PHRASE_KEY, type IntentsSide, type Key, type KeyId } from '../shared/keyboard';
 import { fitFrame, highlightMode, magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
@@ -218,9 +218,30 @@ const INTENT_ICON_NODES: Record<IntentIcon, IconNode> = {
 const intentLooks = new Map<string, IntentLook>();
 window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, look]) => intentLooks.set(text, look)));
 
+// The cell straight after the Fixed Intents on a picker with no Intents. layoutIntents keeps cells - 1 empty cells
+// there for Intents still to come, so there is none when cells is 1, as in the Chrome Commands scan. With cells of 2
+// or more, one placeholder Intent doesn't change the grid, so its cell is the empty one. Cached, since the state
+// arrives many times a second and the grid only changes with these.
+let emptyCellFor: { key: string; rect: Rect | undefined } | undefined;
+function firstEmptyCell(cells: number, side: IntentsSide, fixedIntents: string[]): Rect | undefined {
+  const key = `${cells} ${side} ${fixedIntents.join(' ')}`;
+  if (emptyCellFor?.key !== key) {
+    const rect = cells > 1 ? layoutIntents(screenSize, [''], cells, side, fixedIntents, 0).find(({ id }) => id === 'intent-0')?.rect : undefined;
+    emptyCellFor = { key, rect };
+  }
+  return emptyCellFor.rect;
+}
+
+// Fixed Intents have their own look, since Claude never names them.
+const FIXED_ICONS: Record<string, IntentIcon> = { cmd: 'terminal', 'next-tab': 'skip', 'close-tab': 'close' };
+
 function lookOf({ id, label }: Key): IntentLook {
   if (id === 'something-else') return { label: 'More', icon: 'more' };
   if (id === CLOSE_KEY) return { label: 'Close', icon: 'close' };
+  if (id.startsWith(FIXED_KEY)) {
+    const name = id.slice(FIXED_KEY.length);
+    return { label: FIXED_LABELS[name] ?? label, icon: FIXED_ICONS[name] ?? 'other' };
+  }
   return intentLooks.get(label) ?? fallbackLook(label);
 }
 
@@ -426,14 +447,18 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons' && entering) iconMagnifier.textContent = '';
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    const { side, cells, recent, intents } = state;
-    showKeys(`choosing ${side} ${cells} ${recent} ${intents.join('\n')}`, layoutIntents(screenSize, intents, cells, side), drawTile, recent);
+    const { side, cells, recent, intents, fixedIntents } = state;
+    // The same layout the session scans, Fixed Intents included, so the tiles line up with the highlight.
+    const keys = layoutIntents(screenSize, intents, cells, side, fixedIntents, recent);
+    showKeys(`choosing ${side} ${cells} ${recent} ${fixedIntents.join(' ')} ${intents.join('\n')}`, keys, drawTile, recent);
     highlightKey(state.highlight);
     showStepProgress(state.stepProgress);
-    // In the first cell, where an intent would be. The reason is in the log.
-    place(noIntents, onSheet(layoutIntents(screenSize, [''], state.cells, state.side)[0].rect));
   }
-  noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
+  // In the first empty cell, where Claude's first Intent would be, after any Fixed Intents. The reason is in the log.
+  // The Chrome Commands scan has no empty cell, so the message isn't shown there.
+  const emptyCell = state.phase === 'choosing' && state.intents.length === 0 ? firstEmptyCell(state.cells, state.side, state.fixedIntents) : undefined;
+  if (emptyCell) place(noIntents, onSheet(emptyCell));
+  noIntents.hidden = emptyCell === undefined;
   showStatus(state);
   showStopHint(state);
   if (!entering) return;

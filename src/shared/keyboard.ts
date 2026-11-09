@@ -16,6 +16,25 @@ export const PHRASE_KEY = 'phrase:';
 export const MAX_SHOWN_PHRASES = 2;
 // Closes the Suggested Intents without running anything.
 export const CLOSE_KEY = 'close';
+// Fixed Intent key id prefix: a tile the user picks runs as key presses in main (or starts a nested scan) instead of
+// going through Claude. The chosen FixedIntent name follows the prefix, e.g. 'fixed-cmd'.
+export const FIXED_KEY = 'fixed-';
+
+// Short, user-facing labels for each Fixed Intent. Keeping them next to FIXED_KEY so new Fixed Intents added by
+// later tickets have one place to name themselves.
+export const FIXED_LABELS: Record<string, string> = {
+  cmd: 'Cmd',
+  'next-tab': 'Next Tab',
+  'close-tab': 'Close Tab',
+  // Placeholders used only when later tickets add these Fixed Intents; harmless now.
+  close: 'Close',
+  home: 'Home',
+  minimize: 'Minimize',
+  dock: 'Dock',
+  type: 'Type',
+  search: 'Search',
+  'new-tab': 'New Tab',
+};
 
 // The Suggested Intents sit in a column on one side, so the rest of the screen, and the target, stay in view.
 export type IntentsSide = 'left' | 'right';
@@ -83,11 +102,13 @@ const WIDE_PANEL = 3 / 8;
 
 // cells is how many slots come before Close, Something else included. Every Intent gets a cell even past that, up to
 // MAX_INTENT_TILES in all.
-export function layoutIntents({ width, height }: Screen, intents: string[], cells = 4, side: IntentsSide = 'right'): Key[] {
-  // Every slot keeps its place as Claude's Intents join, so nothing moves: the Intents, then Something else in the last
-  // of the cells, then Close.
-  const slots = Math.min(Math.max(cells, intents.length + 1), MAX_INTENT_TILES - 1);
-  const shown = intents.slice(0, slots - 1);
+// recent is how many of the intents, from the first, are past Intents. Fixed Intents sit in the grid between the past
+// and Claude's Intents, so the Fixed tiles are easy to reach without walking past Claude's answers.
+export function layoutIntents({ width, height }: Screen, intents: string[], cells = 4, side: IntentsSide = 'right', fixedIntents: string[] = [], recent = 0): Key[] {
+  // Every slot keeps its place as Claude's Intents join, so nothing moves: the past Intents, then the Fixed Intents,
+  // then Claude's, then Something else in the last of the cells, then Close.
+  const totalCells = cells + fixedIntents.length;
+  const slots = Math.min(Math.max(totalCells, intents.length + fixedIntents.length + 1), MAX_INTENT_TILES - 1);
   const columns = slots + 1 > 2 * INTENT_MAX_ROWS ? 3 : 2;
   const rows = Math.ceil((slots + 1) / columns);
   const panelWidth = Math.floor(columns === 2 ? width / 3 : width * WIDE_PANEL);
@@ -102,8 +123,15 @@ export function layoutIntents({ width, height }: Screen, intents: string[], cell
     width: tileWidth,
     height: tileHeight,
   });
+  // In scan order, cut together to the slots - 1 cells before Something else, so no tile can land on it or on Close.
+  // Indices into `intents` are kept as `intent-${i}`, so a later `intents` input can be matched back.
+  const ordered = [
+    ...intents.slice(0, recent).map((label, i) => ({ id: `intent-${i}`, label })),
+    ...fixedIntents.map((name) => ({ id: FIXED_KEY + name, label: FIXED_LABELS[name] ?? name })),
+    ...intents.slice(recent).map((label, i) => ({ id: `intent-${recent + i}`, label })),
+  ].slice(0, slots - 1);
   return [
-    ...shown.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
+    ...ordered.map((key, i) => ({ ...key, rect: cell(i) })),
     { id: 'something-else', label: 'Something else', rect: cell(slots - 1) },
     { id: CLOSE_KEY, label: 'Close', rect: cell(slots) },
   ];
