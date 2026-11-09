@@ -169,4 +169,17 @@ describe('Done', () => {
   it('still submits when the session asks it to, as after Search or New Tab', () => {
     expect(onDone({ kind: 'failed' }, undefined, true)).toEqual({ submit: true, learn: false });
   });
+
+  it('always sends in Messages, whose compose box takes many lines, and still learns by the field read now', () => {
+    expect(onDone({ kind: 'field', field: textArea }, undefined, false, true)).toEqual({ submit: true, learn: true });
+    expect(onDone({ kind: 'field', field: textArea }, textArea, false, true)).toEqual({ submit: true, learn: true });
+    expect(onDone({ kind: 'none' }, undefined, false, true)).toEqual({ submit: true, learn: false });
+    expect(onDone({ kind: 'failed' }, textArea, false, true)).toEqual({ submit: true, learn: false });
+    expect(onDone({ kind: 'field', field: password }, undefined, false, true)).toEqual({ submit: true, learn: false });
+  });
+
+  it('follows the field in another app', () => {
+    expect(onDone({ kind: 'field', field: textArea }, textArea, false, false)).toEqual({ submit: false, learn: true });
+    expect(onDone({ kind: 'none' }, undefined, false, false)).toEqual({ submit: false, learn: false });
+  });
 });
