@@ -797,16 +797,20 @@ describe('Suggested Intents', () => {
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
       highlight: 'intent-0',
       cells: 4,
+      side: 'right',
+      stepProgress: 0,
     });
     expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
       'Skip the ad',
       'Open a related video',
       'Pause',
       'Something else',
+      'Close',
     ]);
   });
 
-  // Suggestions arrive at 5000 ms, so the scan reaches intent-1 at 7000, intent-2 at 9000 and Something else at 11000.
+  // Suggestions arrive at 5000 ms, so the scan reaches intent-1 at 7000, intent-2 at 9000, Something else at 11000 and
+  // Close at 13000.
   const choosing = (intents = ['Skip the ad', 'Open a related video', 'Pause']) => {
     const woken = thinking();
     woken.session({ type: 'intents', t: 5000, request: 1, intents });
@@ -818,13 +822,15 @@ describe('Suggested Intents', () => {
     expect(session(tick(6999))).toMatchObject({ highlight: 'intent-0' });
     expect(session(tick(7000))).toMatchObject({ highlight: 'intent-1' });
     expect(session(tick(11_000))).toMatchObject({ highlight: 'something-else' });
-    expect(session(tick(13_000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(13_000))).toMatchObject({ highlight: 'close' });
+    expect(session(tick(15_000))).toMatchObject({ highlight: 'intent-0' });
   });
 
   it('scans only the choices on screen when the model offers fewer than 3', () => {
     const { session } = choosing(['Pause']);
     expect(session(tick(7000))).toMatchObject({ highlight: 'something-else' });
-    expect(session(tick(9000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(9000))).toMatchObject({ highlight: 'close' });
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'intent-0' });
   });
 
   it('runs the highlighted Suggested Intent on a Select Blink, which is the confirmation', () => {
@@ -960,8 +966,10 @@ describe('Suggested Intents', () => {
 
     it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6 });
-      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
+      // The ring around the lit choice fills over its scan step and starts again on the next one.
+      expect(session(tick(5500))).toMatchObject({ highlight: 'intent-0', stepProgress: 0.5 });
+      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1', stepProgress: 0 });
       expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
     });
 
@@ -993,15 +1001,17 @@ describe('Suggested Intents', () => {
       expect(session(tick(6600))).toMatchObject({ highlight: 'something-else' });
       expect(session(claude(6600, ['Like', 'Share']))).toMatchObject({ highlight: 'something-else' });
       expect(session(tick(8499))).toMatchObject({ highlight: 'something-else' });
-      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-0' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'close' });
+      expect(session(tick(10_500))).toMatchObject({ highlight: 'intent-0' });
     });
 
     it("keeps every cell where it was when Claude's Intents arrive", () => {
       const before = layoutIntents(screen, ['Pause', 'Mute'], 6);
       const after = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6);
       expect(after.slice(0, 2).map((key) => key.rect)).toEqual(before.slice(0, 2).map((key) => key.rect));
-      expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
-      expect(after).toHaveLength(6);
+      // Something else and Close stay put too.
+      expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
+      expect(after).toHaveLength(7);
     });
 
     it('does nothing when Claude only repeats the past Intents', () => {
@@ -1184,6 +1194,56 @@ describe('Running an Intent', () => {
     session(finish(6000));
     expect(session(select(6100)).phase).toBe('finished');
     expect(actions).toHaveLength(2);
+  });
+});
+
+describe('Suggested Intents side panel', () => {
+  const overlap = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+  it('sets the choices out in a 2-column grid on the given side, Close last, leaving the rest of the screen clear', () => {
+    for (const side of ['left', 'right'] as const) {
+      const keys = layoutIntents(screen, ['Skip the ad', 'Pause'], 4, side);
+      expect(keys.map(({ id }) => id)).toEqual(['intent-0', 'intent-1', 'something-else', 'close']);
+      expect(keys.at(-1)!.label).toBe('Close');
+      const panel = { x: side === 'left' ? 0 : screen.width - Math.floor(screen.width / 3), width: Math.floor(screen.width / 3) };
+      for (const { rect } of keys) {
+        // Inside a third of the screen against its own edge.
+        expect(rect.x >= panel.x && rect.x + rect.width <= panel.x + panel.width + 0.001).toBe(true);
+        expect(rect.y >= 0 && rect.y + rect.height <= screen.height).toBe(true);
+        // Square-ish.
+        expect(rect.height / rect.width).toBeLessThanOrEqual(1.1);
+        for (const other of keys) if (other.rect !== rect) expect(overlap(rect, other.rect)).toBe(false);
+      }
+      // Two across, in scan order: left to right, then down.
+      expect(keys[0].rect.y).toBe(keys[1].rect.y);
+      expect(keys[0].rect.x).toBeLessThan(keys[1].rect.x);
+      expect(keys[2].rect.y).toBeGreaterThan(keys[0].rect.y);
+    }
+  });
+
+  // Woken at 3 s, the target held from 3.1 s, and Claude's Intents in at 5 s.
+  const choosing = (target: { x: number; y: number; radius: number }) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action) });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, target));
+    session(gaze(4100, target));
+    const state = session({ type: 'intents', t: 5000, request: 1, intents: ['Skip the ad', 'Pause'] });
+    return { session, actions, state };
+  };
+
+  it('puts the panel on the side away from the target, so the target stays in view', () => {
+    expect(choosing({ x: 300, y: 300, radius: 120 }).state).toMatchObject({ phase: 'choosing', side: 'right' });
+    expect(choosing({ x: 1300, y: 300, radius: 120 }).state).toMatchObject({ phase: 'choosing', side: 'left' });
+  });
+
+  it('closes the Suggested Intents on Close, running nothing and asking for nothing more', () => {
+    const { session, actions } = choosing({ x: 300, y: 300, radius: 120 });
+    // Skip the ad at 5 s, Pause at 7 s, Something else at 9 s and Close at 11 s.
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'close' });
+    expect(session({ type: 'select', t: 11_100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions).toEqual([{ type: 'suggest-intents', region: { x: 300, y: 300, radius: 120 }, request: 1, turnedDown: [] }]);
   });
 });
 

@@ -34,7 +34,7 @@ describe.skipIf(!dir)('intents eval (real model)', () => {
       const frame = { x: 0, y: 0, ...spec.display, imageWidth, imageHeight };
       const config = readAgentConfig(process.env, 'shortcut')!;
       const started = Date.now();
-      const intents = await suggestIntents(spec.region, [], config, async () => ({ png, frame, savedTo }), console.log);
+      const intents = (await suggestIntents(spec.region, [], config, async () => ({ png, frame, savedTo }), console.log)).map(({ text }) => text);
       const matches = (pattern: string, text: string) => new RegExp(pattern, 'i').test(text);
       const checks = [
         !spec.expectFirst || (intents[0] !== undefined && matches(spec.expectFirst, intents[0])),

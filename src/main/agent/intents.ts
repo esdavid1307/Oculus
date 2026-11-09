@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import type { GazeRegion } from '../../shared/gaze';
+import { fallbackLook, INTENT_ICONS, isIntentIcon, shortLabel, type IntentLook } from '../../shared/intent-look';
 import { isSkipAd } from '../../shared/skip-ad';
 import { DENIED_TOOLS } from './claude-code';
 import { AGENT_MAX_TOKENS, FALLBACK_BETA, LOG_PREFIX, type AgentConfig, type Capture, type ScreenFrame, type Screenshot } from './types';
@@ -27,12 +28,25 @@ const VIDEO_RULES =
 const DOCUMENT_RULES =
   'If the user is looking at a document they are writing, such as an essay in Google Docs, offer exactly "Continue the essay", first after any ad. ';
 
+// text is what runs; label and icon only draw the tile.
 const INTENTS_SCHEMA = {
   type: 'object',
-  properties: { intents: { type: 'array', items: { type: 'string' } } },
+  properties: {
+    intents: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { text: { type: 'string' }, label: { type: 'string' }, icon: { type: 'string', enum: [...INTENT_ICONS] } },
+        required: ['text', 'label', 'icon'],
+        additionalProperties: false,
+      },
+    },
+  },
   required: ['intents'],
   additionalProperties: false,
 };
+
+export type SuggestedIntent = { text: string; look: IntentLook };
 
 // The Gaze Region is in display points; the model sees a smaller image, so it gets the region in that image's pixels.
 // turnedDown are the Suggested Intents passed over with Something else for this target.
@@ -46,12 +60,15 @@ export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown
     DOCUMENT_RULES +
     (turnedDown.length ? `They turned down ${JSON.stringify(turnedDown)}, so suggest different ones. ` : '') +
     'Each is one short action of at most 6 words. ' +
-    'Reply with only JSON: {"intents": ["..."]}'
+    'Give each a label of 1 or 2 words for a small tile, such as "Screenshot" or "Scroll", ' +
+    `and the icon that fits it best, one of ${INTENT_ICONS.join(', ')}. ` +
+    'Reply with only JSON: {"intents": [{"text": "...", "label": "...", "icon": "..."}]}'
   );
 }
 
-// Anything unreadable gives no intents, and the user can still choose Something else.
-export function parseIntents(reply: string, turnedDown: string[] = []): string[] {
+// Anything unreadable gives no intents, and the user can still choose Something else. A plain string, or an answer
+// with no usable label or icon, still counts: only the tile falls back.
+export function parseSuggestions(reply: string, turnedDown: string[] = []): SuggestedIntent[] {
   const json = reply.match(/\{[\s\S]*\}/)?.[0];
   if (!json) return [];
   try {
@@ -59,15 +76,26 @@ export function parseIntents(reply: string, turnedDown: string[] = []): string[]
     if (!Array.isArray(intents)) return [];
     // Turned-down intents count as seen, so the model can't offer them again word for word.
     const seen = new Set(turnedDown.map((text) => text.toLowerCase()));
-    const texts = intents.flatMap((intent) => (typeof intent === 'string' && intent.trim() ? [intent.trim()] : []));
-    const unique = texts.filter((text) => !seen.has(text.toLowerCase()) && seen.add(text.toLowerCase()));
+    const read = (intent: unknown): SuggestedIntent[] => {
+      const raw = typeof intent === 'string' ? intent : (intent as { text?: unknown } | null)?.text;
+      if (typeof raw !== 'string' || !raw.trim()) return [];
+      const text = raw.trim();
+      const { label, icon } = (typeof intent === 'object' ? intent : {}) as { label?: unknown; icon?: unknown };
+      const fallback = fallbackLook(text);
+      return [{ text, look: { label: typeof label === 'string' && label.trim() ? shortLabel(label) : fallback.label, icon: isIntentIcon(icon) ? icon : fallback.icon } }];
+    };
+    const unique = intents.flatMap(read).filter(({ text }) => !seen.has(text.toLowerCase()) && seen.add(text.toLowerCase()));
     // Cheap local guarantee that skipping an ad is offered first, even if the model buried it.
-    const skip = unique.findIndex((text) => isSkipAd(text));
+    const skip = unique.findIndex(({ text }) => isSkipAd(text));
     if (skip > 0) unique.unshift(...unique.splice(skip, 1));
     return unique.slice(0, MAX_INTENTS);
   } catch {
     return [];
   }
+}
+
+export function parseIntents(reply: string, turnedDown: string[] = []): string[] {
+  return parseSuggestions(reply, turnedDown).map(({ text }) => text);
 }
 
 async function askApi(config: AgentConfig, shot: Screenshot, prompt: string, signal?: AbortSignal) {
@@ -152,7 +180,7 @@ export async function suggestIntents(
   capture: Capture,
   log: (line: string) => void = console.log,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<SuggestedIntent[]> {
   const started = Date.now();
   try {
     if (config.backend === 'api' && !process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing: copy .env.example to .env');
@@ -161,8 +189,8 @@ export async function suggestIntents(
     signal?.throwIfAborted();
     const prompt = intentsPrompt(region, shot.frame, turnedDown);
     const reply = config.backend === 'api' ? await askApi(config, shot, prompt, signal) : await askClaudeCode(config, shot, prompt, signal);
-    const intents = parseIntents(reply, turnedDown);
-    log(`${LOG_PREFIX} suggested intents in ${Date.now() - started} ms (${config.backend}, ${config.model}): ${JSON.stringify(intents)}`);
+    const intents = parseSuggestions(reply, turnedDown);
+    log(`${LOG_PREFIX} suggested intents in ${Date.now() - started} ms (${config.backend}, ${config.model}): ${JSON.stringify(intents.map(({ text }) => text))}`);
     return intents;
   } catch (error) {
     log(`${LOG_PREFIX} could not suggest intents: ${error instanceof Error ? error.message : String(error)}`);
