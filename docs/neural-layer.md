@@ -78,8 +78,8 @@ That's about 5 scan steps fewer per icon, about 10 s at the default 2 s step. Th
 `OCULUS_MOUSE_SHIFT="-100,60" npm run dev` makes the dev mouse input read off like a badly calibrated webcam. The terminal logs `[neural]` lines:
 
 ```
-[neural] gaze correction on: 6 selections, held-out error 117 -> 9 px
-[neural] scan step 2000 -> 1744 ms from 12 presses
+[neural] gaze correction on: <n> selections, held-out error <before> -> <after> px
+[neural] scan step <old> -> <new> ms from <n> presses
 ```
 
 Known limits:
