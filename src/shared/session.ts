@@ -1,15 +1,19 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
+import type { LearningSignal } from './neural/layer';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { CLOSE_KEY, GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type IntentsSide, type KeyId } from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[] }
-  // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
+  // stepMs is how long the highlight stays on one key or icon, for the bar drawn under it. Display only.
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[]; stepMs: number }
+  // cells is how many slots layoutIntents draws before Close: 6 when past Intents are in the picker, otherwise 4.
+  // side is where the column goes, away from the target.
+  // stepProgress runs from 0 to 1 while the highlight stays on one choice, for the ring drawn around it. Display only.
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6; side: IntentsSide; stepProgress: number }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
-  | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
+  | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon; stepMs: number }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
   | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string }
 ) & {
@@ -57,13 +61,16 @@ export type AgentAction =
   // region is the target the Intent was suggested for, so "Open this video" knows which video.
   // sinceWakeMs is the time from the Start Gesture waking the agent (or the last icon opened) to the Select Blink that
   // chose this Intent, for Time to Action.
-  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number }
+  // held is when the user held their gaze on that target, so a run that went well can teach Gaze Correction.
+  | { type: 'run-intent'; intent: string; region: GazeRegion; request: number; sinceWakeMs: number; held: { from: number; to: number } }
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
   | { type: 'release-dock' }
-  | { type: 'close-menu' };
+  | { type: 'close-menu' }
+  // A confirmed choice for the Neural Layer to learn from. See src/shared/neural/layer.ts.
+  | { type: 'learn'; signal: LearningSignal };
 
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
@@ -79,6 +86,9 @@ const HOLD_GRACE_MS = 500;
 // The gaze must be off the screen this long before the Stop Gesture countdown shows, so a lost camera frame or a blink
 // doesn't flash it while the user is just reading. The 5 s still count from the first sample off the screen.
 const STOP_HINT_DELAY_MS = 1000;
+
+// The Centre Box is large, so where the user looked inside it is a guess. It counts for a quarter of a sure selection.
+const WAKE_GAZE_WEIGHT = 0.25;
 
 const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, targetHoldMs: 1000, iconHoldMs: 3000, finishedMs: 3000 };
 
@@ -149,6 +159,8 @@ export function createSession({
   desktop = () => [],
   menubar = () => [],
   textBoxes = () => [],
+  orderIcons = (_source, names) => names,
+  scanPace,
 }: {
   screen: Screen;
   timings?: unknown;
@@ -162,6 +174,10 @@ export function createSession({
   menubar?: () => Icon[];
   // Text fields the Gaze Keyboard can type into, read from the app in front.
   textBoxes?: () => TextBox[];
+  // The Neural Layer's Icon Order: icon names in screen order in, the order to scan them out.
+  orderIcons?: (source: IconSource, names: string[]) => string[];
+  // The Neural Layer's Scan Pace: the step to use from the next restart of a scan. scanStepMs when left out.
+  scanPace?: () => number;
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar };
@@ -183,6 +199,14 @@ export function createSession({
   let group: string | null = null;
   // The Gaze Keyboard scans: the highlight steps through the keys in order, from the first key after every press.
   let scanStart = 0;
+  // Read when a scan starts again, so a learned Scan Pace never changes the step under a highlight.
+  let stepMs = scanStepMs;
+  // A text box the user looked at, which teaches Gaze Correction once Done confirms what was typed into it.
+  let textBoxGaze: { from: number; to: number; target: { x: number; y: number } } | null = null;
+  // When the gaze settled on the target the Suggested Intents are for.
+  let held = { from: 0, to: 0 };
+  // Every icon of the current Icon Scan, in screen order.
+  let scanned: string[] = [];
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let phrases: string[] = [];
@@ -209,12 +233,19 @@ export function createSession({
   let summary = '';
   let finishedAt = 0;
 
+  function restartScan(t: number) {
+    scanStart = t;
+    stepMs = scanPace?.() ?? scanStepMs;
+  }
+
+  const learn = (signal: LearningSignal) => act({ type: 'learn', signal });
+
   // Suggested Intents and icons scan the same way as the Gaze Keyboard.
   function scan(t: number) {
-    const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
+    const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / stepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrases).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells, side()) : layoutKeyboard(screen, group, suggestions, phrases).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -226,8 +257,13 @@ export function createSession({
     if (all.length === 0) return;
     phase = 'icons';
     source = from;
-    icons = [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
-    scanStart = t;
+    const inScreenOrder = [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
+    scanned = inScreenOrder.map(({ name }) => name);
+    // The icons this user opens most come first. Two icons with one name can't be told apart, so they keep screen order.
+    const byName = new Map(inScreenOrder.map((icon) => [icon.name, icon]));
+    const ordered = byName.size === inScreenOrder.length ? orderIcons(from, scanned).map((name) => byName.get(name)) : [];
+    icons = ordered.length === inScreenOrder.length && ordered.every(Boolean) ? (ordered as Icon[]) : inScreenOrder;
+    restartScan(t);
     scan(t);
   }
 
@@ -264,7 +300,7 @@ export function createSession({
     text = '';
     group = null;
     refreshSuggestions();
-    scanStart = t;
+    restartScan(t);
     scan(t);
   }
 
@@ -283,13 +319,20 @@ export function createSession({
     else if (key === 'delete') text = text.slice(0, -1);
     else if (key === 'space') text += ' ';
     else if (key === 'done') {
-      if (text !== '') act({ type: 'type-text', text });
+      if (text !== '') {
+        act({ type: 'type-text', text });
+        if (textBoxGaze) learn({ kind: 'gaze', ...textBoxGaze, weight: 1 });
+      }
+      textBoxGaze = null;
       phase = 'idle';
     } else {
       text += key;
       group = null;
     }
   }
+
+  // The picker goes on the half of the screen the target isn't on.
+  const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
 
   function suggestIntents(region: GazeRegion, passedOver: string[]) {
     asked = region;
@@ -300,10 +343,12 @@ export function createSession({
 
   function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
+    // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
+    if (key === CLOSE_KEY) return stop();
     intent = intents[Number(key.replace('intent-', ''))];
     activity = '';
     phase = 'running';
-    act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt });
+    act({ type: 'run-intent', intent, region: asked!, request: ++request, sinceWakeMs: t - wokeAt, held });
   }
 
   // The text box the Gaze Region touches, nearest first, so staring between two picks the one closer in.
@@ -333,8 +378,10 @@ export function createSession({
     if (t - target.start >= targetHoldMs) {
       // Where the gaze settled, not where the hold began: the first sample is often still on the way in.
       const box = textBoxAt(region);
+      held = { from: target.start, to: t };
       if (box) {
         act({ type: 'focus-text-box', name: box.name, rect: box.rect });
+        textBoxGaze = { ...held, target: { x: box.rect.x + box.rect.width / 2, y: box.rect.y + box.rect.height / 2 } };
         openKeyboard(t);
       } else suggestIntents(region, []);
       target = null;
@@ -348,15 +395,19 @@ export function createSession({
     if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
     phase = 'idle';
     awaySince = null;
+    textBoxGaze = null;
     // A Dock hold in progress ends too, so the Dock is released at the end of this input and not left forced open.
     iconHold = null;
   }
 
   function shown(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases };
-    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases, stepMs };
+    if (phase === 'choosing') {
+      const stepProgress = (Math.max(now - scanStart, 0) % stepMs) / stepMs;
+      return { phase, wakeProgress, intents, highlight, cells, side: side(), stepProgress };
+    }
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
-    if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
+    if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight!, stepMs };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
   }
@@ -381,7 +432,7 @@ export function createSession({
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_PAST_INTENTS);
         cells = 6;
-        scanStart = input.t;
+        restartScan(input.t);
         scan(input.t);
       }
     } else if (input.type === 'intents') {
@@ -389,7 +440,7 @@ export function createSession({
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
         cells = 4;
-        scanStart = input.t;
+        restartScan(input.t);
         scan(input.t);
       } else if (phase === 'choosing' && input.request === request) {
         // Claude's Suggested Intents join the end of what the user is already scanning. Nothing moves.
@@ -398,12 +449,12 @@ export function createSession({
         if (added.length > 0) {
           scan(input.t);
           const before = highlight;
-          const spent = Math.max(input.t - scanStart, 0) % scanStepMs;
+          const spent = Math.max(input.t - scanStart, 0) % stepMs;
           intents = [...intents, ...added];
           // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
           // where it was, so the same key stays lit and keeps the time it already had.
-          const at = layoutIntents(screen, intents, cells).findIndex((key) => key.id === before);
-          scanStart = input.t - at * scanStepMs - spent;
+          const at = layoutIntents(screen, intents, cells, side()).findIndex((key) => key.id === before);
+          scanStart = input.t - at * stepMs - spent;
           scan(input.t);
         }
       }
@@ -441,6 +492,8 @@ export function createSession({
       } else if (phase === 'icons') {
         scan(input.t);
         if (input.type === 'select') {
+          learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes: false });
+          learn({ kind: 'icon-opened', source, scanned, chosen: iconHighlight!.name });
           act({ type: 'open-icon', source, name: iconHighlight!.name });
           // The opened app takes the focus, which drops the Dock. Opening also gives back any focus the Dock kept.
           dockShown = false;
@@ -453,9 +506,12 @@ export function createSession({
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
         if (input.type === 'select') {
+          // Back and Delete take back the press before, which then landed a step late.
+          const undoes = phase === 'typing' && (highlight === 'back' || highlight === 'delete');
+          learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes });
           press(highlight, input.t);
           if (phase === 'typing') refreshSuggestions();
-          scanStart = input.t;
+          restartScan(input.t);
           scan(input.t);
         }
       }
@@ -468,6 +524,8 @@ export function createSession({
         wakeProgress = 0;
       }
       if (wakeProgress === 1) {
+        // A weak label: the user looked at the Centre Box, most likely its middle, where the words are.
+        learn({ kind: 'gaze', from: holdStart!, to: input.t, target: { x: screen.width / 2, y: screen.height / 2 }, weight: WAKE_GAZE_WEIGHT });
         phase = 'waiting-for-target';
         wokeAt = input.t;
         iconHold = null;

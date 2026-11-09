@@ -41,7 +41,7 @@ The area of the screen the user is probably looking at, always treated as an are
 _Avoid_: Gaze point, cursor
 
 **Gaze Correction**:
-The personal adjustment learned from a user's confirmed selections that makes their Gaze Region more accurate.
+The personal adjustment learned from a user's confirmed selections that makes their Gaze Region more accurate. Part of the Neural Layer. It is only used once it has been shown to help, and starts again after every calibration.
 _Avoid_: Adaptation, personalization, training
 
 **Gaze Dot**:
@@ -59,6 +59,14 @@ _Avoid_: Click, wink
 **Icon Scan**:
 Looking near the macOS Dock, anywhere along the menu bar, or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. A menu bar item that opens a menu starts a second scan over its commands. The agent stays awake afterwards.
 _Avoid_: Dock Scan, Dock snap, dock mode
+
+**Icon Order**:
+The order an Icon Scan steps through, learned from the icons this user opens so the usual ones come first. Screen order until it has learned anything. Part of the Neural Layer.
+_Avoid_: Favourites, icon ranking
+
+**Scan Pace**:
+The scan step learned from how fast this user presses once their key is highlighted, between 900 ms and 1.5 times the default. Part of the Neural Layer. It never changes a `scanStepMs` the user set in config.json.
+_Avoid_: Scan speed, auto-speed
 
 **Start Gesture**:
 The deliberate look at the Centre Box that wakes the agent. It replaced the corner Wake Gesture.
@@ -91,3 +99,7 @@ _Avoid_: Tooltip, zoom
 **Suggested Phrase**:
 An earlier-submitted text the Gaze Keyboard offers, in a wide key scanned before the Suggested Words, once 2 or more typed letters match its start. Up to two are shown at a time, ranked by how often and how recently they were sent. Choosing one replaces everything typed so far.
 _Avoid_: Autocomplete, saved message
+
+**Neural Layer**:
+Where every choice the user confirms goes to teach Oculus about them: Gaze Correction, Icon Order and Scan Pace. Off with `"neuralLayer": false` in config.json. See `docs/neural-layer.md`.
+_Avoid_: AI layer, learning mode, personalization

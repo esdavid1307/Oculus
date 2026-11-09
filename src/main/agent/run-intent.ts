@@ -48,6 +48,9 @@ export type IntentOutcome = {
   // One short sentence for the overlay, at most SUMMARY_MAX_CHARS.
   summary: string;
   ms: number;
+  // Where the agent first clicked, in screen points, even in a run that failed. Only a run that went well uses it, as
+  // what the user meant by "this".
+  firstClick?: { x: number; y: number };
 };
 
 export type RunIntentDeps = {
@@ -135,7 +138,7 @@ export async function runIntent(run: IntentRun, config: AgentConfig, deps: RunIn
   const { log, now, signal } = deps;
   const started = now();
   log(`${RUN_LOG_PREFIX} start request=${run.request} backend=${config.backend} model=${config.model} intent=${JSON.stringify(run.intent)}`);
-  let outcome: Pick<IntentOutcome, 'ok' | 'stopped' | 'summary'>;
+  let outcome: Pick<IntentOutcome, 'ok' | 'stopped' | 'summary' | 'firstClick'>;
   try {
     if (signal.aborted) {
       outcome = readOutcome({ ok: false, finalText: '', error: STOPPED_ERROR });
@@ -194,6 +197,8 @@ export async function runIntent(run: IntentRun, config: AgentConfig, deps: RunIn
             })
           : await (deps.backends?.api ?? runAgentCheck)(options, { messages: deps.messages(), capture, execute, log, sleep, now, signal });
       outcome = readOutcome(result);
+      const click = result.actions.find(({ ok, action }) => ok && action?.type === 'click' && action.at)?.action;
+      if (click?.type === 'click' && click.at) outcome = { ...outcome, firstClick: click.at };
       // "Done" is the agent's own word, so it stands only if the screen agrees.
       if (outcome.ok && typedNowhere) outcome = { ok: false, stopped: false, summary: TYPED_NOWHERE };
       else if (outcome.ok && first && unchanged(first, await deps.capture())) outcome = { ok: false, stopped: false, summary: NOTHING_CHANGED };
