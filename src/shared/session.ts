@@ -1,7 +1,7 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { LearningSignal } from './neural/layer';
 import type { Rect, Screen } from './geometry';
-import { CLOSE_KEY, GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type IntentsSide, type KeyId } from './keyboard';
+import { CLOSE_KEY, FIXED_KEY, GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type IntentsSide, type KeyId } from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
@@ -9,9 +9,10 @@ export type OverlayState = (
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[]; stepMs: number }
   // cells is how many slots layoutIntents draws before Close, with room kept for the Intents still to come.
   // recent is how many of the intents, from the first, are past Intents.
+  // fixedIntents are the Fixed Intent names in display order, sitting between past and Claude's Intents in the grid.
   // side is where the column goes, away from the target.
   // stepProgress runs from 0 to 1 while the highlight stays on one choice, for the ring drawn around it. Display only.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: number; recent: number; side: IntentsSide; stepProgress: number }
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; fixedIntents: FixedIntent[]; highlight: KeyId; cells: number; recent: number; side: IntentsSide; stepProgress: number }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon; stepMs: number }
@@ -74,7 +75,15 @@ export type AgentAction =
   | { type: 'release-dock' }
   | { type: 'close-menu' }
   // A confirmed choice for the Neural Layer to learn from. See src/shared/neural/layer.ts.
-  | { type: 'learn'; signal: LearningSignal };
+  | { type: 'learn'; signal: LearningSignal }
+  // A Fixed Intent the user chose. Run as key presses in main, with no Claude call. #67 (cmd / next-tab / close-tab)
+  // introduces this; later issues add home, minimize, dock, type, search, new-tab. Choosing a Fixed Intent never
+  // sends suggest-intents or run-intent, never teaches Gaze Correction, and is never kept in Intent History.
+  | { type: 'fixed-intent'; name: FixedIntent };
+
+// Every Fixed Intent name across all tickets, so a later issue can add its own handling without changing this file.
+// Cmd is the meta Fixed Intent that opens the Chrome Commands scan; it emits no action itself.
+export type FixedIntent = 'close' | 'home' | 'minimize' | 'dock' | 'type' | 'cmd' | 'next-tab' | 'close-tab' | 'search' | 'new-tab';
 
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
@@ -165,6 +174,7 @@ export function createSession({
   textBoxes = () => [],
   orderIcons = (_source, names) => names.map((_, i) => i),
   scanPace,
+  inChrome = () => false,
 }: {
   screen: Screen;
   timings?: unknown;
@@ -183,6 +193,10 @@ export function createSession({
   orderIcons?: (source: IconSource, names: string[]) => number[];
   // The Neural Layer's Scan Pace: the step to use from the next restart of a scan. scanStepMs when left out.
   scanPace?: () => number;
+  // True when Google Chrome is the app in front. Decides whether the Chrome-only Fixed Intent (Cmd) shows in the
+  // picker. Checked at picker-open; the result is captured for that picker, so a late front-app change doesn't change
+  // what the user is looking at. Defaults to () => false, which means "treat as never in Chrome".
+  inChrome?: () => boolean;
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar };
@@ -221,6 +235,12 @@ export function createSession({
   let suggestions: string[] = [];
   let phrases: string[] = [];
   let intents: string[] = [];
+  // Fixed Intents on this picker, in the order they appear in the grid between past and Claude's Intents. The picker
+  // keeps the Fixed Intents from when it opened, so a front-app change mid-scan can't swap tiles under the user's gaze.
+  let fixedIntents: FixedIntent[] = [];
+  // Set while the user is inside the Chrome Commands nested scan, so a choice there emits a Fixed Intent instead of
+  // running an Intent, and so a stop ends only that scan.
+  let inChromeCommands = false;
   let cells = 0;
   let recent = 0;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
@@ -256,7 +276,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / stepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells, side()) : layoutKeyboard(screen, group, suggestions, phrases).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells, side(), fixedIntents, recent) : layoutKeyboard(screen, group, suggestions, phrases).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -354,10 +374,49 @@ export function createSession({
     phase = 'thinking';
   }
 
+  // The Fixed Intents on a fresh picker, in display order. Cmd is Chrome-only and sits last among the Fixed Intents;
+  // later issues add close, home, minimize, dock and type before it. Captured once at picker open so a late front-app
+  // change doesn't swap tiles under the user's gaze.
+  function fixedIntentsForPicker(): FixedIntent[] {
+    inChromeCommands = false;
+    return inChrome() ? ['cmd'] : [];
+  }
+
+  // The Chrome Commands shown when the user picks Cmd, in scan order. #67 ships Next Tab and Close Tab; #68 adds
+  // Search and New Tab before them so the final order is search, next-tab, new-tab, close-tab.
+  function chromeCommands(): FixedIntent[] {
+    return ['next-tab', 'close-tab'];
+  }
+
+  function startChromeCommands(t: number) {
+    inChromeCommands = true;
+    intents = [];
+    recent = 0;
+    fixedIntents = chromeCommands();
+    // A cell for each command, plus Something else. Close comes after that, as on any picker.
+    cells = fixedIntents.length + 1;
+    restartScan(t);
+    scan(t);
+  }
+
   function choose(key: KeyId, t: number) {
-    if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
+    if (key === 'something-else') {
+      // Something else in the Chrome Commands scan has no fresh answers to ask for, so it just closes.
+      if (inChromeCommands) return stop();
+      return suggestIntents(asked!, [...turnedDown, ...intents]);
+    }
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
+    if (key.startsWith(FIXED_KEY)) {
+      const name = key.slice(FIXED_KEY.length) as FixedIntent;
+      // Cmd opens the Chrome Commands scan, like a menu bar item opens its menu. The scan ends on the Stop Gesture
+      // (and emits nothing then) or on picking one of its commands.
+      if (name === 'cmd') return startChromeCommands(t);
+      // Every other Fixed Intent runs in main as key presses. No Claude call, no Gaze Correction label, not kept in
+      // Intent History; the Select Blink still counts for Scan Pace via the usual select learn signal.
+      act({ type: 'fixed-intent', name });
+      return stop();
+    }
     intent = intents[Number(key.replace('intent-', ''))];
     activity = '';
     phase = 'running';
@@ -411,13 +470,16 @@ export function createSession({
     textBoxGaze = null;
     // A Dock hold in progress ends too, so the Dock is released at the end of this input and not left forced open.
     iconHold = null;
+    // The nested Chrome Commands scan ends too; nothing is emitted, as per the Stop Gesture rule.
+    inChromeCommands = false;
+    fixedIntents = [];
   }
 
   function shown(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases, stepMs };
     if (phase === 'choosing') {
       const stepProgress = (Math.max(now - scanStart, 0) % stepMs) / stepMs;
-      return { phase, wakeProgress, intents, highlight, cells, recent, side: side(), stepProgress };
+      return { phase, wakeProgress, intents, fixedIntents, highlight, cells, recent, side: side(), stepProgress };
     }
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight!, stepMs };
@@ -445,6 +507,7 @@ export function createSession({
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_PAST_INTENTS);
         recent = intents.length;
+        fixedIntents = fixedIntentsForPicker();
         // Room for Claude's Intents, which join later, and Something else.
         cells = recent + MAX_INTENTS + 1;
         restartScan(input.t);
@@ -455,6 +518,7 @@ export function createSession({
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
         recent = 0;
+        fixedIntents = fixedIntentsForPicker();
         cells = MAX_INTENTS + 1;
         restartScan(input.t);
         scan(input.t);
@@ -469,7 +533,7 @@ export function createSession({
           intents = [...intents, ...added];
           // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
           // where it was, so the same key stays lit and keeps the time it already had.
-          const at = layoutIntents(screen, intents, cells, side()).findIndex((key) => key.id === before);
+          const at = layoutIntents(screen, intents, cells, side(), fixedIntents, recent).findIndex((key) => key.id === before);
           scanStart = input.t - at * stepMs - spent;
           scan(input.t);
         }

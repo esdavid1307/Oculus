@@ -7,7 +7,7 @@ import type { Rect } from '../shared/geometry';
 import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
-import { createSession, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
+import { createSession, type AgentAction, type FixedIntent, type Icon, type SessionInput, type TextBox } from '../shared/session';
 import { execute } from './agent/executor';
 import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
@@ -353,6 +353,18 @@ function createHistory(ranker: unknown) {
   };
 }
 
+// The front app's name, read without the per-site URL, so the Chrome Commands Fixed Intent can decide whether to show
+// at each picker. Kept separate from READ_FRONT so no accidental Chrome window attribute access happens on every poll.
+const READ_FRONT_APP = `Application("System Events").processes.whose({ frontmost: true })[0].name()`;
+
+// Presses the key combos for the Chrome Commands Fixed Intents: next-tab is ^Tab (keyCode 48 with control down) and
+// close-tab is ⌘W (keyCode 13 with command down). Sent through System Events like the Gaze Keyboard typing, so it needs
+// Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
+const CHROME_COMMAND_SCRIPTS: Record<string, string> = {
+  'next-tab': `Application('System Events').keyCode(48, { using: 'control down' })`,
+  'close-tab': `Application('System Events').keyCode(13, { using: 'command down' })`,
+};
+
 // The app in front, and with "per-site" the URL of Chrome's front tab. One osascript, so a browser costs no extra
 // launch. An Incognito window gives no URL, so private browsing is never written to the history file.
 const READ_FRONT = `function run(argv) {
@@ -462,12 +474,30 @@ function createOverlay() {
   // Walking the front window's AX tree is costly, so text boxes are only read from the Start Gesture until the session
   // goes back to idle, not all the time. The 3 s Start Gesture gives the first read time to land before a target hold.
   let wantTextBoxes = false;
+  // Updated on every icon refresh, so the Chrome Commands Fixed Intent (Cmd) shows in the picker when the user is in
+  // Google Chrome. inChrome() is the function handed to the session, read synchronously on each picker open.
+  let chromeFront = false;
+  const refreshFrontApp = () => {
+    execFile('osascript', ['-l', 'JavaScript', '-e', READ_FRONT_APP], { timeout: 2000 }, (error, stdout) => {
+      if (error) return;
+      chromeFront = stdout.trim() === 'Google Chrome';
+    });
+  };
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
+    refreshFrontApp();
     if (wantTextBoxes) refreshTextBoxes();
+  };
+  // Fires a Chrome Commands key combo through System Events. Logs a failure but never surfaces it to the overlay.
+  const runFixedIntent = (name: FixedIntent) => {
+    const script = CHROME_COMMAND_SCRIPTS[name];
+    if (!script) return console.warn(`[fixed-intent] no script for ${name}`);
+    execFile('osascript', ['-l', 'JavaScript', '-e', script], (error) => {
+      if (error) console.error(`Could not run the ${name} Fixed Intent:`, error.message);
+    });
   };
   const settings = readTimingsFile();
   const largeView = readLargeView(settings);
@@ -593,7 +623,8 @@ function createOverlay() {
     else if (action.type === 'close-menu') {
       if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
       openMenu = null;
-    } else if (action.source === 'menubar')
+    } else if (action.type === 'fixed-intent') runFixedIntent(action.name);
+    else if (action.source === 'menubar')
       openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
     else if (action.source === 'menu') {
       openMenu = null;
@@ -612,6 +643,7 @@ function createOverlay() {
     textBoxes: () => textBoxes,
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
+    inChrome: () => chromeFront,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);

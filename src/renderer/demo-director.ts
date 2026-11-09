@@ -95,11 +95,11 @@ async function play() {
   push({ phase: 'thinking', wakeProgress: 1 });
   await sleep(2200);
 
-  push({ phase: 'choosing', wakeProgress: 1, intents: past, highlight: 'intent-0', cells: 6, recent: past.length, side: 'right', stepProgress: 0 });
-  push({ phase: 'choosing', wakeProgress: 1, intents, highlight: 'intent-0', cells: 6, recent: past.length, side: 'right', stepProgress: 0 });
+  push({ phase: 'choosing', wakeProgress: 1, intents: past, fixedIntents: [], highlight: 'intent-0', cells: 6, recent: past.length, side: 'right', stepProgress: 0 });
+  push({ phase: 'choosing', wakeProgress: 1, intents, fixedIntents: [], highlight: 'intent-0', cells: 6, recent: past.length, side: 'right', stepProgress: 0 });
   await sleep(950);
   for (const highlight of ['intent-1', 'intent-2', 'intent-3', 'something-else', 'intent-0']) {
-    push({ phase: 'choosing', wakeProgress: 1, intents, highlight, cells: 6, recent: past.length, side: 'right', stepProgress: 0 });
+    push({ phase: 'choosing', wakeProgress: 1, intents, fixedIntents: [], highlight, cells: 6, recent: past.length, side: 'right', stepProgress: 0 });
     await sleep(850);
   }
 
