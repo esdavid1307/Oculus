@@ -17,6 +17,7 @@ import {
   Pause,
   PenLine,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Search,
@@ -229,7 +230,9 @@ const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
   minimize: { label: 'Minimize', glyph: Minimize2 },
   type: { label: 'Type', glyph: Keyboard },
   cmd: { label: 'Cmd', glyph: Terminal },
+  search: { label: 'Search', glyph: Search },
   'next-tab': { label: 'Next Tab', glyph: SkipForward },
+  'new-tab': { label: 'New Tab', glyph: Plus },
   'close-tab': { label: 'Close Tab', glyph: X },
 };
 

@@ -112,7 +112,7 @@ const MAX_INTENTS = 3;
 // In every picker, in this order, so the user learns where each one is in the scan.
 const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize', 'type'];
 // What Cmd opens, in scan order, with Close to leave.
-const CHROME_COMMANDS: FixedIntent[] = ['next-tab', 'close-tab', CLOSE_KEY];
+const CHROME_COMMANDS: FixedIntent[] = ['search', 'next-tab', 'new-tab', 'close-tab', CLOSE_KEY];
 
 // The sources an icon hold can stick to.
 type HeldSource = 'dock' | 'desktop' | 'menubar' | 'chrome';
@@ -494,6 +494,12 @@ export function createSession({
       // The text goes to whatever already has focus, so no Text Box is focused and nothing teaches Gaze Correction.
       textBoxGaze = null;
       return openKeyboard(t);
+    }
+    if (key === 'search' || key === 'new-tab') {
+      act({ type: 'fixed-intent', name: key });
+      // Main puts the focus in the address bar, where a search or a site address always wants Return.
+      textBoxGaze = null;
+      return openKeyboard(t, true);
     }
     if (key === 'cmd') return openChromeCommands(t);
     if (key === 'home' || key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
