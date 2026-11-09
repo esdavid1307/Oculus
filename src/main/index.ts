@@ -304,7 +304,7 @@ function createWordPrediction(enabled: boolean) {
   return {
     enabled,
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
-    suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
+    suggestPhrases: (text: string) => (enabled ? predictor.suggestPhrases(text) : []),
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
@@ -566,7 +566,7 @@ function createOverlay() {
     timings: settings,
     act: perform,
     suggest: words.suggest,
-    suggestPhrase: words.suggestPhrase,
+    suggestPhrases: words.suggestPhrases,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,

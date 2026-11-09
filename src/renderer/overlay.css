@@ -237,8 +237,8 @@ body {
   font-weight: 500;
 }
 
-/* The Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
-.key[data-key='phrase'] {
+/* Each Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
+.key[data-key^='phrase:'] {
   --rest: #3b0764;
   --fill: #7e22ce;
   padding: 0 calc(24px * var(--ui-scale, 1));

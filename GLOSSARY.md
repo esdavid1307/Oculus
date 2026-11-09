@@ -33,7 +33,7 @@ A text field, text area or search box the user can look at as the target after w
 _Avoid_: Input, form field
 
 **Suggested Word**:
-One of up to three words the Gaze Keyboard offers, scanned first (after the Suggested Phrase, when there is one), to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
+One of up to three words the Gaze Keyboard offers, scanned first (after the Suggested Phrases, when there are any), to finish the word being typed or to follow the last one. Choosing it types the whole word, and confirmed words teach the predictor.
 _Avoid_: Prediction, autocomplete, autofill
 
 **Gaze Region**:
@@ -89,5 +89,5 @@ The large panel shown during an Icon Scan with the name of the highlighted icon,
 _Avoid_: Tooltip, zoom
 
 **Suggested Phrase**:
-The one earlier-submitted text the Gaze Keyboard offers, in a wide key scanned before the Suggested Words, once 2 or more typed letters match its start. Choosing it replaces everything typed so far.
+An earlier-submitted text the Gaze Keyboard offers, in a wide key scanned before the Suggested Words, once 2 or more typed letters match its start. Up to two are shown at a time, ranked by how often and how recently they were sent. Choosing one replaces everything typed so far.
 _Avoid_: Autocomplete, saved message

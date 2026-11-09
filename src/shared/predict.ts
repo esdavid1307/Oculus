@@ -46,7 +46,7 @@ const REPLAYED_PREFIXES = 4;
 
 // A Suggested Phrase needs this many letters typed first, so a phrase never slows the scan on an empty keyboard.
 const PHRASE_MIN_LETTERS = 2;
-const MAX_PHRASES = 200;
+const MAX_STORED_PHRASES = 200;
 // Text with a space-free run this long looks like a password, key or code, and is never learned.
 const SECRET_RUN = /\S{16,}/;
 
@@ -223,23 +223,22 @@ export function createPredictor(baseWords: BaseWords, model: WordModel = emptyWo
   const phrases = (model.phrases ??= table());
 
   function forgetPhrases() {
-    keepMostUsed(phrases, MAX_PHRASES);
+    keepMostUsed(phrases, MAX_STORED_PHRASES);
   }
 
   return {
-    // At most one text the user submitted before that starts with what is typed, once 2+ letters are typed.
-    // Ranked by how often and how recently it was sent.
-    suggestPhrase(text: string, now = Date.now()): string | undefined {
-      if (text.replace(/[^a-z]/gi, '').length < PHRASE_MIN_LETTERS) return;
+    // Up to `limit` texts the user submitted before that start with what is typed, once 2+ letters are typed.
+    // Ranked by how often and how recently they were sent, best first.
+    suggestPhrases(text: string, limit = 2, now = Date.now()): string[] {
+      if (text.replace(/[^a-z]/gi, '').length < PHRASE_MIN_LETTERS) return [];
       const typed = text.toLowerCase();
-      let best: { text: string; score: number } | undefined;
+      const scored: { text: string; score: number }[] = [];
       for (const [key, phrase] of Object.entries(phrases)) {
         // The same text again saves nothing: Done does that.
         if (key.length <= typed.length || !key.startsWith(typed)) continue;
-        const score = Math.log2(1 + phrase.count) + Math.exp(-(now - phrase.last) / RECENCY_MS);
-        if (best === undefined || score > best.score) best = { text: phrase.text, score };
+        scored.push({ text: phrase.text, score: Math.log2(1 + phrase.count) + Math.exp(-(now - phrase.last) / RECENCY_MS) });
       }
-      return best?.text;
+      return scored.sort((a, b) => b.score - a.score).slice(0, limit).map(({ text }) => text);
     },
 
     suggest(text: string, limit = 3, now = Date.now()): string[] {
