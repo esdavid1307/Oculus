@@ -6,7 +6,7 @@ Close, Home and Minimize (#64) Type (#66) and Dock (#65) show in every picker, t
 
 1. Up to 2 Intents from Intent History.
 2. A suggested "Skip the ad", if Claude offers one. It goes ahead of the Fixed Intents and takes the highlight, which starts its step again.
-3. Close (shown as Cancel, since Claude often offers to close the window), Home, Minimize, Type and Dock, then Cmd when Chrome is in front, which opens a scan of Next Tab, Close Tab and Close.
+3. Close (shown as Cancel, since Claude often offers to close the window), Home, Minimize, Type and Dock, then Cmd when Chrome is in front, which opens a scan of Search, Next Tab, New Tab, Close Tab and Close (#67, #68).
 4. Claude's other Suggested Intents, joining after them. The highlight doesn't move when they do, and "Finding more…" shows in the first empty cell until they arrive.
 5. Something else, always last. It opens the picker again at once with the Fixed Intents, while Claude thinks of different ones.
 
@@ -27,6 +27,11 @@ Cells are kept for everything that can still come, so tiles never move once show
 - **Minimize** is Cmd+M, the Minimize command of the app in front. With no window it does nothing.
 
 Both are pressed into the app in front. The overlay never takes focus, so it doesn't get them.
+
+The Chrome Commands are pressed through System Events, and only while Chrome is still in front:
+
+- **Search** is Cmd+L, which selects the address bar, and **New Tab** is Cmd+T, which opens a tab with the focus in its address bar. Both then open the Gaze Keyboard, and Done types the text and presses Return, whatever field the focus reads as, since Chrome doesn't tell Accessibility which field it is.
+- **Next Tab** is Ctrl+Tab and **Close Tab** is Cmd+W.
 
 ## Results
 
