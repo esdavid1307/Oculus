@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Rect } from './geometry';
-import { magnify, MIN_TARGET, planDock, readLargeView, readSavedDock } from './large-view';
+import { FIT_PADDING, HIGHLIGHT_BORDER, highlightMode, magnify, MIN_TARGET, planDock, readLargeView, readSavedDock } from './large-view';
 
 const screen = { width: 1600, height: 1000 };
 
@@ -100,6 +100,64 @@ describe('magnify', () => {
   it('copes with a screen smaller than the minimum', () => {
     const { frame } = magnify({ x: 10, y: 10, width: 10, height: 10 }, { width: 80, height: 60 }, 2);
     expect(frame).toEqual({ x: 0, y: 0, width: 60, height: 60 });
+  });
+});
+
+describe('highlightMode', () => {
+  it('fits menu bar items, menu commands and Chrome elements, and grows Dock and Desktop icons', () => {
+    expect(['menubar', 'menu', 'chrome'].map(highlightMode)).toEqual(['fit', 'fit', 'fit']);
+    expect(['dock', 'desktop'].map(highlightMode)).toEqual(['grow', 'grow']);
+  });
+});
+
+describe('magnify with mode: "fit"', () => {
+  // The part of the frame inside its border, which is all the user sees through.
+  const clearOfBorder = (frame: Rect, scale: number): Rect => {
+    const border = HIGHLIGHT_BORDER * scale;
+    return { x: frame.x + border, y: frame.y + border, width: frame.width - 2 * border, height: frame.height - 2 * border };
+  };
+  const contains = (outer: Rect, inner: Rect) =>
+    outer.x <= inner.x && outer.y <= inner.y && outer.x + outer.width >= inner.x + inner.width && outer.y + outer.height >= inner.y + inner.height;
+
+  it('wraps a menu bar item closely instead of growing it to the minimum size', () => {
+    const item = icons['menu bar item'];
+    for (const scale of [1, 1.25, 2]) {
+      const { frame } = magnify(item, screen, scale, 'fit');
+      const pad = (FIT_PADDING + HIGHLIGHT_BORDER) * scale;
+      expect(frame).toEqual({ x: item.x - pad, y: item.y - pad, width: item.width + 2 * pad, height: item.height + 2 * pad });
+      expect(frame.height).toBeLessThan(MIN_TARGET * scale);
+    }
+  });
+
+  it('leaves every item clear of the border, with the padding to spare, at every scale', () => {
+    for (const scale of [1, 1.25, 2])
+      for (const [name, icon] of Object.entries(icons)) {
+        const { frame } = magnify(icon, screen, scale, 'fit');
+        const padding = FIT_PADDING * scale;
+        const clear = clearOfBorder(frame, scale);
+        expect(contains(clear, { x: icon.x - padding, y: icon.y - padding, width: icon.width + 2 * padding, height: icon.height + 2 * padding }), `${name} at ${scale}`).toBe(true);
+      }
+  });
+
+  it('lets the border of an item on the screen edge fall off the screen rather than onto the item', () => {
+    const { frame } = magnify(icons['top left corner'], screen, 1.25, 'fit');
+    expect(frame.x).toBeLessThan(0);
+    expect(frame.y).toBeLessThan(0);
+  });
+
+  it('never covers the item or its frame with the panel', () => {
+    for (const scale of [1, 1.25, 2])
+      for (const [name, icon] of Object.entries(icons)) {
+        const { frame, panel } = magnify(icon, screen, scale, 'fit');
+        expect(inside(panel), name).toBe(true);
+        expect(overlaps(panel, frame), name).toBe(false);
+      }
+  });
+
+  it('defaults to "grow", so Dock and Desktop callers keep the minimum-size frame', () => {
+    const item = icons['menu bar item'];
+    expect(magnify(item, screen, 1.25)).toEqual(magnify(item, screen, 1.25, 'grow'));
+    expect(magnify(item, screen, 1.25).frame.height).toBeGreaterThanOrEqual(MIN_TARGET * 1.25);
   });
 });
 

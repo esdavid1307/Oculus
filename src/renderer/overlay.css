@@ -1049,6 +1049,12 @@ body > video {
 }
 
 /* The Dock or Desktop icon the scan is on. It glides from one icon to the next. */
+/* A fitted highlight (menu bar items, menu commands, Chrome elements) is only a little bigger than the item, so a
+   smaller radius keeps its rounded inner corners off the item's corners. */
+#icon-highlight[data-fit] {
+  border-radius: calc(10px * var(--s));
+}
+
 #icon-highlight {
   position: fixed;
   z-index: 2;

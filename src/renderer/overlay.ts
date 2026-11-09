@@ -31,7 +31,7 @@ import {
 import type { Rect } from '../shared/geometry';
 import { fallbackLook, type IntentIcon, type IntentLook } from '../shared/intent-look';
 import { CLOSE_KEY, layoutIntents, layoutKeyboard, PHRASE_KEY, type Key, type KeyId } from '../shared/keyboard';
-import { magnify, type LargeView } from '../shared/large-view';
+import { fitFrame, highlightMode, magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
@@ -401,11 +401,12 @@ function showIcon({ highlight, stepMs, source }: Extract<OverlayState, { phase: 
   iconMagnifier.hidden = largeView === undefined;
   // A Chrome element is chosen, never opened, so its label says so.
   iconMagnifier.dataset.source = source;
-  // A Chrome element can be a 16 point line of text, so its frame is grown past the border to keep the text readable.
-  const { x, y, width, height } = highlight.rect;
-  const pad = source === 'chrome' ? 8 : 0;
-  if (largeView === undefined) return place(iconHighlight, { x: x - pad, y: y - pad, width: width + 2 * pad, height: height + 2 * pad });
-  const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
+  // Menu bar items, menu commands and Chrome elements are fitted, with room for the border, so it never covers them:
+  // a Chrome element can be a 16 point line of text. Dock and Desktop icons are grown so a small one is easy to see.
+  const mode = highlightMode(source);
+  iconHighlight.toggleAttribute('data-fit', mode === 'fit');
+  if (largeView === undefined) return place(iconHighlight, mode === 'fit' ? fitFrame(highlight.rect, 1) : highlight.rect);
+  const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale, mode);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);
   const label = highlight.label ?? highlight.name;
