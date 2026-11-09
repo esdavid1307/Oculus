@@ -189,7 +189,9 @@ body {
   place-items: center;
   border: calc(4px * var(--ui-scale, 1)) solid #fff;
   border-radius: 16px;
-  font-size: calc(72px * var(--ui-scale, 1));
+  --font: calc(72px * var(--ui-scale, 1));
+  /* One line of label fits however short the rows get. */
+  font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.65));
   background: var(--rest);
 }
 
@@ -197,7 +199,7 @@ body {
 .key[data-key='done'],
 .key[data-key='delete'],
 .key[data-key='back'] {
-  font-size: calc(44px * var(--ui-scale, 1));
+  --font: calc(44px * var(--ui-scale, 1));
 }
 
 .key[data-key='done'] {
@@ -233,18 +235,20 @@ body {
 /* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
 .key[data-key^='word:'] {
   --rest: #134e4a;
-  font-size: calc(56px * var(--ui-scale, 1));
+  --font: calc(56px * var(--ui-scale, 1));
   font-weight: 500;
 }
 
-/* The Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
-.key[data-key='phrase'] {
+/* Each Suggested Phrase: a whole sentence, so smaller type and room to wrap. */
+.key[data-key^='phrase:'] {
   --rest: #3b0764;
   --fill: #7e22ce;
   padding: 0 calc(24px * var(--ui-scale, 1));
   overflow: hidden;
   text-align: center;
-  font-size: calc(48px * var(--ui-scale, 1));
+  --font: calc(48px * var(--ui-scale, 1));
+  /* Two lines fit, for a phrase that wraps. */
+  font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.36));
   font-weight: 500;
 }
 

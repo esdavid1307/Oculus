@@ -18,8 +18,11 @@ function currentSize(): number | null {
   }
 }
 
-function restartDock() {
-  execFileSync('killall', ['Dock'], { stdio: 'pipe' });
+// System Events resizes the running Dock in place, so it never disappears the way a killall Dock restart does.
+// Its dock size runs 0 to 1 over tilesize 16 to 128.
+function resizeDock(tilesize: number) {
+  const size = (tilesize - 16) / 112;
+  execFileSync('osascript', ['-e', `tell application "System Events" to set dock size of dock preferences to ${size}`], { stdio: 'pipe' });
 }
 
 function readSaved(file: string) {
@@ -30,7 +33,10 @@ function readSaved(file: string) {
   }
 }
 
-// Returns whether the Dock was restarted, so the caller reads its icons again.
+// What the Dock shows while tilesize is unset.
+const MACOS_DEFAULT_TILESIZE = 64;
+
+// Returns whether the Dock was resized, so the caller reads its icons again.
 export function applyDockSize(userData: string, enabled: boolean, size: number): boolean {
   const file = join(userData, 'dock-size.json');
   const plan = planDock(enabled, readSaved(file));
@@ -41,8 +47,7 @@ export function applyDockSize(userData: string, enabled: boolean, size: number):
       writeFileSync(`${file}.tmp`, JSON.stringify({ tilesize: currentSize() }));
       renameSync(`${file}.tmp`, file);
     }
-    defaults('write', 'com.apple.dock', 'tilesize', '-int', String(size));
-    restartDock();
+    resizeDock(size);
     return true;
   } catch (error) {
     console.warn('Could not change the Dock size:', error);
@@ -63,14 +68,9 @@ export function restoreDock(userData: string) {
 }
 
 function restoreFrom(file: string, tilesize: number | null) {
-  if (tilesize === null) {
-    try {
-      defaults('delete', 'com.apple.dock', 'tilesize');
-    } catch {
-      // Already unset.
-    }
-  } else defaults('write', 'com.apple.dock', 'tilesize', '-int', String(tilesize));
-  restartDock();
+  resizeDock(tilesize ?? MACOS_DEFAULT_TILESIZE);
+  // Resizing writes the key, so a size the user never set is unset again.
+  if (tilesize === null) defaults('delete', 'com.apple.dock', 'tilesize');
   rmSync(file, { force: true });
   return true;
 }

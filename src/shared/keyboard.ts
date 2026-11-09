@@ -11,8 +11,9 @@ export const GROUPS = ['abcde', 'fghij', 'klmno', 'pqrst', 'uvwxyz'];
 
 export const SUGGESTION_KEY = 'word:';
 export const MAX_SUGGESTIONS = 3;
-// The Suggested Phrase key.
-export const PHRASE_KEY = 'phrase';
+// The Suggested Phrase key id prefix: the chosen phrase text follows the ':'.
+export const PHRASE_KEY = 'phrase:';
+export const MAX_SHOWN_PHRASES = 2;
 
 const GAP = 16;
 const COLUMNS = 3;
@@ -26,14 +27,14 @@ const TEXT_HEIGHT = 120;
 //            PQRST  UVWXYZ  Delete                 D  E  .
 //            Space -------  Done                   .  .  Back
 //
-// Suggested words take a row of their own above the groups, and a Suggested Phrase one wide row above them. They
-// come first, so the scan reaches them first. With neither, the layout is the 3 x 3 grid.
-export function layoutKeyboard({ width, height }: Screen, group: string | null, suggestions: string[] = [], phrase?: string): KeyboardLayout {
+// Suggested Words take a row of their own above the groups, and Suggested Phrases take one wide row each above them.
+// They come first, so the scan reaches them first. With none, the layout is the 3 x 3 grid.
+export function layoutKeyboard({ width, height }: Screen, group: string | null, suggestions: string[] = [], phrases: string[] = []): KeyboardLayout {
   const shown = group === null ? suggestions.slice(0, MAX_SUGGESTIONS) : [];
-  const phraseShown = group === null && phrase !== undefined && phrase !== '';
-  const wordsOffset = phraseShown ? COLUMNS : 0;
+  const phrasesShown = group === null ? phrases.slice(0, MAX_SHOWN_PHRASES) : [];
+  const wordsOffset = phrasesShown.length * COLUMNS;
   const offset = wordsOffset + (shown.length ? COLUMNS : 0);
-  const rows = ROWS + (shown.length ? 1 : 0) + (phraseShown ? 1 : 0);
+  const rows = ROWS + (shown.length ? 1 : 0) + phrasesShown.length;
   const top = TEXT_HEIGHT + GAP;
   const cellWidth = (width - (COLUMNS - 1) * GAP) / COLUMNS;
   const cellHeight = (height - top - (rows - 1) * GAP) / rows;
@@ -47,7 +48,7 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null, 
   const keys =
     group === null
       ? [
-          ...(phraseShown ? [{ id: PHRASE_KEY, label: phrase, rect: cell(0, COLUMNS) }] : []),
+          ...phrasesShown.map((text, i) => ({ id: PHRASE_KEY + text, label: text, rect: cell(i * COLUMNS, COLUMNS) })),
           ...shown.map((word, i) => ({ id: SUGGESTION_KEY + word, label: word, rect: cell(wordsOffset + i) })),
           ...GROUPS.map((id, i) => ({ id, label: id.toUpperCase(), rect: cell(offset + i) })),
           { id: 'delete', label: 'Delete', rect: cell(offset + 5) },

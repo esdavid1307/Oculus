@@ -1,10 +1,10 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[] }
   // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
   | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
@@ -68,8 +68,8 @@ export type AgentAction =
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
 
-// The one text submitted before that the typed text starts, if any. See src/shared/predict.ts.
-export type SuggestPhrase = (text: string) => string | undefined;
+// Up to a few texts the user submitted before that the typed text starts, best first. See src/shared/predict.ts.
+export type SuggestPhrases = (text: string) => string[];
 
 const MAX_INTENTS = 3;
 const MAX_PAST_INTENTS = 2;
@@ -144,7 +144,7 @@ export function createSession({
   timings,
   act = () => {},
   suggest = () => [],
-  suggestPhrase = () => undefined,
+  suggestPhrases = () => [],
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
@@ -154,7 +154,7 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
   suggest?: Suggest;
-  suggestPhrase?: SuggestPhrase;
+  suggestPhrases?: SuggestPhrases;
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
@@ -185,7 +185,7 @@ export function createSession({
   let scanStart = 0;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
-  let phrase: string | undefined;
+  let phrases: string[] = [];
   let intents: string[] = [];
   let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
@@ -214,7 +214,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrase).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrases).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -254,7 +254,7 @@ export function createSession({
 
   function refreshSuggestions() {
     suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
-    phrase = suggestPhrase(text) || undefined;
+    phrases = suggestPhrases(text).slice(0, MAX_SHOWN_PHRASES);
   }
 
   function openKeyboard(t: number) {
@@ -270,9 +270,9 @@ export function createSession({
 
   function press(key: KeyId, t: number) {
     if (phase === 'choosing') choose(key, t);
-    else if (key === PHRASE_KEY) {
-      // The phrase starts with what was typed, so it replaces all of it.
-      text = phrase ?? text;
+    else if (key.startsWith(PHRASE_KEY)) {
+      // The phrase starts with what was typed, so it replaces all of it. The chosen text is carried in the key id.
+      text = key.slice(PHRASE_KEY.length);
       group = null;
     } else if (key.startsWith(SUGGESTION_KEY)) {
       // The word replaces the letters typed so far, and the space after it is free.
@@ -353,7 +353,7 @@ export function createSession({
   }
 
   function shown(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases };
     if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
