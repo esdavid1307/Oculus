@@ -178,7 +178,7 @@ describe('Gaze Keyboard', () => {
 
   it('opens on the group screen with no text, highlighting the first key', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [] });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [], phrases: [] });
   });
 
   it('moves the highlight to the next key every 2 seconds, and wraps round', () => {
@@ -1247,14 +1247,17 @@ describe('Suggested Intents side panel', () => {
   });
 });
 
-describe('Suggested Phrase', () => {
+describe('Suggested Phrases', () => {
   const select = (t: number) => ({ type: 'select', t }) as const;
-  const phrases: Record<string, string> = { pl: 'please call the nurse', pla: 'please call the nurse' };
+  const byPrefix: Record<string, string[]> = {
+    pl: ['please call the nurse', 'please bring water', 'play some music'],
+    pla: ['please call the nurse', 'please bring water', 'play some music'],
+  };
   const make = (withPhrases = true) => {
     const session = createSession({
       screen,
       suggest: (text) => (text === '' ? [] : ['one', 'two', 'three']),
-      suggestPhrase: withPhrases ? (text) => phrases[text] : undefined,
+      suggestPhrases: withPhrases ? (text) => byPrefix[text] ?? [] : undefined,
     });
     let state = session({ type: 'open-keyboard', t: 0 });
     let t = 0;
@@ -1270,44 +1273,49 @@ describe('Suggested Phrase', () => {
     return { press, type, state: () => state };
   };
 
-  it('offers no phrase on an empty keyboard or after 1 letter', () => {
+  it('offers no phrases on an empty keyboard or after 1 letter', () => {
     const { type, state } = make();
-    expect(state()).not.toHaveProperty('phrase');
+    expect(state()).toMatchObject({ phrases: [] });
     type('p');
-    expect(state()).not.toHaveProperty('phrase');
+    expect(state()).toMatchObject({ phrases: [] });
   });
 
-  it('offers the phrase after 2 letters and scans it before the Suggested Words', () => {
+  it('offers phrases after 2 letters, scanning them before the Suggested Words', () => {
     const { type, state } = make();
     type('p', 'l');
-    expect(state()).toMatchObject({ phrase: 'please call the nurse', suggestions: ['one', 'two', 'three'], highlight: 'phrase' });
+    expect(state()).toMatchObject({
+      phrases: ['please call the nurse', 'please bring water'],
+      suggestions: ['one', 'two', 'three'],
+      highlight: 'phrase:please call the nurse',
+    });
   });
 
-  it('replaces everything typed with the phrase when pressed', () => {
+  it('replaces everything typed with the chosen phrase when pressed', () => {
     const { type, press, state } = make();
     type('p', 'l');
-    expect(press('phrase')).toMatchObject({ text: 'please call the nurse', group: null });
-    expect(state()).not.toHaveProperty('phrase');
+    expect(press('phrase:please bring water')).toMatchObject({ text: 'please bring water', group: null });
+    expect(state()).toMatchObject({ phrases: [] });
   });
 
-  it('hides the phrase key on the letter screens', () => {
-    expect(layoutKeyboard(screen, 'abcde', [], 'x').keys.map(({ id }) => id)).not.toContain('phrase');
+  it('hides phrase keys on the letter screens', () => {
+    const ids = layoutKeyboard(screen, 'abcde', [], ['x', 'y']).keys.map(({ id }) => id);
+    expect(ids.some((id) => id.startsWith('phrase:'))).toBe(false);
   });
 
-  it('behaves as before without a phrase dependency', () => {
+  it('defaults to no phrases when the session is wired without a provider', () => {
     const { type, state } = make(false);
     type('p', 'l');
-    expect(state()).not.toHaveProperty('phrase');
-    expect(state()).toMatchObject({ highlight: 'word:one' });
+    expect(state()).toMatchObject({ phrases: [], highlight: 'word:one' });
   });
 
-  it('lays the phrase out as one wide first row, with the words after it, without overlap', () => {
+  it('lays the phrases out as wide rows at the top, with the words after them, without overlap', () => {
     for (const size of [{ width: 1512, height: 982 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
-      const { keys } = layoutKeyboard(size, null, ['a', 'b', 'c'], 'a whole sentence');
-      expect(keys.length).toBeLessThanOrEqual(13);
-      expect(keys[0]).toMatchObject({ id: 'phrase', label: 'a whole sentence' });
+      const { keys } = layoutKeyboard(size, null, ['a', 'b', 'c'], ['first phrase', 'second phrase']);
+      expect(keys[0]).toMatchObject({ id: 'phrase:first phrase', label: 'first phrase' });
+      expect(keys[1]).toMatchObject({ id: 'phrase:second phrase', label: 'second phrase' });
       expect(keys[0].rect.width).toBeCloseTo(size.width);
-      expect(keys.slice(1, 4).map(({ id }) => id)).toEqual(['word:a', 'word:b', 'word:c']);
+      expect(keys[1].rect.width).toBeCloseTo(size.width);
+      expect(keys.slice(2, 5).map(({ id }) => id)).toEqual(['word:a', 'word:b', 'word:c']);
       const hit = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
       for (const { rect } of keys) {
         expect(rect.x >= 0 && rect.y >= 120 && rect.x + rect.width <= size.width + 0.001 && rect.y + rect.height <= size.height + 0.001).toBe(true);
@@ -1316,9 +1324,9 @@ describe('Suggested Phrase', () => {
     }
   });
 
-  it('keeps the layout unchanged when there is no phrase', () => {
-    expect(layoutKeyboard(screen, null, ['a', 'b'], undefined)).toEqual(layoutKeyboard(screen, null, ['a', 'b']));
-    expect(layoutKeyboard(screen, null, [], '')).toEqual(layoutKeyboard(screen, null));
+  it('keeps the layout unchanged when there are no phrases', () => {
+    expect(layoutKeyboard(screen, null, ['a', 'b'], [])).toEqual(layoutKeyboard(screen, null, ['a', 'b']));
+    expect(layoutKeyboard(screen, null, [], [])).toEqual(layoutKeyboard(screen, null));
   });
 });
 

@@ -92,6 +92,8 @@ function showKeys(name: string, keys: Key[], draw: (element: HTMLElement, key: K
       element.dataset.key = key.id;
       draw(element, key);
       place(element, key.rect);
+      // The CSS caps the label size by this, so the labels still fit when phrases and words add rows.
+      element.style.setProperty('--key-height', `${key.rect.height}px`);
       keyboard.append(element);
       return [key.id, element];
     }),
@@ -180,12 +182,12 @@ function showStepProgress(progress: number) {
 let lastPhase: OverlayState['phase'] = 'idle';
 let litKey: HTMLElement | undefined;
 
-function showKeyboard({ text, group, highlight, suggestions, phrase }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions, phrases }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  showKeys(`typing ${JSON.stringify([group, suggestions, phrase])}`, layoutKeyboard(screenSize, group, suggestions, phrase).keys);
+  showKeys(`typing ${JSON.stringify([group, suggestions, phrases])}`, layoutKeyboard(screenSize, group, suggestions, phrases).keys);
   highlightKey(highlight);
 }
 
