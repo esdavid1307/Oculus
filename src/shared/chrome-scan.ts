@@ -60,6 +60,7 @@ export function chromeElements(found: RawElement[], region: GazeRegion, display:
       seen.add(key);
       return [{ name: `${role} ${label}`, label, rect }];
     })
-    .sort((a, b) => distance(region, a.rect) - distance(region, b.rect))
+    // The gaze inside a button and the card around it is 0 from both, so the smaller one, what was looked at, comes first.
+    .sort((a, b) => distance(region, a.rect) - distance(region, b.rect) || a.rect.width * a.rect.height - b.rect.width * b.rect.height)
     .slice(0, MAX_CHROME_ELEMENTS);
 }

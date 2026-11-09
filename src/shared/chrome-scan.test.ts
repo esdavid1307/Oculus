@@ -15,6 +15,11 @@ describe('chromeElements', () => {
     ]);
   });
 
+  it('puts a button before the card around it when the gaze is inside both (Skip Ad in an ad card)', () => {
+    const found = [raw('AXHeading', 'Zoomo Sneakers', 400, 260, 285, 123), raw('AXButton', 'Skip Ad', 440, 330, 129, 51)];
+    expect(chromeElements(found, gazeAt, display).map(({ label }) => label)).toEqual(['Skip Ad', 'Zoomo Sneakers']);
+  });
+
   it('keeps only elements the Gaze Region touches', () => {
     const found = [raw('AXButton', 'Skip Ad', 520, 340, 120, 40), raw('AXButton', 'Far away', 1400, 900, 80, 40)];
     expect(chromeElements(found, gazeAt, display).map(({ label }) => label)).toEqual(['Skip Ad']);
