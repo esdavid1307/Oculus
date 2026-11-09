@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import type { Rect } from './geometry';
 import { GROUPS, layoutIntents, layoutKeyboard } from './keyboard';
+import { readLargeView } from './large-view';
 import { createSession, type AgentAction, type OverlayState, type SessionInput } from './session';
 
 const screen = { width: 1600, height: 1000 };
@@ -802,6 +803,7 @@ describe('Suggested Intents', () => {
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
       highlight: 'intent-0',
       cells: 4,
+      recent: 0,
       side: 'right',
       stepProgress: 0,
     });
@@ -971,7 +973,7 @@ describe('Suggested Intents', () => {
 
     it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, recent: 2, side: 'right', stepProgress: 0 });
       // The ring around the lit choice fills over its scan step and starts again on the next one.
       expect(session(tick(5500))).toMatchObject({ highlight: 'intent-0', stepProgress: 0.5 });
       expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1', stepProgress: 0 });
@@ -1019,6 +1021,27 @@ describe('Suggested Intents', () => {
       expect(after).toHaveLength(7);
     });
 
+    it('scans a full 7-tile picker in one fixed order, with Close last, which ends it choosing nothing', () => {
+      const { session, actions } = past();
+      // Claude's 3 join while Pause has been lit for 500 ms, so Mute is next at 6500.
+      expect(session(claude(5000, ['Like', 'Share', 'Save']))).toMatchObject({ intents: ['Pause', 'Mute', 'Like', 'Share', 'Save'], highlight: 'intent-0', cells: 6, recent: 2 });
+      expect(layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6)).toHaveLength(7);
+      const order = ['intent-1', 'intent-2', 'intent-3', 'intent-4', 'something-else', 'close'];
+      order.forEach((highlight, i) => expect(session(tick(6500 + i * 2000))).toMatchObject({ highlight }));
+      expect(session(select(16_600))).toEqual({ phase: 'idle', wakeProgress: 0 });
+      expect(actions).toEqual([{ type: 'suggest-intents', region: target, request: 1, turnedDown: [] }]);
+    });
+
+    it("keeps room for exactly Claude's 3 after a single past Intent, so nothing moves when they join", () => {
+      const { session } = past(['Pause']);
+      expect(session(tick(4500))).toMatchObject({ cells: 5, recent: 1 });
+      const before = layoutIntents(screen, ['Pause'], 5);
+      const after = layoutIntents(screen, ['Pause', 'Like', 'Share', 'Save'], 5);
+      expect(after).toHaveLength(6);
+      expect(after[0].rect).toEqual(before[0].rect);
+      expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
+    });
+
     it('does nothing when Claude only repeats the past Intents', () => {
       const { session } = past();
       session(tick(7000));
@@ -1042,7 +1065,7 @@ describe('Suggested Intents', () => {
     it('ignores past Intents that arrive after Claude has answered', () => {
       const { session } = thinking();
       session(claude(5000, ['Like']));
-      expect(session({ type: 'past-intents', t: 5100, request: 1, intents: ['Pause'] })).toMatchObject({ intents: ['Like'], cells: 4 });
+      expect(session({ type: 'past-intents', t: 5100, request: 1, intents: ['Pause'] })).toMatchObject({ intents: ['Like'], cells: 4, recent: 0 });
     });
   });
 });
@@ -1225,6 +1248,67 @@ describe('Suggested Intents side panel', () => {
       expect(keys[2].rect.y).toBeGreaterThan(keys[0].rect.y);
     }
   });
+
+  const labels = (count: number) => Array.from({ length: count }, (_, i) => `Intent ${i}`);
+
+  it('grows the grid with the number of tiles, two across up to 8 and three across up to 3 x 4, drawing every tile', () => {
+    for (const side of ['left', 'right'] as const) {
+      for (let count = 0; count <= 10; count++) {
+        const keys = layoutIntents(screen, labels(count), 4, side);
+        const tiles = Math.max(count + 2, 5);
+        expect(keys.map(({ id }) => id)).toEqual([...labels(count).map((_, i) => `intent-${i}`), 'something-else', 'close']);
+        const columns = new Set(keys.map(({ rect }) => rect.x)).size;
+        const rows = new Set(keys.map(({ rect }) => rect.y)).size;
+        expect(columns).toBe(tiles > 8 ? 3 : 2);
+        // Cells kept for Intents still to come are left empty, so count rows only once every cell is filled.
+        if (count >= 3) expect(rows).toBe(Math.ceil(tiles / columns));
+        expect(rows).toBeLessThanOrEqual(4);
+        const panelWidth = Math.floor(columns === 2 ? screen.width / 3 : (screen.width * 3) / 8);
+        const panelX = side === 'left' ? 0 : screen.width - panelWidth;
+        for (const { rect } of keys) {
+          expect(rect.x >= panelX && rect.x + rect.width <= panelX + panelWidth + 0.001).toBe(true);
+          expect(rect.y >= 0 && rect.y + rect.height <= screen.height).toBe(true);
+          for (const other of keys) if (other.rect !== rect) expect(overlap(rect, other.rect)).toBe(false);
+        }
+        // Scan order is reading order: left to right, then down.
+        for (let i = 1; i < keys.length; i++) {
+          const [a, b] = [keys[i - 1].rect, keys[i].rect];
+          expect(b.y > a.y || (b.y === a.y && b.x > a.x)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('draws at most 12 tiles, keeping Something else and Close', () => {
+    const keys = layoutIntents(screen, labels(15));
+    expect(keys).toHaveLength(12);
+    expect(keys.slice(-3).map(({ id }) => id)).toEqual(['intent-9', 'something-else', 'close']);
+  });
+
+  it('keeps every tile where it was as Intents fill cells kept for them in a 3 x 4 grid', () => {
+    const before = layoutIntents(screen, labels(4), 11);
+    const after = layoutIntents(screen, labels(10), 11);
+    expect(after).toHaveLength(12);
+    expect(after.slice(0, 4).map((key) => key.rect)).toEqual(before.slice(0, 4).map((key) => key.rect));
+    expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
+  });
+
+  // What a tile holds, in overlay.css before the UI Scale: 12 px of padding on each side, the 44 px icon, a 12 px gap and
+  // a label of two 15 px lines at 1.2 line height. The overlay draws the tiles on a sheet 28 px inside each screen edge.
+  const TILE_CONTENT = 2 * 12 + 44 + 12 + 2 * 15 * 1.2;
+  const SHEET_MARGIN = 28;
+
+  it.each([[{ width: 1470, height: 956 }], [{ width: 1440, height: 900 }], [{ width: 1512, height: 982 }], [{ width: 1920, height: 1080 }]])(
+    'keeps a full 12-tile picker readable with Large View at the default UI Scale on a %j display',
+    (size) => {
+      const { uiScale } = readLargeView({});
+      for (const { rect } of layoutIntents(size, labels(10))) {
+        const drawnWidth = (rect.width * (size.width - 2 * SHEET_MARGIN)) / size.width;
+        const drawnHeight = (rect.height * (size.height - 2 * SHEET_MARGIN)) / size.height;
+        expect(Math.min(drawnWidth, drawnHeight)).toBeGreaterThanOrEqual(TILE_CONTENT * uiScale);
+      }
+    },
+  );
 
   // Woken at 3 s, the target held from 3.1 s, and Claude's Intents in at 5 s.
   const choosing = (target: { x: number; y: number; radius: number }) => {

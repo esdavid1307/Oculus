@@ -414,9 +414,6 @@ function showIcon({ highlight, stepMs, source }: Extract<OverlayState, { phase: 
   showStep(iconMagnifier, stepMs);
 }
 
-// The past Intents come first, and only in a picker that opened on them, before Claude answered. See layoutIntents.
-let recent = 0;
-
 window.overlay.onState((state) => {
   const entering = state.phase !== lastPhase;
   root.dataset.phase = state.phase;
@@ -428,8 +425,8 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons' && entering) iconMagnifier.textContent = '';
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    if (entering) recent = state.cells === 6 ? state.intents.length : 0;
-    showKeys(`choosing ${state.side} ${recent} ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells, state.side), drawTile, recent);
+    const { side, cells, recent, intents } = state;
+    showKeys(`choosing ${side} ${cells} ${recent} ${intents.join('\n')}`, layoutIntents(screenSize, intents, cells, side), drawTile, recent);
     highlightKey(state.highlight);
     showStepProgress(state.stepProgress);
     // In the first cell, where an intent would be. The reason is in the log.

@@ -50,6 +50,7 @@
           intents: ['Open this video', 'Skip the ad', 'Scroll for more', 'Turn on captions'],
           highlight: 'intent-0',
           cells: 6,
+          recent: 2,
           side: 'right',
           stepProgress: 0.4,
         },
@@ -63,7 +64,7 @@
         });
       await wait();
       if (scene === 'choosing') {
-        window.__push({ phase: 'choosing', wakeProgress: 1, intents: ['Open this video', 'Skip the ad'], highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
+        window.__push({ phase: 'choosing', wakeProgress: 1, intents: ['Open this video', 'Skip the ad'], highlight: 'intent-0', cells: 6, recent: 2, side: 'right', stepProgress: 0 });
         window.__push(scenes.choosing);
       } else {
         window.__push(scenes[scene] ?? idle);

@@ -67,36 +67,44 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null, 
   return { text: { x: 0, y: 0, width, height: TEXT_HEIGHT }, keys };
 }
 
-// Suggested Intents sit in a grid of tiles, two across, in a panel a third of the screen wide on the side away from the
-// target. Something else always takes the last of the cells, so it stays put when fresh suggestions arrive, and Close
-// comes after it. With past Intents there are 6 cells from the start, since 2 past plus 3 from Claude need 5 and a grid
-// that grew later would move everything on screen.
-const INTENT_COLUMNS = 2;
+// Suggested Intents sit in a grid of tiles in a panel on the side away from the target: two across in a third of the
+// screen, and three across in a little more once there are more than 8 tiles, up to 3 x 4. Something else always takes
+// the last of the cells, so it stays put when fresh suggestions arrive, and Close comes after it. The caller reserves
+// the cells for Intents still to come, since a grid that grew later would move everything on screen.
+const MAX_INTENT_TILES = 12;
+const INTENT_MAX_ROWS = 4;
 const INTENT_GAP = 14;
 // Space between the tiles and the screen's edges.
 const INTENT_MARGIN = 16;
 // Tiles are at most this much taller than wide, so they stay square-ish on a tall screen.
 const INTENT_MAX_ASPECT = 1.1;
+// Three across stays clear of the Stop Gesture countdown in the middle of the screen.
+const WIDE_PANEL = 3 / 8;
 
-export function layoutIntents({ width, height }: Screen, intents: string[], cells: 4 | 6 = 4, side: IntentsSide = 'right'): Key[] {
+// cells is how many slots come before Close, Something else included. Every Intent gets a cell even past that, up to
+// MAX_INTENT_TILES in all.
+export function layoutIntents({ width, height }: Screen, intents: string[], cells = 4, side: IntentsSide = 'right'): Key[] {
   // Every slot keeps its place as Claude's Intents join, so nothing moves: the Intents, then Something else in the last
   // of the cells, then Close.
-  const rows = Math.ceil((cells + 1) / INTENT_COLUMNS);
-  const panelWidth = Math.floor(width / 3);
-  const tileWidth = (panelWidth - 2 * INTENT_MARGIN - (INTENT_COLUMNS - 1) * INTENT_GAP) / INTENT_COLUMNS;
+  const slots = Math.min(Math.max(cells, intents.length + 1), MAX_INTENT_TILES - 1);
+  const shown = intents.slice(0, slots - 1);
+  const columns = slots + 1 > 2 * INTENT_MAX_ROWS ? 3 : 2;
+  const rows = Math.ceil((slots + 1) / columns);
+  const panelWidth = Math.floor(columns === 2 ? width / 3 : width * WIDE_PANEL);
+  const tileWidth = (panelWidth - 2 * INTENT_MARGIN - (columns - 1) * INTENT_GAP) / columns;
   const tileHeight = Math.min((height - 2 * INTENT_MARGIN - (rows - 1) * INTENT_GAP) / rows, tileWidth * INTENT_MAX_ASPECT);
   // Centred down the screen's edge, so no tile runs off it or touches it.
   const top = (height - (rows * tileHeight + (rows - 1) * INTENT_GAP)) / 2;
   const left = (side === 'left' ? 0 : width - panelWidth) + INTENT_MARGIN;
   const cell = (index: number) => ({
-    x: left + (index % INTENT_COLUMNS) * (tileWidth + INTENT_GAP),
-    y: top + Math.floor(index / INTENT_COLUMNS) * (tileHeight + INTENT_GAP),
+    x: left + (index % columns) * (tileWidth + INTENT_GAP),
+    y: top + Math.floor(index / columns) * (tileHeight + INTENT_GAP),
     width: tileWidth,
     height: tileHeight,
   });
   return [
-    ...intents.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
-    { id: 'something-else', label: 'Something else', rect: cell(cells - 1) },
-    { id: CLOSE_KEY, label: 'Close', rect: cell(cells) },
+    ...shown.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
+    { id: 'something-else', label: 'Something else', rect: cell(slots - 1) },
+    { id: CLOSE_KEY, label: 'Close', rect: cell(slots) },
   ];
 }
