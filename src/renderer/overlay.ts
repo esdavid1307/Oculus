@@ -5,7 +5,12 @@ import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
   interface Window {
-    overlay: { onState(listener: (state: OverlayState) => void): void; onLargeView(listener: (settings: LargeView) => void): void; sendGaze(input: SessionInput): void };
+    overlay: {
+      onState(listener: (state: OverlayState) => void): void;
+      onLargeView(listener: (settings: LargeView) => void): void;
+      sendGaze(input: SessionInput): void;
+      onGazeDot(listener: (position: { x: number; y: number } | null) => void): void;
+    };
   }
 }
 
@@ -158,7 +163,7 @@ window.overlay.onState((state) => {
 // Loaded on demand, so the mouse input never pulls in MediaPipe.
 if (location.search === '?camera') {
   import('./camera-gaze')
-    .then(({ startCameraGaze }) => startCameraGaze(window.overlay.sendGaze))
+    .then(({ startCameraGaze }) => startCameraGaze(window.overlay.sendGaze, window.overlay.onGazeDot))
     .catch((error: Error) => {
       const message = document.getElementById('gaze-message')!;
       message.textContent = `Could not start the camera: ${error.message}`;

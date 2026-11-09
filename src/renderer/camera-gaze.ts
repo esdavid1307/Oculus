@@ -17,7 +17,17 @@ function placeDot(x: number, y: number) {
   dot.style.top = `${y}px`;
 }
 
-export async function startCameraGaze(send: (input: SessionInput) => void) {
+export async function startCameraGaze(
+  send: (input: SessionInput) => void,
+  onGazeDot: (listener: (position: { x: number; y: number } | null) => void) => void,
+) {
+  // The main process sends the dot back with Gaze Correction applied, so it sits where choices land. While calibrating,
+  // the dot is the calibration target instead.
+  onGazeDot((position) => {
+    if (root.dataset.calibrating !== undefined) return;
+    dot.hidden = !position;
+    if (position) placeDot(position.x, position.y);
+  });
   let onSample: (sample: Sample) => void = () => {};
   let lastSampleAt = Date.now();
   const tracker = await createTracker((sample) => {
@@ -49,10 +59,7 @@ export async function startCameraGaze(send: (input: SessionInput) => void) {
     await calibrate(tracker, { width: window.innerWidth, height: window.innerHeight }, placeDot);
     dot.hidden = true;
     delete root.dataset.calibrating;
-    onSample = createGazeSource(send, runCalibration, (position) => {
-      dot.hidden = !position;
-      if (position) placeDot(position.x, position.y);
-    });
+    onSample = createGazeSource(send, runCalibration, () => {});
   };
   await runCalibration();
 }

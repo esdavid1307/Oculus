@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -76,9 +76,11 @@ describe('runClaudeCode abort', () => {
 
   it('refuses hands actions after the abort', async () => {
     const reply = join(dir, 'reply.json');
+    const ready = join(dir, 'ready');
     await fakeClaude(`#!/usr/bin/env node
 // Survives SIGTERM, so the server's own refusal is what stops the click.
 process.on('SIGTERM', () => {});
+require('node:fs').writeFileSync(${JSON.stringify(ready)}, '');
 setTimeout(async () => {
   const response = await fetch(process.env.OCULUS_HANDS_URL, {
     method: 'POST',
@@ -87,13 +89,17 @@ setTimeout(async () => {
   });
   require('node:fs').writeFileSync(${JSON.stringify(reply)}, await response.text());
   console.log(JSON.stringify({ result: 'Done: x', subtype: 'success' }));
-}, 700);
+}, 300);
 `);
     const controller = new AbortController();
     const { deps, executed } = setup(controller.signal);
-    // After node started and installed its SIGTERM handler.
-    setTimeout(() => controller.abort(), 400);
+    // Only once node has started and installed its SIGTERM handler, which can take longer than a fixed delay.
+    const aborted = (async () => {
+      while (!(await stat(ready).catch(() => null))) await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+    })();
     const result = await runClaudeCode(options, deps);
+    await aborted;
     expect(result.error).toBe(STOPPED_ERROR);
     expect(executed).toHaveLength(0);
     expect(JSON.parse(await readFile(reply, 'utf8'))).toEqual({ ok: false, error: STOPPED_ERROR });
