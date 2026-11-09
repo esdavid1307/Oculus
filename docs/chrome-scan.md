@@ -8,13 +8,13 @@ It's off by default. Turn it on with `"chromeScan": true` in `~/Library/Applicat
 
 1. Wake the agent with the Start Gesture.
 2. Look at something in Chrome. Where named elements are near the Gaze Region, a 3 second hold sticks to them, instead of the 1 second target hold. Anywhere else (a blank part of the page, an image with no name) the 1 second target hold works as before.
-3. The highlight steps through those elements, at most 6, one every 2 seconds (or at the Scan Pace), nearest the gaze first, so the scan starts on what you looked at. With Large View on, the highlighted element's name shows large, under "Blink to choose". Without it, the highlight is drawn 8 points outside the element, so a line of text stays readable inside it.
+3. The highlight steps through those elements, at most 6, one every 2 seconds (or at the Scan Pace), nearest the gaze first, so the scan starts on what you looked at. With Large View on, the highlighted element's name shows large, under "Blink to choose". Without it, a Chrome element's highlight is drawn 8 points outside the element, so a line of text stays readable inside it. Dock, Desktop and menu bar highlights are unchanged.
 4. A Select Blink on one asks Claude for Suggested Intents about it. Something else keeps the same element, and so does the run of the Intent chosen.
 5. Look Away ends the scan without choosing anything, as in every scan.
 
 Text boxes (the address bar, a search box) are left to the Gaze Keyboard: a 1 second look at one still opens the keyboard on it (#13), even when Chrome elements are around it. The helper's lookup also finds Chrome's web text boxes, which the System Events read (`READ_TEXT_BOXES`) can't see, or only after more than 5 seconds once Chrome's tree is on, so with `chromeScan` on they are added to the text boxes the Gaze Keyboard opens on.
 
-The menu bar's Icon Scan only starts while the gaze centre is on the menu bar or past the top edge, not anywhere within a radius of it. So a tab, the address bar and a search box just under the toolbar keep their 1 second hold.
+While Chrome is the app in front, with `chromeScan` on or off, the menu bar's Icon Scan only starts while the gaze centre is on the menu bar or past the top edge, not anywhere within a radius of it. So a tab, the address bar and a search box just under the toolbar keep their 1 second hold. In other apps the menu bar still counts within a radius.
 
 Choosing an element confirms nothing yet, so only Scan Pace learns from that Select Blink. If the Intent then runs well, Gaze Correction learns from the 3 second hold, as it does for any run, and never for "Skip the ad". Chrome elements change with every page, so Icon Order learns nothing from them.
 

@@ -109,6 +109,8 @@ func lookup(x: Double, y: Double, radius: Double) -> [String: Any] {
   return ["front": true, "elements": found]
 }
 
+// A request can arrive split across two reads, so the part after the last newline waits for the rest.
+var pending = ""
 FileHandle.standardInput.readabilityHandler = { handle in
   let data = handle.availableData
   // The Oculus Agent quit or closed the pipe. Queued behind any lookup still waiting, so its answer goes out first.
@@ -117,7 +119,10 @@ FileHandle.standardInput.readabilityHandler = { handle in
     DispatchQueue.main.async { exit(0) }
     return
   }
-  for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+  pending += String(decoding: data, as: UTF8.self)
+  let lines = pending.split(separator: "\n", omittingEmptySubsequences: false)
+  pending = String(lines.last ?? "")
+  for line in lines.dropLast() where !line.isEmpty {
     let numbers = line.split(separator: " ").compactMap { Double($0) }
     DispatchQueue.main.async {
       let reply = numbers.count == 3 ? lookup(x: numbers[0], y: numbers[1], radius: numbers[2]) : ["front": false, "elements": [], "error": "Expected: x y radius"]

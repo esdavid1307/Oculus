@@ -619,6 +619,8 @@ function createOverlay() {
     // In Chrome the helper sees the web text boxes the System Events read can't (#13).
     textBoxes: () => [...textBoxes, ...(chromeScan?.textBoxes() ?? [])],
     chrome: () => chromeScan?.elements() ?? [],
+    // The front app's menus come first in the menu bar read, named by their path [process, bar, item].
+    chromeInFront: () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true,
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
   });

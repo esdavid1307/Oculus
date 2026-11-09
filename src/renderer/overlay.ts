@@ -401,9 +401,10 @@ function showIcon({ highlight, stepMs, source }: Extract<OverlayState, { phase: 
   iconMagnifier.hidden = largeView === undefined;
   // A Chrome element is chosen, never opened, so its label says so.
   iconMagnifier.dataset.source = source;
-  // Grown past its border, so a 16 point line of text stays readable inside the frame.
+  // A Chrome element can be a 16 point line of text, so its frame is grown past the border to keep the text readable.
   const { x, y, width, height } = highlight.rect;
-  if (largeView === undefined) return place(iconHighlight, { x: x - 8, y: y - 8, width: width + 16, height: height + 16 });
+  const pad = source === 'chrome' ? 8 : 0;
+  if (largeView === undefined) return place(iconHighlight, { x: x - pad, y: y - pad, width: width + 2 * pad, height: height + 2 * pad });
   const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);

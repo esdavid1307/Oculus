@@ -61,7 +61,7 @@ How the user chooses one of several options without pointing at it. The highligh
 _Avoid_: Gaze Snap, snapping, auto-scan, cycling
 
 **Icon Scan**:
-Looking near the macOS Dock, anywhere on the menu bar (the gaze centre on it or past the top edge), or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. A menu bar item that opens a menu starts a second scan over its commands. The agent stays awake afterwards.
+Looking near the macOS Dock, anywhere along the menu bar (with Chrome in front, only with the gaze centre on it or past the top edge, so the tabs and address bar just under it keep their 1 second hold), or near any Desktop icon that no window covers, for 3 seconds while the agent is awake sticks to it. The highlight then steps through all of its icons, and a Select Blink opens the highlighted one. A menu bar item that opens a menu starts a second scan over its commands. The agent stays awake afterwards.
 _Avoid_: Dock Scan, Dock snap, dock mode
 
 **Icon Order**:

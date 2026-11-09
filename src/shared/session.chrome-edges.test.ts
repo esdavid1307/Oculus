@@ -34,7 +34,7 @@ const at = (x: number, y: number, radius: number): GazeRegion => ({ x, y, radius
 
 function awake(options: Partial<Parameters<typeof createSession>[0]> = {}) {
   const actions: AgentAction[] = [];
-  const session = createSession({ screen, act: (a) => a.type !== 'learn' && actions.push(a), menubar: () => menubar, ...options });
+  const session = createSession({ screen, act: (a) => a.type !== 'learn' && actions.push(a), menubar: () => menubar, chromeInFront: () => true, ...options });
   session(gaze(0, inBox));
   session(gaze(3000, inBox));
   // Move Off the Centre Box first, as a real look at the top would.
@@ -92,6 +92,14 @@ describe('target hold vs the menu bar Icon Scan in Chrome', () => {
     expect(hold(onEdge.session, at(900, 39, CAMERA), 3100, 1000).phase).toBe('waiting-for-target');
     const past = awake();
     expect(hold(past.session, at(900, 40, CAMERA), 3100, 1000).phase).toBe('thinking');
+  });
+
+  // The stricter rule is only for Chrome: in any other app a look that lands a little low still reaches the menu bar.
+  it('with Chrome not in front, a camera look just below the menu bar still starts its Icon Scan', () => {
+    const { session } = awake({ chromeInFront: () => false });
+    expect(hold(session, at(300, 59, CAMERA), 3100, 3000)).toMatchObject({ phase: 'icons', source: 'menubar' });
+    const past = awake({ chromeInFront: () => false });
+    expect(hold(past.session, at(300, 39 + CAMERA + 1, CAMERA), 3100, 1000).phase).toBe('thinking');
   });
 
   it('looking past the top edge still starts the menu bar Icon Scan', () => {

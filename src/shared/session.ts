@@ -146,13 +146,14 @@ function nearIcon(region: GazeRegion | null, icons: Icon[], screen: Screen) {
   return region !== null && iconDistance(region, icons, screen) <= region.radius;
 }
 
-// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them. Only the gaze
-// centre on it or past the top counts, not a whole radius below: Chrome's tabs, address bar and a page's search box sit
-// within one radius of it and need their own 1 second hold.
-function menuBarDistance(region: GazeRegion | null, items: Icon[], screen: Screen) {
+// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them. With centreOnly,
+// only the gaze centre on it or past the top counts, not a whole radius below: in Chrome the tabs, the address bar and a
+// page's search box sit within one radius of it and need their own 1 second hold.
+function menuBarDistance(region: GazeRegion | null, items: Icon[], screen: Screen, centreOnly = false) {
   if (region === null || items.length === 0) return Infinity;
   const height = Math.max(...items.map(({ rect }) => rect.y + rect.height));
-  return region.y <= height ? iconDistance(region, [{ name: '', rect: { x: 0, y: 0, width: screen.width, height } }], screen) : Infinity;
+  if (centreOnly && region.y > height) return Infinity;
+  return iconDistance(region, [{ name: '', rect: { x: 0, y: 0, width: screen.width, height } }], screen);
 }
 
 function nearMenuBar(region: GazeRegion | null, items: Icon[], screen: Screen) {
@@ -170,6 +171,7 @@ export function createSession({
   menubar = () => [],
   textBoxes = () => [],
   chrome = () => [],
+  chromeInFront = () => false,
   orderIcons = (_source, names) => names,
   scanPace,
 }: {
@@ -188,6 +190,8 @@ export function createSession({
   // The named Chrome elements near the latest gaze, read by an Accessibility lookup. Empty when Chrome isn't in front or
   // "chromeScan" is off, which leaves the 1 second target hold as it was.
   chrome?: () => Icon[];
+  // Whether Chrome is the app in front, whose tabs and address bar sit just under the menu bar.
+  chromeInFront?: () => boolean;
   // The Neural Layer's Icon Order: icon names in screen order in, the order to scan them out.
   orderIcons?: (source: IconSource, names: string[]) => string[];
   // The Neural Layer's Scan Pace: the step to use from the next restart of a scan. scanStepMs when left out.
@@ -196,7 +200,7 @@ export function createSession({
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar, chrome };
   const distance = (region: GazeRegion | null, from: HeldSource) =>
-    from === 'menubar' ? menuBarDistance(region, menubar(), screen) : iconDistance(region, iconsOf[from](), screen);
+    from === 'menubar' ? menuBarDistance(region, menubar(), screen, chromeInFront()) : iconDistance(region, iconsOf[from](), screen);
   const near = (region: GazeRegion | null, from: HeldSource) =>
     region !== null && distance(region, from) <= region.radius;
   let phase: OverlayState['phase'] = 'idle';
