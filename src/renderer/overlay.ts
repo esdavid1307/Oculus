@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Ban,
   Camera,
   Copy,
   createElement,
@@ -8,6 +9,7 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  House,
   Keyboard,
   Maximize2,
   Minimize2,
@@ -30,7 +32,7 @@ import {
 } from 'lucide';
 import type { Rect } from '../shared/geometry';
 import { fallbackLook, type IntentIcon, type IntentLook } from '../shared/intent-look';
-import { CLOSE_KEY, FIXED_KEY, FIXED_LABELS, layoutIntents, layoutKeyboard, PHRASE_KEY, type IntentsSide, type Key, type KeyId } from '../shared/keyboard';
+import { layoutIntents, layoutKeyboard, PHRASE_KEY, type FixedIntent, type Key, type KeyId } from '../shared/keyboard';
 import { fitFrame, highlightMode, magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
@@ -218,31 +220,22 @@ const INTENT_ICON_NODES: Record<IntentIcon, IconNode> = {
 const intentLooks = new Map<string, IntentLook>();
 window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, look]) => intentLooks.set(text, look)));
 
-// The cell straight after the Fixed Intents on a picker with no Intents. layoutIntents keeps cells - 1 empty cells
-// there for Intents still to come, so there is none when cells is 1, as in the Chrome Commands scan. With cells of 2
-// or more, one placeholder Intent doesn't change the grid, so its cell is the empty one. Cached, since the state
-// arrives many times a second and the grid only changes with these.
-let emptyCellFor: { key: string; rect: Rect | undefined } | undefined;
-function firstEmptyCell(cells: number, side: IntentsSide, fixedIntents: string[]): Rect | undefined {
-  const key = `${cells} ${side} ${fixedIntents.join(' ')}`;
-  if (emptyCellFor?.key !== key) {
-    const rect = cells > 1 ? layoutIntents(screenSize, [''], cells, side, fixedIntents, 0).find(({ id }) => id === 'intent-0')?.rect : undefined;
-    emptyCellFor = { key, rect };
-  }
-  return emptyCellFor.rect;
-}
+type TileLook = { label: string; glyph: IconNode };
 
-// Fixed Intents have their own look, since Claude never names them.
-const FIXED_ICONS: Record<string, IntentIcon> = { cmd: 'terminal', 'next-tab': 'skip', 'close-tab': 'close' };
+const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
+  // Not an X: Claude's "Close the window" tiles use that, and this only puts the picker away.
+  close: { label: 'Cancel', glyph: Ban },
+  home: { label: 'Home', glyph: House },
+  minimize: { label: 'Minimize', glyph: Minimize2 },
+  cmd: { label: 'Cmd', glyph: Terminal },
+  'next-tab': { label: 'Next Tab', glyph: SkipForward },
+  'close-tab': { label: 'Close Tab', glyph: X },
+};
 
-function lookOf({ id, label }: Key): IntentLook {
-  if (id === 'something-else') return { label: 'More', icon: 'more' };
-  if (id === CLOSE_KEY) return { label: 'Close', icon: 'close' };
-  if (id.startsWith(FIXED_KEY)) {
-    const name = id.slice(FIXED_KEY.length);
-    return { label: FIXED_LABELS[name] ?? label, icon: FIXED_ICONS[name] ?? 'other' };
-  }
-  return intentLooks.get(label) ?? fallbackLook(label);
+function lookOf({ id, label }: Key): TileLook {
+  if (id in FIXED_LOOKS) return FIXED_LOOKS[id as FixedIntent];
+  const look = id === 'something-else' ? { label: 'More', icon: 'more' as const } : (intentLooks.get(label) ?? fallbackLook(label));
+  return { label: look.label, glyph: INTENT_ICON_NODES[look.icon] };
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -266,7 +259,7 @@ function drawTile(element: HTMLElement, key: Key) {
     for (const [name, value] of Object.entries({ class: `tile-ring-${part}`, cx: '50', cy: '50', r: '46', pathLength: '1' })) circle.setAttribute(name, value);
     ring.append(circle);
   }
-  const icon = createElement(INTENT_ICON_NODES[look.icon], { class: 'tile-glyph', 'aria-hidden': 'true' });
+  const icon = createElement(look.glyph, { class: 'tile-glyph', 'aria-hidden': 'true' });
   badge.append(ring, icon);
   const label = document.createElement('span');
   label.className = 'tile-label';
@@ -447,18 +440,19 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons' && entering) iconMagnifier.textContent = '';
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    const { side, cells, recent, intents, fixedIntents } = state;
-    // The same layout the session scans, Fixed Intents included, so the tiles line up with the highlight.
-    const keys = layoutIntents(screenSize, intents, cells, side, fixedIntents, recent);
-    showKeys(`choosing ${side} ${cells} ${recent} ${fixedIntents.join(' ')} ${intents.join('\n')}`, keys, drawTile, recent);
+    const { side, cells, recent, intents, fixed, fixedAt } = state;
+    const keys = layoutIntents(screenSize, state);
+    showKeys(`choosing ${side} ${cells} ${recent} ${fixedAt} ${fixed.join(' ')} ${intents.join('\n')}`, keys, drawTile, recent);
     highlightKey(state.highlight);
     showStepProgress(state.stepProgress);
+    // In the first empty cell, where Claude's first Intent would be. Why there were none is in the log.
+    const note = state.suggesting ? 'Finding more…' : 'Nothing this time. Blink on More to try again.';
+    if (noIntents.textContent !== note) noIntents.textContent = note;
+    place(noIntents, onSheet(layoutIntents(screenSize, { ...state, intents: [...intents, ''] }).at(-2)!.rect));
   }
-  // In the first empty cell, where Claude's first Intent would be, after any Fixed Intents. The reason is in the log.
-  // The Chrome Commands scan has no empty cell, so the message isn't shown there.
-  const emptyCell = state.phase === 'choosing' && state.intents.length === 0 ? firstEmptyCell(state.cells, state.side, state.fixedIntents) : undefined;
-  if (emptyCell) place(noIntents, onSheet(emptyCell));
-  noIntents.hidden = emptyCell === undefined;
+  // The Chrome Commands scan has no cell kept for Intents, so no note.
+  noIntents.hidden =
+    state.phase !== 'choosing' || !(state.suggesting || state.intents.length === 0) || state.intents.length + state.fixed.length + 1 >= state.cells;
   showStatus(state);
   showStopHint(state);
   if (!entering) return;

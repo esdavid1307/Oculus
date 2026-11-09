@@ -49,6 +49,11 @@ describe('intentsPrompt', () => {
     expect(prompt).toContain('They turned down ["Skip the ad","Pause"], so suggest different ones.');
   });
 
+  it('keeps the model from repeating the Fixed Intents the picker always shows', () => {
+    const prompt = intentsPrompt({ x: 800, y: 250, radius: 120 }, frame, []);
+    expect(prompt).toContain('Showing the Desktop and minimizing the window are always offered already, so never suggest them.');
+  });
+
   it('tells the model the YouTube rules and keeps the safety lines', () => {
     const prompt = intentsPrompt({ x: 800, y: 250, radius: 120 }, frame, []);
     expect(prompt).toContain('"Skip the ad"');

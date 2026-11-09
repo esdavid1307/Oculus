@@ -18,7 +18,11 @@ const KEY_CODES: Record<string, number> = {
   left: 123, right: 124, down: 125, up: 126, home: 115, end: 119,
   page_up: 116, prior: 116, page_down: 121, next: 121,
   f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97, f7: 98, f8: 100, f9: 101, f10: 109, f11: 103, f12: 111,
+  mission_control: 160,
 };
+// The Dock only acts on the Mission Control key when it has the Fn flag, as it does from a real keyboard.
+const FN_KEYS = new Set(['mission_control']);
+const FN_FLAG = 0x800000;
 
 // No implied shift: "A" is the a key, and the model asks for "shift+a" when it wants a capital.
 export function parseKeyCombo(combo: string): { keyCode: number; flags: number } {
@@ -31,5 +35,5 @@ export function parseKeyCombo(combo: string): { keyCode: number; flags: number }
   });
   const keyCode = KEY_CODES[key.toLowerCase()];
   if (keyCode === undefined) throw new Error(`Unknown key: ${key}`);
-  return { keyCode, flags: modifierFlags(modifiers) };
+  return { keyCode, flags: modifierFlags(modifiers) | (FN_KEYS.has(key.toLowerCase()) ? FN_FLAG : 0) };
 }
