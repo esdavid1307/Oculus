@@ -47,6 +47,12 @@ describe('the focused field', () => {
     expect(parseFieldRead(`${CHROME_JAVASCRIPT_OFF}\n`)).toEqual({ kind: 'javascript-off' });
   });
 
+  it("tells a page without the focus, as when it's in the address bar, from a page with no field focused", () => {
+    expect(parseFieldRead(pageFocus({ tagName: 'INPUT', type: 'text' }, false))).toEqual({ kind: 'page-unfocused' });
+    expect(parseFieldRead(pageFocus(null, false))).toEqual({ kind: 'page-unfocused' });
+    expect(parseFieldRead(pageFocus({ tagName: 'BODY' }))).toEqual({ kind: 'none' });
+  });
+
   it('presses Return after the text in a single-line text, search or combo box', () => {
     expect(pressesReturn({ role: 'AXTextField', subrole: '' })).toBe(true);
     expect(pressesReturn({ role: 'AXTextField', subrole: 'AXSearchField' })).toBe(true);
@@ -159,6 +165,14 @@ describe('Done', () => {
     expect(onDone({ kind: 'javascript-off' }, undefined, false)).toEqual({ submit: false, learn: false });
   });
 
+  it("goes by the Text Box when the page doesn't have the focus, so a search typed in the address bar runs", () => {
+    expect(onDone({ kind: 'page-unfocused' }, textField, false)).toEqual({ submit: true, learn: false });
+    // Opened with Type, on no Text Box: the focus may be on a toolbar button.
+    expect(onDone({ kind: 'page-unfocused' }, undefined, false)).toEqual({ submit: false, learn: false });
+    expect(onDone({ kind: 'page-unfocused' }, textArea, false)).toEqual({ submit: false, learn: false });
+    expect(onDone({ kind: 'page-unfocused' }, password, false)).toEqual({ submit: false, learn: false });
+  });
+
   it('never presses Return when the page says no field has focus, or the read failed, whatever the Text Box was', () => {
     // The click on the box missed, or the page moved the focus to a button: Return would press it.
     expect(onDone({ kind: 'none' }, textField, false)).toEqual({ submit: false, learn: false });
@@ -168,5 +182,18 @@ describe('Done', () => {
 
   it('still submits when the session asks it to, as after Search or New Tab', () => {
     expect(onDone({ kind: 'failed' }, undefined, true)).toEqual({ submit: true, learn: false });
+  });
+
+  it('always sends in Messages, whose compose box takes many lines, and still learns by the field read now', () => {
+    expect(onDone({ kind: 'field', field: textArea }, undefined, false, true)).toEqual({ submit: true, learn: true });
+    expect(onDone({ kind: 'field', field: textArea }, textArea, false, true)).toEqual({ submit: true, learn: true });
+    expect(onDone({ kind: 'none' }, undefined, false, true)).toEqual({ submit: true, learn: false });
+    expect(onDone({ kind: 'failed' }, textArea, false, true)).toEqual({ submit: true, learn: false });
+    expect(onDone({ kind: 'field', field: password }, undefined, false, true)).toEqual({ submit: true, learn: false });
+  });
+
+  it('follows the field in another app', () => {
+    expect(onDone({ kind: 'field', field: textArea }, textArea, false, false)).toEqual({ submit: false, learn: true });
+    expect(onDone({ kind: 'none' }, undefined, false, false)).toEqual({ submit: false, learn: false });
   });
 });

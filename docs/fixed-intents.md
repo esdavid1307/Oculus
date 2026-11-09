@@ -29,6 +29,7 @@ Cells are kept for everything that can still come, so tiles never move once show
 The Chrome Commands are pressed through System Events, and only while Chrome is still in front:
 
 - **Search** is Cmd+L, which selects the address bar, and **New Tab** is Cmd+T, which opens a tab with the focus in its address bar. Both then open the Gaze Keyboard, and Done types the text and presses Return, whatever field the focus reads as, since Chrome doesn't tell Accessibility which field it is.
+  A target hold on the address bar opens the Gaze Keyboard on it as a Text Box, and Done searches the same way: the page read says the page doesn't have the focus (#95), so Done goes by the Text Box. Opened with Type, on no Text Box, an unfocused page never gets Return.
 - **Next Tab** is Ctrl+Tab and **Close Tab** is Cmd+W.
 
 ## Results

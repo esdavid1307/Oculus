@@ -425,14 +425,20 @@ function readContext(perSite: boolean): Promise<string> {
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
 // shortcut: types through System Events, which needs the Accessibility permission. #6 may replace this.
-// submit presses Return after the text, in the same script so it can't land before the last keystroke.
-function typeText(text: string, submit = false) {
+// submit presses Return after the text, in the same script so it can't land before the last keystroke. onlyIn presses it
+// only while that app is still in front, checked in the script since the menu bar read that chose it can be 2 s old.
+function typeText(text: string, submit = false, onlyIn?: string) {
+  // Forward Delete (117) first drops an inline completion, like Chrome's address bar adds, so Return takes what was
+  // typed. With the caret at the end and nothing selected it does nothing.
+  const pressReturn = ['tell application "System Events" to key code 117', 'tell application "System Events" to key code 36'];
   const script = [
     'on run argv',
     'tell application "System Events" to keystroke (item 1 of argv)',
-    // Forward Delete (117) first drops an inline completion, like Chrome's address bar adds, so Return takes what was
-    // typed. With the caret at the end and nothing selected it does nothing.
-    ...(submit ? ['tell application "System Events" to key code 117', 'tell application "System Events" to key code 36'] : []),
+    ...(!submit
+      ? []
+      : onlyIn
+        ? ['tell application "System Events" to set frontApp to name of first process whose frontmost is true', `if frontApp is ${JSON.stringify(onlyIn)} then`, ...pressReturn, 'end if']
+        : pressReturn),
     'end run',
   ];
   execFile('osascript', [...script.flatMap((line) => ['-e', line]), text], (error) => {
@@ -530,13 +536,15 @@ function createOverlay() {
   let wantTextBoxes = false;
   // The app in front, from the menu bar read every ICON_READ_MS: its first item is the front app's menu, named by its
   // path [process, bar, item]. An app with no menu bar leaves Control Center first, so the front app is unknown then.
-  // Used for the Quit tile, the Chrome menu bar rule and the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
+  // Used for the Quit tile, the Chrome menu bar rule, the Chrome Commands Fixed Intent (Cmd) and Done always sending in
+  // Messages, with no extra osascript.
   const frontApp = () => {
     const first = icons.menubar[0];
     const process = first ? (JSON.parse(first.name) as string[])[0] : '';
     return process === 'ControlCenter' ? '' : process;
   };
   const chromeFront = () => frontApp() === 'Google Chrome';
+  const messagesFront = () => frontApp() === 'Messages';
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
@@ -595,11 +603,12 @@ function createOverlay() {
       // See onDone for when the Text Box the keyboard was opened on stands in for a field that can't be read.
       readFocusedField((read) => {
         // Search and New Tab force Return only while Chrome is in front: if main skipped their key press, the text is in
-        // another app, where Return could send it.
-        const { submit, learn } = onDone(read, action.box, action.submit === true && chromeFront());
+        // another app, where Return could send it. Messages always sends, and for the same reason only if still in front.
+        const inMessages = messagesFront();
+        const { submit, learn } = onDone(read, action.box, action.submit === true && chromeFront(), inMessages);
         const field = read.kind === 'field' ? `${read.field.role}/${read.field.subrole}` : read.kind;
-        console.log(`[type-text] field=${field}${read.kind === 'javascript-off' && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
-        typeText(action.text, submit);
+        console.log(`[type-text] field=${field}${(read.kind === 'javascript-off' || read.kind === 'page-unfocused') && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
+        typeText(action.text, submit, inMessages ? 'Messages' : undefined);
         if (!words.enabled || !learn) return;
         // A failed save must not stop the text being typed, so it only warns.
         try {
