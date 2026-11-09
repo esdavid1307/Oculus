@@ -1,6 +1,6 @@
 # Oculus Agent
 
-**A macOS assistant that turns gaze-based intent into fewer, simpler computer interactions.**
+**An assistant that turns gaze-based intent into fewer, simpler computer interactions.**
 
 Built for **natHacks 2026** · Healthcare & Accessibility
 
@@ -80,9 +80,6 @@ Oculus is therefore not fully local. A local-only mode is planned (#90).
 - **macOS** on a Mac with a webcam. Windows and Linux aren't supported.
 - **Node.js** and **npm**.
 - **Google Chrome**, for the demo flows.
-- **Claude access**, either:
-  - **Claude Code** installed and signed in (`claude` on your PATH). This is the default backend and uses your own Claude login.
-  - Or an API key from console.anthropic.com, with `OCULUS_AGENT_BACKEND=api`. Copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY`.
 - **Xcode Command Line Tools**, only for the optional Gaze Scan in Chrome.
 
 ### Permissions
@@ -196,8 +193,6 @@ Developed during the 64-hour natHacks 2026 competition at the University of Albe
 ## Credits and links
 
 - **Team:** Edwin Shaiju David ([@esdavid1307](https://github.com/esdavid1307)), [@fawazm30](https://github.com/fawazm30), [@znafi](https://github.com/znafi), [@DimaLimanets](https://github.com/DimaLimanets), [@Mehrgarithm](https://github.com/Mehrgarithm)
-- **Demo:** [Add demo video link]
-- **Slides:** [Add slides link]
 - **Dependencies, models and data:**
   - [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker) (Google), for iris and blink tracking
   - [Claude](https://www.anthropic.com/claude) by Anthropic (`claude-sonnet-5-5` by default), through the Anthropic SDK and Claude Code
