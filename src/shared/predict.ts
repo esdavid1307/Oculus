@@ -227,9 +227,9 @@ export function createPredictor(baseWords: BaseWords, model: WordModel = emptyWo
   }
 
   return {
-    // Up to `limit` texts the user submitted before that start with what is typed, once 2+ letters are typed.
+    // Up to `limit` (by default every) texts the user submitted before that start with what is typed, once 2+ letters are typed.
     // Ranked by how often and how recently they were sent, best first.
-    suggestPhrases(text: string, limit = 2, now = Date.now()): string[] {
+    suggestPhrases(text: string, limit = Infinity, now = Date.now()): string[] {
       if (text.replace(/[^a-z]/gi, '').length < PHRASE_MIN_LETTERS) return [];
       const typed = text.toLowerCase();
       const scored: { text: string; score: number }[] = [];

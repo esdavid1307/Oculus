@@ -1,6 +1,6 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
@@ -254,7 +254,7 @@ export function createSession({
 
   function refreshSuggestions() {
     suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
-    phrases = suggestPhrases(text);
+    phrases = suggestPhrases(text).slice(0, MAX_SHOWN_PHRASES);
   }
 
   function openKeyboard(t: number) {

@@ -152,9 +152,9 @@ describe('Suggested Phrases', () => {
     expect(predictor.suggestPhrases('please call the nurse')).toEqual([]);
   });
 
-  it('offers up to 2 phrases, more frequent first', () => {
+  it('offers every matching phrase, more frequent first', () => {
     const predictor = sent('i need water', 'i need a doctor', 'i need a doctor', 'i need help', 'i need help', 'i need help');
-    expect(predictor.suggestPhrases('i n')).toEqual(['i need help', 'i need a doctor']);
+    expect(predictor.suggestPhrases('i n')).toEqual(['i need help', 'i need a doctor', 'i need water']);
   });
 
   it('caps the list at the requested limit', () => {

@@ -31,7 +31,7 @@ const TEXT_HEIGHT = 120;
 // They come first, so the scan reaches them first. With none, the layout is the 3 x 3 grid.
 export function layoutKeyboard({ width, height }: Screen, group: string | null, suggestions: string[] = [], phrases: string[] = []): KeyboardLayout {
   const shown = group === null ? suggestions.slice(0, MAX_SUGGESTIONS) : [];
-  const phrasesShown = group === null ? phrases.slice(0, MAX_SHOWN_PHRASES).filter((text) => text !== '') : [];
+  const phrasesShown = group === null ? phrases.slice(0, MAX_SHOWN_PHRASES) : [];
   const wordsOffset = phrasesShown.length * COLUMNS;
   const offset = wordsOffset + (shown.length ? COLUMNS : 0);
   const rows = ROWS + (shown.length ? 1 : 0) + phrasesShown.length;

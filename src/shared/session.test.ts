@@ -1190,8 +1190,8 @@ describe('Running an Intent', () => {
 describe('Suggested Phrases', () => {
   const select = (t: number) => ({ type: 'select', t }) as const;
   const byPrefix: Record<string, string[]> = {
-    pl: ['please call the nurse', 'please bring water'],
-    pla: ['please call the nurse', 'please bring water'],
+    pl: ['please call the nurse', 'please bring water', 'play some music'],
+    pla: ['please call the nurse', 'please bring water', 'play some music'],
   };
   const make = (withPhrases = true) => {
     const session = createSession({

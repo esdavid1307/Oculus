@@ -58,6 +58,8 @@ function showKeys(name: string, keys: Key[]) {
       element.dataset.key = id;
       element.textContent = label;
       place(element, rect);
+      // The CSS caps the label size by this, so the labels still fit when phrases and words add rows.
+      element.style.setProperty('--key-height', `${rect.height}px`);
       keyboard.append(element);
       return [id, element];
     }),
