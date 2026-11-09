@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 import type { GazeRegion } from '../../shared/gaze';
+import type { ElementHint } from '../../shared/session';
 import { fallbackLook, INTENT_ICONS, isIntentIcon, shortLabel, type IntentLook } from '../../shared/intent-look';
 import { isSkipAd } from '../../shared/skip-ad';
 import { DENIED_TOOLS } from './claude-code';
@@ -48,13 +49,27 @@ const INTENTS_SCHEMA = {
 
 export type SuggestedIntent = { text: string; look: IntentLook };
 
+// The longest element name the model gets. Names come from web pages, so a long one is cut, not trusted.
+const ELEMENT_NAME_MAX_CHARS = 80;
+
+// The Chrome element a Gaze Scan chose, in screenshot pixels like the Gaze Region. Empty when there is none.
+export function elementHint(element: ElementHint | undefined, frame: ScreenFrame) {
+  if (!element) return '';
+  const scale = frame.imageWidth / frame.width;
+  const [x, y, width, height] = [element.rect.x, element.rect.y, element.rect.width, element.rect.height].map((value) => Math.round(value * scale));
+  const name = JSON.stringify(element.name.slice(0, ELEMENT_NAME_MAX_CHARS));
+  return `They chose the element ${name} at (${x}, ${y}), ${width} x ${height} pixels. `;
+}
+
 // The Gaze Region is in display points; the model sees a smaller image, so it gets the region in that image's pixels.
-// turnedDown are the Suggested Intents passed over with Something else for this target.
-export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown: string[]) {
+// turnedDown are the Suggested Intents passed over with Something else for this target. element is the Chrome element
+// a Gaze Scan chose there, if any.
+export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown: string[], element?: ElementHint) {
   const scale = frame.imageWidth / frame.width;
   const [x, y, radius] = [region.x, region.y, region.radius].map((value) => Math.round(value * scale));
   return (
     `The user is looking at about (${x}, ${y}), within about ${radius} pixels, in this ${frame.imageWidth} x ${frame.imageHeight} screenshot. ` +
+    elementHint(element, frame) +
     `Suggest up to ${MAX_INTENTS} things they most likely want done with what is there, most likely first. ` +
     VIDEO_RULES +
     DOCUMENT_RULES +
@@ -180,6 +195,7 @@ export async function suggestIntents(
   capture: Capture,
   log: (line: string) => void = console.log,
   signal?: AbortSignal,
+  element?: ElementHint,
 ): Promise<SuggestedIntent[]> {
   const started = Date.now();
   try {
@@ -187,7 +203,7 @@ export async function suggestIntents(
     const shot = await capture();
     // A Stop during the screenshot comes before the abort listener exists, so check here or claude still starts.
     signal?.throwIfAborted();
-    const prompt = intentsPrompt(region, shot.frame, turnedDown);
+    const prompt = intentsPrompt(region, shot.frame, turnedDown, element);
     const reply = config.backend === 'api' ? await askApi(config, shot, prompt, signal) : await askClaudeCode(config, shot, prompt, signal);
     const intents = parseSuggestions(reply, turnedDown);
     log(`${LOG_PREFIX} suggested intents in ${Date.now() - started} ms (${config.backend}, ${config.model}): ${JSON.stringify(intents.map(({ text }) => text))}`);

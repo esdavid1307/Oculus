@@ -314,6 +314,11 @@ function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
   if (state.phase === 'typing') return 'top';
   // The Suggested Intents are a column on one side and the target is on the other half, so the middle is clear.
   if (state.phase === 'choosing') return 'middle';
+  if (state.phase === 'icons' && state.source === 'chrome') {
+    // Chrome elements can be anywhere, so the countdown goes on the half of the screen the highlight isn't on.
+    const { y, height } = state.highlight.rect;
+    return y + height / 2 < innerHeight / 2 ? 'bottom' : 'top';
+  }
   if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
   return 'bottom';
 }

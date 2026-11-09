@@ -13,6 +13,7 @@ import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { createMainNeuralLayer } from './neural';
+import { createChromeScan } from './chrome-scan';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -486,6 +487,12 @@ function createOverlay() {
     enabled: (settings as { neuralLayer?: unknown } | undefined)?.neuralLayer !== false,
     scanStepSet,
   });
+  // Gaze Scan in Chrome (#22). Off unless config.json says "chromeScan": true, since it needs the Swift helper built and
+  // makes Chrome build its Accessibility tree. See docs/chrome-scan.md.
+  const chromeScan =
+    (settings as { chromeScan?: unknown } | undefined)?.chromeScan === true
+      ? createChromeScan({ source: join(app.getAppPath(), 'scripts', 'oculus-ax.swift'), binary: join(app.getPath('userData'), 'oculus-ax'), display: bounds })
+      : null;
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
@@ -518,7 +525,7 @@ function createOverlay() {
       const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
       pendingIntents?.abort();
       const controller = (pendingIntents = new AbortController());
-      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal)
+      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal, action.element)
         .then((intents) => {
           // Looks first, so the tiles have their label and icon the moment the session adds them.
           overlay.webContents.send('intent-looks', Object.fromEntries(intents.map(({ text, look }) => [text, look])));
@@ -529,7 +536,7 @@ function createOverlay() {
           rmSync(saveDir, { recursive: true, force: true });
         });
     } else if (action.type === 'run-intent') {
-      const { intent, region, request, sinceWakeMs, held } = action;
+      const { intent, region, request, sinceWakeMs, held, element } = action;
       // Taken now: by the time the run ends, Something else could have asked about a new target.
       const context = askedContext;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
@@ -542,7 +549,7 @@ function createOverlay() {
       running = true;
       currentRun = { request, controller };
       const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
+      void runIntentInElectron(overlay, { intent, region, request, element }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
         if (outcome.ok) neural.runSucceeded(intent, region, held, outcome.firstClick, bounds);
@@ -581,7 +588,8 @@ function createOverlay() {
     else if (action.source === 'menu') {
       openMenu = null;
       runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
-    } else openIcon(action.source, action.name);
+    } else if (action.source === 'dock' || action.source === 'desktop') openIcon(action.source, action.name);
+    // A Chrome element is never opened: the session asks for Suggested Intents about it instead.
   };
   const session = createSession({
     screen: bounds,
@@ -593,6 +601,7 @@ function createOverlay() {
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
     textBoxes: () => textBoxes,
+    chrome: () => chromeScan?.elements() ?? [],
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
   });
@@ -608,6 +617,10 @@ function createOverlay() {
     // The Stop Gesture, the Gaze Keyboard or a run ended the wait, so the answer would be dropped anyway.
     // The picker can be up already, with past Intents, while Claude is still answering.
     if (state.phase !== 'thinking' && state.phase !== 'choosing') pendingIntents?.abort();
+    // Chrome elements are looked up only while a target can be picked, around the gaze the session just saw.
+    if (state.phase === 'waiting-for-target') {
+      if (input.type === 'gaze') chromeScan?.look(input.region);
+    } else chromeScan?.clear();
     overlay.webContents.send('overlay-state', state);
   };
 
@@ -648,7 +661,10 @@ function createOverlay() {
       });
     }
   }
-  overlay.on('closed', () => timers.forEach(clearInterval));
+  overlay.on('closed', () => {
+    timers.forEach(clearInterval);
+    chromeScan?.stop();
+  });
   return overlay;
 }
 

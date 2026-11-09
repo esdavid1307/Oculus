@@ -1628,6 +1628,119 @@ describe('Text box target', () => {
   });
 });
 
+describe('Gaze Scan in Chrome', () => {
+  const select = (t: number) => ({ type: 'select', t }) as const;
+  // What the Accessibility lookup found around the gaze on a YouTube page: two thumbnails and a title.
+  const at = (name: string, x: number, y: number, width = 160, height = 90) => ({ name, label: name, rect: { x, y, width, height } });
+  const elements = [at('Lo-fi beats', 400, 300), at('Why bridges stand', 220, 300), at('Lo-fi beats to study to', 220, 400, 300, 20)];
+  const onThumbs = { x: 380, y: 340, radius: 120 };
+  const awake = (options: Partial<Parameters<typeof createSession>[0]> = {}) => {
+    const actions: AgentAction[] = [];
+    const all: AgentAction[] = [];
+    const session = createSession({
+      screen,
+      act: (action) => {
+        all.push(action);
+        record(actions)(action);
+      },
+      chrome: () => elements,
+      ...options,
+    });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    return { session, actions, all };
+  };
+
+  it('sticks to the Chrome elements near the gaze after 3 seconds, instead of the 1 second target hold', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onThumbs));
+    expect(session(gaze(4100, onThumbs)).phase).toBe('waiting-for-target');
+    expect(actions).toEqual([]);
+    expect(session(gaze(6100, onThumbs))).toMatchObject({ phase: 'icons', source: 'chrome' });
+  });
+
+  it('scans the elements column by column from the left, top to bottom', () => {
+    const { session } = awake();
+    session(gaze(3100, onThumbs));
+    session(gaze(6100, onThumbs));
+    const order = [6100, 8100, 10_100].map((t) => {
+      const state = session(tick(t));
+      return state.phase === 'icons' ? state.highlight.name : null;
+    });
+    expect(order).toEqual(['Why bridges stand', 'Lo-fi beats to study to', 'Lo-fi beats']);
+  });
+
+  it('asks for Suggested Intents about the element a Select Blink chooses, with its name and bounds as the hint', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onThumbs));
+    session(gaze(6100, onThumbs));
+    session(tick(10_100));
+    expect(session(select(10_200)).phase).toBe('thinking');
+    expect(actions).toEqual([
+      {
+        type: 'suggest-intents',
+        region: { x: 480, y: 345, radius: 120 },
+        request: 1,
+        turnedDown: [],
+        element: { name: 'Lo-fi beats', rect: { x: 400, y: 300, width: 160, height: 90 } },
+      },
+    ]);
+  });
+
+  it('keeps the element hint for Something else and for the run', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onThumbs));
+    session(gaze(6100, onThumbs));
+    session(select(6200));
+    session({ type: 'intents', t: 7000, request: 1, intents: ['Open this video'] });
+    // Open this video, then Something else 2 s later.
+    session(tick(9000));
+    session(select(9000));
+    session({ type: 'intents', t: 10_000, request: 2, intents: ['Play it'] });
+    session(select(10_100));
+    const element = { name: 'Why bridges stand', rect: { x: 220, y: 300, width: 160, height: 90 } };
+    expect(actions.map((action) => ('element' in action ? action.element : null))).toEqual([element, element, element]);
+    expect(actions[2]).toMatchObject({ type: 'run-intent', intent: 'Play it', region: { x: 300, y: 345 } });
+  });
+
+  it('teaches Gaze Correction where the user was looking, and never Icon Order', () => {
+    const orderIcons = (_source: string, names: string[]) => [...names].reverse();
+    const { session, all } = awake({ orderIcons });
+    session(gaze(3100, onThumbs));
+    expect(session(gaze(6100, onThumbs))).toMatchObject({ highlight: { name: 'Why bridges stand' } });
+    session(select(6200));
+    const signals = all.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));
+    expect(signals.slice(1)).toEqual([
+      { kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false },
+      { kind: 'gaze', from: 3100, to: 6100, target: { x: 300, y: 345 }, weight: 1 },
+    ]);
+  });
+
+  it('leaves a text box to the Gaze Keyboard, so looking at the search box still opens it after 1 second', () => {
+    const box = { name: 'Search', rect: { x: 300, y: 300, width: 300, height: 40 } };
+    const { session, actions } = awake({ textBoxes: () => [box] });
+    session(gaze(3100, { x: 450, y: 320, radius: 120 }));
+    expect(session(gaze(4100, { x: 450, y: 320, radius: 120 })).phase).toBe('typing');
+    expect(actions[0]).toMatchObject({ type: 'focus-text-box', name: 'Search' });
+  });
+
+  it('keeps the 1 second target hold where no Chrome element is near', () => {
+    const { session, actions } = awake({ chrome: () => [] });
+    session(gaze(3100, onThumbs));
+    expect(session(gaze(4100, onThumbs)).phase).toBe('thinking');
+    expect(actions).toEqual([{ type: 'suggest-intents', region: onThumbs, request: 1, turnedDown: [] }]);
+  });
+
+  it('ends the scan without asking anything on Look Away', () => {
+    const { session, actions } = awake();
+    session(gaze(3100, onThumbs));
+    session(gaze(6100, onThumbs));
+    session(gaze(6200, null));
+    expect(session(gaze(11_200, null)).phase).toBe('idle');
+    expect(actions).toEqual([]);
+  });
+});
+
 describe('Learning signals', () => {
   const select = (t: number) => ({ type: 'select', t }) as const;
   const signals = (actions: AgentAction[]) => actions.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));
