@@ -42,6 +42,11 @@ function showMessage(title: string, detail: string) {
 }
 
 export async function startCameraGaze(send: (input: SessionInput) => void) {
+  // The dot goes where main put the gaze after Gaze Correction, so it sits where choices will land, not where the
+  // tracker's raw estimate is. Calibration places the dot itself.
+  window.overlay.onGazeDot((position) => {
+    if (position && root.dataset.calibrating === undefined) placeDot(position.x, position.y);
+  });
   let onSample: (sample: Sample) => void = () => {};
   let lastSampleAt = Date.now();
   const tracker = await createTracker((sample) => {
@@ -79,10 +84,8 @@ export async function startCameraGaze(send: (input: SessionInput) => void) {
     await wait(1100);
     message.hidden = true;
     delete root.dataset.calibrating;
-    onSample = createGazeSource(send, runCalibration, (position) => {
-      dot.hidden = !position;
-      if (position) placeDot(position.x, position.y);
-    });
+    // Shown only while there is gaze. Where it goes comes from main, above.
+    onSample = createGazeSource(send, runCalibration, (position) => (dot.hidden = !position));
   };
   await runCalibration();
 }

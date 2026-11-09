@@ -39,6 +39,8 @@ declare global {
     overlay: {
       onState(listener: (state: OverlayState) => void): void;
       onLargeView(listener: (settings: LargeView) => void): void;
+      // The gaze after Gaze Correction, where the Gaze Dot goes. null when there is no gaze.
+      onGazeDot(listener: (position: { x: number; y: number } | null) => void): void;
       onIntentLooks(listener: (looks: Record<string, IntentLook>) => void): void;
       sendGaze(input: SessionInput): void;
     };
