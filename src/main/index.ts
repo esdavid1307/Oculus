@@ -44,7 +44,7 @@ const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
 const DEV_LOOK_AWAY_SHORTCUT = 'CommandOrControl+Shift+L';
 // Time for the Centre Box to be drawn before the first screenshot.
 const OVERLAY_DRAW_MS = 1000;
-// Time for the Dock to come back up after it restarts with a new icon size.
+// Time for the Dock to finish resizing to a new icon size.
 const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
@@ -310,7 +310,7 @@ function createWordPrediction(enabled: boolean) {
   return {
     enabled,
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
-    suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
+    suggestPhrases: (text: string) => (enabled ? predictor.suggestPhrases(text) : []),
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
@@ -462,7 +462,7 @@ function createOverlay() {
   const largeView = readLargeView(settings);
   // The renderer has no file access, so it gets the settings once the page has loaded.
   overlay.webContents.once('did-finish-load', () => overlay.webContents.send('large-view', largeView));
-  // A bigger Dock moves its icons, so they are read again once it has restarted.
+  // A bigger Dock moves its icons, so they are read again once it has resized.
   const dockChanged = applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
   if (dockChanged) setTimeout(refreshIcons, DOCK_RESTART_MS);
   refreshIcons();
@@ -517,7 +517,11 @@ function createOverlay() {
       pendingIntents?.abort();
       const controller = (pendingIntents = new AbortController());
       void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal)
-        .then((intents) => advance({ type: 'intents', t: Date.now(), request: action.request, intents }))
+        .then((intents) => {
+          // Looks first, so the tiles have their label and icon the moment the session adds them.
+          overlay.webContents.send('intent-looks', Object.fromEntries(intents.map(({ text, look }) => [text, look])));
+          advance({ type: 'intents', t: Date.now(), request: action.request, intents: intents.map(({ text }) => text) });
+        })
         .finally(() => {
           if (pendingIntents === controller) pendingIntents = null;
           rmSync(saveDir, { recursive: true, force: true });
@@ -582,7 +586,7 @@ function createOverlay() {
     timings: settings,
     act: perform,
     suggest: words.suggest,
-    suggestPhrase: words.suggestPhrase,
+    suggestPhrases: words.suggestPhrases,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,

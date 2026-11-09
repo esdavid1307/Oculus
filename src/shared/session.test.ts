@@ -182,7 +182,7 @@ describe('Gaze Keyboard', () => {
 
   it('opens on the group screen with no text, highlighting the first key', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [] });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [], phrases: [], stepMs: 2000 });
   });
 
   it('moves the highlight to the next key every 2 seconds, and wraps round', () => {
@@ -311,7 +311,7 @@ describe('Dock', () => {
     const { session } = awake();
     session(gaze(3100, nearDock));
     expect(session(gaze(6099, nearDock)).phase).toBe('waiting-for-target');
-    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0] });
+    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0], stepMs: 2000 });
   });
 
   describe('showing the Dock', () => {
@@ -801,16 +801,20 @@ describe('Suggested Intents', () => {
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
       highlight: 'intent-0',
       cells: 4,
+      side: 'right',
+      stepProgress: 0,
     });
     expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
       'Skip the ad',
       'Open a related video',
       'Pause',
       'Something else',
+      'Close',
     ]);
   });
 
-  // Suggestions arrive at 5000 ms, so the scan reaches intent-1 at 7000, intent-2 at 9000 and Something else at 11000.
+  // Suggestions arrive at 5000 ms, so the scan reaches intent-1 at 7000, intent-2 at 9000, Something else at 11000 and
+  // Close at 13000.
   const choosing = (intents = ['Skip the ad', 'Open a related video', 'Pause']) => {
     const woken = thinking();
     woken.session({ type: 'intents', t: 5000, request: 1, intents });
@@ -822,13 +826,15 @@ describe('Suggested Intents', () => {
     expect(session(tick(6999))).toMatchObject({ highlight: 'intent-0' });
     expect(session(tick(7000))).toMatchObject({ highlight: 'intent-1' });
     expect(session(tick(11_000))).toMatchObject({ highlight: 'something-else' });
-    expect(session(tick(13_000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(13_000))).toMatchObject({ highlight: 'close' });
+    expect(session(tick(15_000))).toMatchObject({ highlight: 'intent-0' });
   });
 
   it('scans only the choices on screen when the model offers fewer than 3', () => {
     const { session } = choosing(['Pause']);
     expect(session(tick(7000))).toMatchObject({ highlight: 'something-else' });
-    expect(session(tick(9000))).toMatchObject({ highlight: 'intent-0' });
+    expect(session(tick(9000))).toMatchObject({ highlight: 'close' });
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'intent-0' });
   });
 
   it('runs the highlighted Suggested Intent on a Select Blink, which is the confirmation', () => {
@@ -964,8 +970,10 @@ describe('Suggested Intents', () => {
 
     it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6 });
-      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
+      // The ring around the lit choice fills over its scan step and starts again on the next one.
+      expect(session(tick(5500))).toMatchObject({ highlight: 'intent-0', stepProgress: 0.5 });
+      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1', stepProgress: 0 });
       expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
     });
 
@@ -997,15 +1005,17 @@ describe('Suggested Intents', () => {
       expect(session(tick(6600))).toMatchObject({ highlight: 'something-else' });
       expect(session(claude(6600, ['Like', 'Share']))).toMatchObject({ highlight: 'something-else' });
       expect(session(tick(8499))).toMatchObject({ highlight: 'something-else' });
-      expect(session(tick(8500))).toMatchObject({ highlight: 'intent-0' });
+      expect(session(tick(8500))).toMatchObject({ highlight: 'close' });
+      expect(session(tick(10_500))).toMatchObject({ highlight: 'intent-0' });
     });
 
     it("keeps every cell where it was when Claude's Intents arrive", () => {
       const before = layoutIntents(screen, ['Pause', 'Mute'], 6);
       const after = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6);
       expect(after.slice(0, 2).map((key) => key.rect)).toEqual(before.slice(0, 2).map((key) => key.rect));
-      expect(after.at(-1)!.rect).toEqual(before.at(-1)!.rect);
-      expect(after).toHaveLength(6);
+      // Something else and Close stay put too.
+      expect(after.slice(-2).map((key) => key.rect)).toEqual(before.slice(-2).map((key) => key.rect));
+      expect(after).toHaveLength(7);
     });
 
     it('does nothing when Claude only repeats the past Intents', () => {
@@ -1191,14 +1201,67 @@ describe('Running an Intent', () => {
   });
 });
 
-describe('Suggested Phrase', () => {
+describe('Suggested Intents side panel', () => {
+  const overlap = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+  it('sets the choices out in a 2-column grid on the given side, Close last, leaving the rest of the screen clear', () => {
+    for (const side of ['left', 'right'] as const) {
+      const keys = layoutIntents(screen, ['Skip the ad', 'Pause'], 4, side);
+      expect(keys.map(({ id }) => id)).toEqual(['intent-0', 'intent-1', 'something-else', 'close']);
+      expect(keys.at(-1)!.label).toBe('Close');
+      const panel = { x: side === 'left' ? 0 : screen.width - Math.floor(screen.width / 3), width: Math.floor(screen.width / 3) };
+      for (const { rect } of keys) {
+        // Inside a third of the screen against its own edge.
+        expect(rect.x >= panel.x && rect.x + rect.width <= panel.x + panel.width + 0.001).toBe(true);
+        expect(rect.y >= 0 && rect.y + rect.height <= screen.height).toBe(true);
+        // Square-ish.
+        expect(rect.height / rect.width).toBeLessThanOrEqual(1.1);
+        for (const other of keys) if (other.rect !== rect) expect(overlap(rect, other.rect)).toBe(false);
+      }
+      // Two across, in scan order: left to right, then down.
+      expect(keys[0].rect.y).toBe(keys[1].rect.y);
+      expect(keys[0].rect.x).toBeLessThan(keys[1].rect.x);
+      expect(keys[2].rect.y).toBeGreaterThan(keys[0].rect.y);
+    }
+  });
+
+  // Woken at 3 s, the target held from 3.1 s, and Claude's Intents in at 5 s.
+  const choosing = (target: { x: number; y: number; radius: number }) => {
+    const actions: AgentAction[] = [];
+    const session = createSession({ screen, act: (action) => actions.push(action) });
+    session(gaze(0, inBox));
+    session(gaze(3000, inBox));
+    session(gaze(3100, target));
+    session(gaze(4100, target));
+    const state = session({ type: 'intents', t: 5000, request: 1, intents: ['Skip the ad', 'Pause'] });
+    return { session, actions, state };
+  };
+
+  it('puts the panel on the side away from the target, so the target stays in view', () => {
+    expect(choosing({ x: 300, y: 300, radius: 120 }).state).toMatchObject({ phase: 'choosing', side: 'right' });
+    expect(choosing({ x: 1300, y: 300, radius: 120 }).state).toMatchObject({ phase: 'choosing', side: 'left' });
+  });
+
+  it('closes the Suggested Intents on Close, running nothing and asking for nothing more', () => {
+    const { session, actions } = choosing({ x: 300, y: 300, radius: 120 });
+    // Skip the ad at 5 s, Pause at 7 s, Something else at 9 s and Close at 11 s.
+    expect(session(tick(11_000))).toMatchObject({ highlight: 'close' });
+    expect(session({ type: 'select', t: 11_100 })).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(actions.filter(({ type }) => type !== 'learn')).toEqual([{ type: 'suggest-intents', region: { x: 300, y: 300, radius: 120 }, request: 1, turnedDown: [] }]);
+  });
+});
+
+describe('Suggested Phrases', () => {
   const select = (t: number) => ({ type: 'select', t }) as const;
-  const phrases: Record<string, string> = { pl: 'please call the nurse', pla: 'please call the nurse' };
+  const byPrefix: Record<string, string[]> = {
+    pl: ['please call the nurse', 'please bring water', 'play some music'],
+    pla: ['please call the nurse', 'please bring water', 'play some music'],
+  };
   const make = (withPhrases = true) => {
     const session = createSession({
       screen,
       suggest: (text) => (text === '' ? [] : ['one', 'two', 'three']),
-      suggestPhrase: withPhrases ? (text) => phrases[text] : undefined,
+      suggestPhrases: withPhrases ? (text) => byPrefix[text] ?? [] : undefined,
     });
     let state = session({ type: 'open-keyboard', t: 0 });
     let t = 0;
@@ -1214,44 +1277,49 @@ describe('Suggested Phrase', () => {
     return { press, type, state: () => state };
   };
 
-  it('offers no phrase on an empty keyboard or after 1 letter', () => {
+  it('offers no phrases on an empty keyboard or after 1 letter', () => {
     const { type, state } = make();
-    expect(state()).not.toHaveProperty('phrase');
+    expect(state()).toMatchObject({ phrases: [] });
     type('p');
-    expect(state()).not.toHaveProperty('phrase');
+    expect(state()).toMatchObject({ phrases: [] });
   });
 
-  it('offers the phrase after 2 letters and scans it before the Suggested Words', () => {
+  it('offers phrases after 2 letters, scanning them before the Suggested Words', () => {
     const { type, state } = make();
     type('p', 'l');
-    expect(state()).toMatchObject({ phrase: 'please call the nurse', suggestions: ['one', 'two', 'three'], highlight: 'phrase' });
+    expect(state()).toMatchObject({
+      phrases: ['please call the nurse', 'please bring water'],
+      suggestions: ['one', 'two', 'three'],
+      highlight: 'phrase:please call the nurse',
+    });
   });
 
-  it('replaces everything typed with the phrase when pressed', () => {
+  it('replaces everything typed with the chosen phrase when pressed', () => {
     const { type, press, state } = make();
     type('p', 'l');
-    expect(press('phrase')).toMatchObject({ text: 'please call the nurse', group: null });
-    expect(state()).not.toHaveProperty('phrase');
+    expect(press('phrase:please bring water')).toMatchObject({ text: 'please bring water', group: null });
+    expect(state()).toMatchObject({ phrases: [] });
   });
 
-  it('hides the phrase key on the letter screens', () => {
-    expect(layoutKeyboard(screen, 'abcde', [], 'x').keys.map(({ id }) => id)).not.toContain('phrase');
+  it('hides phrase keys on the letter screens', () => {
+    const ids = layoutKeyboard(screen, 'abcde', [], ['x', 'y']).keys.map(({ id }) => id);
+    expect(ids.some((id) => id.startsWith('phrase:'))).toBe(false);
   });
 
-  it('behaves as before without a phrase dependency', () => {
+  it('defaults to no phrases when the session is wired without a provider', () => {
     const { type, state } = make(false);
     type('p', 'l');
-    expect(state()).not.toHaveProperty('phrase');
-    expect(state()).toMatchObject({ highlight: 'word:one' });
+    expect(state()).toMatchObject({ phrases: [], highlight: 'word:one' });
   });
 
-  it('lays the phrase out as one wide first row, with the words after it, without overlap', () => {
+  it('lays the phrases out as wide rows at the top, with the words after them, without overlap', () => {
     for (const size of [{ width: 1512, height: 982 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
-      const { keys } = layoutKeyboard(size, null, ['a', 'b', 'c'], 'a whole sentence');
-      expect(keys.length).toBeLessThanOrEqual(13);
-      expect(keys[0]).toMatchObject({ id: 'phrase', label: 'a whole sentence' });
+      const { keys } = layoutKeyboard(size, null, ['a', 'b', 'c'], ['first phrase', 'second phrase']);
+      expect(keys[0]).toMatchObject({ id: 'phrase:first phrase', label: 'first phrase' });
+      expect(keys[1]).toMatchObject({ id: 'phrase:second phrase', label: 'second phrase' });
       expect(keys[0].rect.width).toBeCloseTo(size.width);
-      expect(keys.slice(1, 4).map(({ id }) => id)).toEqual(['word:a', 'word:b', 'word:c']);
+      expect(keys[1].rect.width).toBeCloseTo(size.width);
+      expect(keys.slice(2, 5).map(({ id }) => id)).toEqual(['word:a', 'word:b', 'word:c']);
       const hit = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
       for (const { rect } of keys) {
         expect(rect.x >= 0 && rect.y >= 120 && rect.x + rect.width <= size.width + 0.001 && rect.y + rect.height <= size.height + 0.001).toBe(true);
@@ -1260,9 +1328,9 @@ describe('Suggested Phrase', () => {
     }
   });
 
-  it('keeps the layout unchanged when there is no phrase', () => {
-    expect(layoutKeyboard(screen, null, ['a', 'b'], undefined)).toEqual(layoutKeyboard(screen, null, ['a', 'b']));
-    expect(layoutKeyboard(screen, null, [], '')).toEqual(layoutKeyboard(screen, null));
+  it('keeps the layout unchanged when there are no phrases', () => {
+    expect(layoutKeyboard(screen, null, ['a', 'b'], [])).toEqual(layoutKeyboard(screen, null, ['a', 'b']));
+    expect(layoutKeyboard(screen, null, [], [])).toEqual(layoutKeyboard(screen, null));
   });
 });
 
@@ -1596,9 +1664,9 @@ describe('Learning signals', () => {
     const { session } = setup({ scanPace: () => pace });
     session({ type: 'open-keyboard', t: 0 });
     pace = 1000;
-    expect(session(tick(1500))).toMatchObject({ highlight: 'abcde' });
+    expect(session(tick(1500))).toMatchObject({ highlight: 'abcde', stepMs: 2000 });
     session(select(1500));
-    expect(session(tick(2600))).toMatchObject({ highlight: 'b' });
+    expect(session(tick(2600))).toMatchObject({ highlight: 'b', stepMs: 1000 });
   });
 
   it('scans icons in the learned order, and reports which one was opened among all scanned, in screen order', () => {

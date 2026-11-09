@@ -21,6 +21,7 @@
         onLargeView(listener) {
           listener({ enabled: true, uiScale: 1.15, dockIconSize: 96 });
         },
+        onIntentLooks() {},
         sendGaze() {},
       };
     </script>
@@ -40,7 +41,8 @@
           group: null,
           highlight: 'word:water',
           suggestions: ['water', 'help', 'rest'],
-          phrase: 'I would like some water please',
+          phrases: ['I would like some water please'],
+          stepMs: 2000,
         },
         choosing: {
           phase: 'choosing',
@@ -48,6 +50,8 @@
           intents: ['Open this video', 'Skip the ad', 'Scroll for more', 'Turn on captions'],
           highlight: 'intent-0',
           cells: 6,
+          side: 'right',
+          stepProgress: 0.4,
         },
         finished: { phase: 'finished', wakeProgress: 1, intent: 'Open this video', ok: true, summary: 'Opened the video you were looking at.' },
         stop: { phase: 'waiting-for-target', wakeProgress: 1, stopInMs: 3200 },
@@ -59,7 +63,7 @@
         });
       await wait();
       if (scene === 'choosing') {
-        window.__push({ phase: 'choosing', wakeProgress: 1, intents: ['Open this video', 'Skip the ad'], highlight: 'intent-0', cells: 6 });
+        window.__push({ phase: 'choosing', wakeProgress: 1, intents: ['Open this video', 'Skip the ad'], highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
         window.__push(scenes.choosing);
       } else {
         window.__push(scenes[scene] ?? idle);
@@ -77,7 +81,7 @@
       <div class="aurora" aria-hidden="true"></div>
       <div class="noise" aria-hidden="true"></div>
       <div id="typed"></div>
-      <div id="no-intents" hidden>Nothing this time. Blink on Something else to try again.</div>
+      <div id="no-intents" hidden>Nothing this time. Blink on More to try again.</div>
     </div>
     <div id="wake" class="target">
       <div class="wake-aurora" aria-hidden="true"></div>

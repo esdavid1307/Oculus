@@ -1,11 +1,47 @@
+import {
+  ArrowDown,
+  ArrowUp,
+  Camera,
+  Copy,
+  createElement,
+  Ellipsis,
+  ExternalLink,
+  FileText,
+  GitBranch,
+  Keyboard,
+  Maximize2,
+  Minimize2,
+  MousePointerClick,
+  Pause,
+  PenLine,
+  Play,
+  RefreshCw,
+  Save,
+  Search,
+  Send,
+  SkipForward,
+  Sparkles,
+  Terminal,
+  Trash,
+  Volume2,
+  VolumeX,
+  X,
+  type IconNode,
+} from 'lucide';
 import type { Rect } from '../shared/geometry';
-import { layoutIntents, layoutKeyboard, type Key, type KeyId } from '../shared/keyboard';
+import { fallbackLook, type IntentIcon, type IntentLook } from '../shared/intent-look';
+import { CLOSE_KEY, layoutIntents, layoutKeyboard, PHRASE_KEY, type Key, type KeyId } from '../shared/keyboard';
 import { magnify, type LargeView } from '../shared/large-view';
 import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
   interface Window {
-    overlay: { onState(listener: (state: OverlayState) => void): void; onLargeView(listener: (settings: LargeView) => void): void; sendGaze(input: SessionInput): void };
+    overlay: {
+      onState(listener: (state: OverlayState) => void): void;
+      onLargeView(listener: (settings: LargeView) => void): void;
+      onIntentLooks(listener: (looks: Record<string, IntentLook>) => void): void;
+      sendGaze(input: SessionInput): void;
+    };
   }
 }
 
@@ -37,7 +73,6 @@ const ICONS = {
   space: ['M4 9.5V14h16V9.5'],
   sparkle: ['M12 2.5c.7 5.2 2.3 6.8 7.5 7.5-5.2.7-6.8 2.3-7.5 7.5-.7-5.2-2.3-6.8-7.5-7.5 5.2-.7 6.8-2.3 7.5-7.5Z', 'M19 15.5c.3 2.2 1 2.9 3 3.2-2 .3-2.7 1-3 3.2-.3-2.2-1-2.9-3-3.2 2-.3 2.7-1 3-3.2Z'],
   clock: ['M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18Z', 'M12 7.5V12l3 2'],
-  refresh: ['M20 12a8 8 0 1 1-2.3-5.7', 'M20 4v4.5h-4.5'],
 };
 
 function icon(name: keyof typeof ICONS) {
@@ -57,8 +92,6 @@ const KEY_ICONS: Partial<Record<KeyId, keyof typeof ICONS>> = {
   back: 'back',
   space: 'space',
   done: 'check',
-  phrase: 'sparkle',
-  'something-else': 'refresh',
 };
 
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
@@ -100,8 +133,14 @@ function onSheet({ x, y, width, height }: Rect): Rect {
 const typedRect = onSheet(layoutKeyboard(screenSize, null).text);
 place(typed, typedRect);
 root.style.setProperty('--typed-middle', `${typedRect.y + typedRect.height / 2}px`);
-// In the first cell, where an intent would be. The reason is in the log.
-place(noIntents, onSheet(layoutIntents(screenSize, [''])[0].rect));
+
+function drawKey(element: HTMLElement, { id, label }: Key) {
+  const name = KEY_ICONS[id] ?? (id.startsWith(PHRASE_KEY) ? 'sparkle' : undefined);
+  if (name) element.append(icon(name));
+  const text = document.createElement('span');
+  text.textContent = label;
+  element.append(text);
+}
 
 // Which screen of keys is drawn, so they are only rebuilt when it changes.
 let shownKeys: string | undefined;
@@ -111,22 +150,23 @@ let keyElements = new Map<string, HTMLElement>();
 let drawnBefore = new Set<string>();
 
 // recent is how many of the keys, from the first, are past Intents.
-function showKeys(name: string, keys: Key[], recent = 0) {
+function showKeys(name: string, keys: Key[], draw: (element: HTMLElement, key: Key) => void = drawKey, recent = 0) {
   if (name === shownKeys) return;
   keyElements.forEach((element) => element.remove());
   const drawn = new Set(keys.map(({ id, label }) => `${id}\n${label}`));
   keyElements = new Map(
-    keys.map(({ id, label, rect }, i) => {
+    keys.map((key, i) => {
+      const { id, label, rect } = key;
       const element = document.createElement('div');
       element.className = drawnBefore.has(`${id}\n${label}`) ? 'key' : 'key enter';
       element.dataset.key = id;
       element.style.setProperty('--i', String(i));
+      // The CSS caps the label size by this, so the labels still fit when phrases and words add rows.
+      element.style.setProperty('--key-height', `${rect.height}px`);
       const frost = document.createElement('span');
       frost.className = 'frost';
       frost.ariaHidden = 'true';
       element.append(frost);
-      const name = KEY_ICONS[id] ?? (id.startsWith('intent-') && i >= recent ? 'sparkle' : undefined);
-      if (name) element.append(icon(name));
       if (i < recent) {
         element.classList.add('history');
         const badge = document.createElement('span');
@@ -134,12 +174,10 @@ function showKeys(name: string, keys: Key[], recent = 0) {
         badge.append(icon('clock'), 'Recent');
         element.append(badge);
       }
-      const text = document.createElement('span');
-      text.textContent = label;
-      element.append(text);
+      draw(element, key);
       place(element, onSheet(rect));
       keyboard.append(element);
-      return [id, element];
+      return [key.id, element];
     }),
   );
   drawnBefore = drawn;
@@ -147,38 +185,110 @@ function showKeys(name: string, keys: Key[], recent = 0) {
   lit = undefined;
 }
 
+const INTENT_ICON_NODES: Record<IntentIcon, IconNode> = {
+  screenshot: Camera,
+  branch: GitBranch,
+  'scroll-down': ArrowDown,
+  'scroll-up': ArrowUp,
+  click: MousePointerClick,
+  maximize: Maximize2,
+  minimize: Minimize2,
+  close: X,
+  play: Play,
+  pause: Pause,
+  skip: SkipForward,
+  search: Search,
+  type: Keyboard,
+  document: FileText,
+  open: ExternalLink,
+  copy: Copy,
+  delete: Trash,
+  refresh: RefreshCw,
+  sound: Volume2,
+  mute: VolumeX,
+  send: Send,
+  save: Save,
+  write: PenLine,
+  terminal: Terminal,
+  more: Ellipsis,
+  other: Sparkles,
+};
+
+// Claude's label and icon for each Suggested Intent, kept for the whole run so past Intents it named before keep theirs.
+const intentLooks = new Map<string, IntentLook>();
+window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, look]) => intentLooks.set(text, look)));
+
+function lookOf({ id, label }: Key): IntentLook {
+  if (id === 'something-else') return { label: 'More', icon: 'more' };
+  if (id === CLOSE_KEY) return { label: 'Close', icon: 'close' };
+  return intentLooks.get(label) ?? fallbackLook(label);
+}
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+// textContent and attributes only: the intent text comes from Claude, which read the screen.
+function drawTile(element: HTMLElement, key: Key) {
+  const look = lookOf(key);
+  element.classList.add('tile');
+  element.setAttribute('role', 'button');
+  element.setAttribute('aria-label', key.label);
+  element.title = key.label;
+  const badge = document.createElement('div');
+  badge.className = 'tile-icon';
+  // The ring starts at the top and fills clockwise: the stylesheet turns it a quarter back.
+  const ring = document.createElementNS(SVG, 'svg');
+  ring.setAttribute('class', 'tile-ring');
+  ring.setAttribute('viewBox', '0 0 100 100');
+  ring.setAttribute('aria-hidden', 'true');
+  for (const part of ['track', 'fill']) {
+    const circle = document.createElementNS(SVG, 'circle');
+    for (const [name, value] of Object.entries({ class: `tile-ring-${part}`, cx: '50', cy: '50', r: '46', pathLength: '1' })) circle.setAttribute(name, value);
+    ring.append(circle);
+  }
+  const icon = createElement(INTENT_ICON_NODES[look.icon], { class: 'tile-glyph', 'aria-hidden': 'true' });
+  badge.append(ring, icon);
+  const label = document.createElement('span');
+  label.className = 'tile-label';
+  label.textContent = look.label;
+  element.append(badge, label);
+}
+
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+// With reduced motion the ring fills in quarters and doesn't animate between them.
+const RING_STEPS = 4;
+
+function showStepProgress(progress: number) {
+  const shown = reducedMotion.matches ? Math.floor(progress * RING_STEPS) / RING_STEPS : progress;
+  keyElements.forEach((element) => element !== lit && element.style.removeProperty('--step'));
+  lit?.style.setProperty('--step', String(shown));
+}
+
 let lastPhase: OverlayState['phase'] = 'idle';
 
-function showKeyboard({ text, group, highlight, suggestions, phrase }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions, phrases, stepMs }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
-  showKeys(`typing ${JSON.stringify([group, suggestions, phrase])}`, layoutKeyboard(screenSize, group, suggestions, phrase).keys);
-  highlightKey(highlight);
+  showKeys(`typing ${JSON.stringify([group, suggestions, phrases])}`, layoutKeyboard(screenSize, group, suggestions, phrases).keys);
+  highlightKey(highlight, stepMs);
 }
 
-// The scan's step isn't in the state, so it's timed between moves of the highlight onto the next key. A press restarts
-// the scan and new keys can join mid-step, so a move only counts when the move before it was a step too.
-let stepMs = 2000;
-let lit: { element: HTMLElement; index: number; at: number; stepped: boolean } | undefined;
+let lit: HTMLElement | undefined;
 let stepBar: Animation | undefined;
 
-function highlightKey(id: KeyId) {
+// stepMs is left out for the Suggested Intents, whose tiles draw the step as a ring instead.
+function highlightKey(id: KeyId, stepMs?: number) {
   const element = keyElements.get(id);
-  if (!element || element === lit?.element) return;
-  const index = [...keyElements.keys()].indexOf(id);
-  const at = performance.now();
-  const stepped = lit !== undefined && index === (lit.index + 1) % keyElements.size;
-  if (stepped && lit!.stepped && at - lit!.at > 300) stepMs = at - lit!.at;
-  lit?.element.classList.remove('highlighted');
+  if (!element || element === lit) return;
+  lit?.classList.remove('highlighted');
   element.classList.add('highlighted');
-  lit = { element, index, at, stepped };
-  showStep(element);
+  lit = element;
+  if (stepMs !== undefined) showStep(element, stepMs);
 }
 
 // Fills the bar under the highlight over one step, so the user can see how long is left to blink.
-function showStep(element: HTMLElement) {
+function showStep(element: HTMLElement, stepMs: number) {
   stepBar?.cancel();
   stepBar = element.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], {
     duration: stepMs,
@@ -202,6 +312,7 @@ function showStopHint(state: OverlayState) {
 // (the island is at the top).
 function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
   if (state.phase === 'typing') return 'top';
+  // The Suggested Intents are a column on one side and the target is on the other half, so the middle is clear.
   if (state.phase === 'choosing') return 'middle';
   if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
   return 'bottom';
@@ -281,7 +392,7 @@ window.overlay.onLargeView((settings) => {
 });
 
 // textContent only: icon names come from other apps.
-function showIcon({ highlight }: Extract<OverlayState, { phase: 'icons' }>) {
+function showIcon({ highlight, stepMs }: Extract<OverlayState, { phase: 'icons' }>) {
   iconMagnifier.hidden = largeView === undefined;
   if (largeView === undefined) return place(iconHighlight, highlight.rect);
   const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
@@ -290,7 +401,7 @@ function showIcon({ highlight }: Extract<OverlayState, { phase: 'icons' }>) {
   const label = highlight.label ?? highlight.name;
   if (iconMagnifier.textContent === label) return;
   iconMagnifier.textContent = label;
-  showStep(iconMagnifier);
+  showStep(iconMagnifier, stepMs);
 }
 
 // The past Intents come first, and only in a picker that opened on them, before Claude answered. See layoutIntents.
@@ -308,8 +419,11 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
     if (entering) recent = state.cells === 6 ? state.intents.length : 0;
-    showKeys(`choosing ${recent} ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells), recent);
+    showKeys(`choosing ${state.side} ${recent} ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells, state.side), drawTile, recent);
     highlightKey(state.highlight);
+    showStepProgress(state.stepProgress);
+    // In the first cell, where an intent would be. The reason is in the log.
+    place(noIntents, onSheet(layoutIntents(screenSize, [''], state.cells, state.side)[0].rect));
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);

@@ -55,7 +55,7 @@ Known limits:
 
 ## Suggested Phrase
 
-Every text confirmed with Done is also remembered whole. Once 2 or more typed letters match the start of a remembered text (ignoring case), the keyboard offers it as one Suggested Phrase in a wide row above the Suggested Words, so the scan reaches it first. Choosing it replaces everything typed so far, so a message sent often takes one blink. At most one phrase is offered, ranked by how often and how recently it was sent. No phrase is offered on an empty keyboard, after a single letter, or on the letter screens.
+Every text confirmed with Done is also remembered whole. Once 2 or more typed letters match the start of a remembered text (ignoring case), the keyboard offers it as a Suggested Phrase in a wide row above the Suggested Words, so the scan reaches it first. Choosing it replaces everything typed so far, so a message sent often takes one blink. Up to two phrases are offered, each in its own wide row, ranked by how often and how recently they were sent. No phrase is offered on an empty keyboard, after a single letter, or on the letter screens.
 
 Privacy:
 
