@@ -42,7 +42,7 @@ describe('intentGoal', () => {
 describe('intentGoal with a Chrome element', () => {
   it('names the element the Gaze Scan chose, in screenshot pixels', () => {
     const goal = intentGoal({ ...run, intent: 'Open this video', element: { name: 'Lo-fi beats', rect: { x: 400, y: 300, width: 160, height: 90 } } });
-    expect(goal).toContain('They chose the element "Lo-fi beats" at (320, 240), 128 x 72 pixels.');
+    expect(goal).toContain('They chose the element "Lo-fi beats" centred at (384, 276), 128 x 72 pixels.');
   });
 
   it('says nothing about an element when none was chosen', () => {

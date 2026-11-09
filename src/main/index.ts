@@ -126,14 +126,23 @@ function releaseDock() {
   });
 }
 
+// The app in front is reached by its pid: with a second "Google Chrome" (another profile), a lookup by name reaches
+// whichever launched first. Paths keep the name, so Icon Order still knows the item next launch.
+const PROCESS_OF = `const processOf = (name) => {
+  const events = Application('System Events');
+  const front = events.processes.whose({ frontmost: true })[0];
+  return front.name() === name ? events.processes.whose({ unixId: front.unixId() })[0] : events.processes.byName(name);
+};`;
+
 // Menu bar items are found again by their place in the Accessibility tree, [process, menu bar, item], since status
 // items have no name. Commands in an open menu add their place in the menu.
 // shortcut: reads the app in front and Control Center only, so other apps' status items are left out.
-const READ_MENU_BAR = `const events = Application('System Events');
+const READ_MENU_BAR = `${PROCESS_OF}
+const events = Application('System Events');
 const front = events.processes.whose({ frontmost: true })[0].name();
 JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
   // Newer macOS shows no menu bar for Control Center, which failed the whole read, the front app's menus too.
-  const bars = events.processes.byName(process).menuBars;
+  const bars = processOf(process).menuBars;
   if (bars.length === 0) return [];
   const items = bars[0].menuBarItems;
   const sizes = items.size();
@@ -145,9 +154,10 @@ JSON.stringify([front, 'ControlCenter'].flatMap((process) => {
 // Prints the commands of the menu the item opened, leaving out separators and disabled commands. A status item that
 // opens a panel instead prints none.
 // shortcut: a command with a submenu is pressed like any other, scan submenus too if users need them.
-const OPEN_MENU_BAR_ITEM = `function run([path]) {
+const OPEN_MENU_BAR_ITEM = `${PROCESS_OF}
+function run([path]) {
   const [process, bar, item] = JSON.parse(path);
-  const menuBarItem = Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item];
+  const menuBarItem = processOf(process).menuBars[bar].menuBarItems[item];
   menuBarItem.actions.byName('AXPress').perform();
   delay(0.5);
   if (menuBarItem.menus.length === 0) return '[]';
@@ -159,14 +169,16 @@ const OPEN_MENU_BAR_ITEM = `function run([path]) {
     names[i] && enabled[i] ? [{ path: [process, bar, item, i], label: names[i], x, y, width: sizes[i][0], height: sizes[i][1] }] : []));
 }`;
 
-const PRESS_MENU_COMMAND = `function run([path]) {
+const PRESS_MENU_COMMAND = `${PROCESS_OF}
+function run([path]) {
   const [process, bar, item, command] = JSON.parse(path);
-  Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].menuItems[command].actions.byName('AXPress').perform();
+  processOf(process).menuBars[bar].menuBarItems[item].menus[0].menuItems[command].actions.byName('AXPress').perform();
 }`;
 
-const CLOSE_MENU = `function run([path]) {
+const CLOSE_MENU = `${PROCESS_OF}
+function run([path]) {
   const [process, bar, item] = JSON.parse(path);
-  Application('System Events').processes.byName(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
+  processOf(process).menuBars[bar].menuBarItems[item].menus[0].actions.byName('AXCancel').perform();
 }`;
 
 type PlacedPath = { path: unknown[]; label: string; x: number; y: number; width: number; height: number };
@@ -209,7 +221,8 @@ const READ_TEXT_BOXES = `function run() {
     const events = Application('System Events');
     const procs = events.processes.whose({ frontmost: true });
     if (procs.length === 0) return '[]';
-    const windows = procs[0].windows;
+    // By pid, not name, so a second Chrome can't stand in for the one in front.
+    const windows = events.processes.whose({ unixId: procs[0].unixId() })[0].windows;
     if (windows.length === 0) return '[]';
     const roles = { AXTextField: 1, AXTextArea: 1, AXSearchField: 1, AXComboBox: 1 };
     const results = [];
@@ -348,7 +361,10 @@ function createHistory(ranker: unknown) {
 const READ_FRONT = `function run(argv) {
   const name = Application("System Events").processes.whose({frontmost: true})[0].name();
   let url = "";
-  if (argv[0] === "per-site" && name === "Google Chrome") {
+  // Chrome's scripting can't pick between two Chrome processes, so with two the site (and the Incognito check) could
+  // come from the wrong one, and the app alone is used.
+  const chromes = Application("System Events").processes.whose({name: "Google Chrome"}).length;
+  if (argv[0] === "per-site" && name === "Google Chrome" && chromes === 1) {
     try {
       const front = Application("Google Chrome").windows[0];
       if (front.mode() !== "incognito") url = front.activeTab.url();
@@ -600,7 +616,8 @@ function createOverlay() {
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
-    textBoxes: () => textBoxes,
+    // In Chrome the helper sees the web text boxes the System Events read can't (#13).
+    textBoxes: () => [...textBoxes, ...(chromeScan?.textBoxes() ?? [])],
     chrome: () => chromeScan?.elements() ?? [],
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,

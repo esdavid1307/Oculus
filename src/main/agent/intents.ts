@@ -56,9 +56,11 @@ const ELEMENT_NAME_MAX_CHARS = 80;
 export function elementHint(element: ElementHint | undefined, frame: ScreenFrame) {
   if (!element) return '';
   const scale = frame.imageWidth / frame.width;
-  const [x, y, width, height] = [element.rect.x, element.rect.y, element.rect.width, element.rect.height].map((value) => Math.round(value * scale));
+  const { x: left, y: top, width: w, height: h } = element.rect;
+  // The centre, not the corner: the agent clicks the point it is given.
+  const [x, y, width, height] = [left + w / 2, top + h / 2, w, h].map((value) => Math.round(value * scale));
   const name = JSON.stringify(element.name.slice(0, ELEMENT_NAME_MAX_CHARS));
-  return `They chose the element ${name} at (${x}, ${y}), ${width} x ${height} pixels. `;
+  return `They chose the element ${name} centred at (${x}, ${y}), ${width} x ${height} pixels. `;
 }
 
 // The Gaze Region is in display points; the model sees a smaller image, so it gets the region in that image's pixels.

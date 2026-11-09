@@ -3,8 +3,8 @@ import { renameSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { GazeRegion } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
-import { chromeElements, type RawElement } from '../shared/chrome-scan';
-import type { Icon } from '../shared/session';
+import { chromeElements, chromeTextBoxes, type RawElement } from '../shared/chrome-scan';
+import type { Icon, TextBox } from '../shared/session';
 
 const LOG = '[chrome-scan]';
 // A lookup that hasn't answered by then is given up, so one hung lookup can't stop the next.
@@ -27,8 +27,10 @@ const mtime = (file: string) => {
 export function createChromeScan({ source, binary, display, log = console.log }: { source: string; binary: string; display: Rect; log?: (line: string) => void }) {
   let helper: ChildProcessWithoutNullStreams | null = null;
   let found: Icon[] = [];
-  // The lookup in flight: the region it was for and when it was sent. Lookups are answered in order.
-  let inFlight: { region: GazeRegion; at: number } | null = null;
+  let boxes: TextBox[] = [];
+  // The lookups sent and not yet answered, oldest first: the region each was for and when it was sent. The helper
+  // answers in order, so a late answer still meets its own region.
+  const inFlight: { region: GazeRegion; at: number }[] = [];
   let lastLook = 0;
   let stopped = false;
 
@@ -36,13 +38,15 @@ export function createChromeScan({ source, binary, display, log = console.log }:
     const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     helper = child;
     createInterface({ input: child.stdout }).on('line', (line) => {
-      const region = inFlight?.region;
-      inFlight = null;
+      const region = inFlight.shift()?.region;
       try {
         const reply = JSON.parse(line) as { front?: boolean; elements?: RawElement[] };
-        found = reply.front && region && Array.isArray(reply.elements) ? chromeElements(reply.elements, region, display) : [];
+        const elements = reply.front && region && Array.isArray(reply.elements) ? reply.elements : [];
+        found = region ? chromeElements(elements, region, display) : [];
+        boxes = chromeTextBoxes(elements, display);
       } catch {
         found = [];
+        boxes = [];
       }
     });
     child.stderr.on('data', (chunk) => log(`${LOG} ${String(chunk).trim()}`));
@@ -51,8 +55,9 @@ export function createChromeScan({ source, binary, display, log = console.log }:
     child.on('error', (error) => log(`${LOG} could not start the helper: ${error.message}`));
     child.on('exit', (code) => {
       if (helper === child) helper = null;
-      inFlight = null;
+      inFlight.length = 0;
       found = [];
+      boxes = [];
       if (!stopped) log(`${LOG} helper exited (${code}), so Chrome elements are not scanned until the next start`);
     });
   }
@@ -70,20 +75,25 @@ export function createChromeScan({ source, binary, display, log = console.log }:
 
   return {
     elements: () => found,
+    // The web text boxes near the latest gaze, which the Gaze Keyboard opens on.
+    textBoxes: () => boxes,
     // Asks about the latest gaze, unless a lookup is still going. region is in overlay coordinates.
     look(region: GazeRegion | null) {
       const now = Date.now();
-      if (now - lastLook < LOOK_MS || (inFlight && now - inFlight.at < REPLY_MS)) return;
+      const last = inFlight.at(-1);
+      if (now - lastLook < LOOK_MS || (last && now - last.at < REPLY_MS)) return;
       lastLook = now;
       if (!helper || !region) {
         found = [];
+        boxes = [];
         return;
       }
-      inFlight = { region, at: now };
+      inFlight.push({ region, at: now });
       helper.stdin.write(`${region.x + display.x} ${region.y + display.y} ${region.radius}\n`);
     },
     clear() {
       found = [];
+      boxes = [];
     },
     stop() {
       stopped = true;

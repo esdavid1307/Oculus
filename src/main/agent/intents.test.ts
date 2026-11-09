@@ -34,7 +34,7 @@ describe('intentsPrompt', () => {
   it('names the Chrome element a Gaze Scan chose, with its bounds in screenshot pixels', () => {
     const element = { name: 'Lo-fi beats to study to', rect: { x: 400, y: 300, width: 160, height: 90 } };
     const prompt = intentsPrompt({ x: 480, y: 345, radius: 120 }, frame, [], element);
-    expect(prompt).toContain('They chose the element "Lo-fi beats to study to" at (320, 240), 128 x 72 pixels.');
+    expect(prompt).toContain('They chose the element "Lo-fi beats to study to" centred at (384, 276), 128 x 72 pixels.');
   });
 
   it('quotes an element name as data and cuts a long one, since it comes from a web page', () => {

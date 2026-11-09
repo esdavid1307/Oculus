@@ -397,9 +397,13 @@ window.overlay.onLargeView((settings) => {
 });
 
 // textContent only: icon names come from other apps.
-function showIcon({ highlight, stepMs }: Extract<OverlayState, { phase: 'icons' }>) {
+function showIcon({ highlight, stepMs, source }: Extract<OverlayState, { phase: 'icons' }>) {
   iconMagnifier.hidden = largeView === undefined;
-  if (largeView === undefined) return place(iconHighlight, highlight.rect);
+  // A Chrome element is chosen, never opened, so its label says so.
+  iconMagnifier.dataset.source = source;
+  // Grown past its border, so a 16 point line of text stays readable inside the frame.
+  const { x, y, width, height } = highlight.rect;
+  if (largeView === undefined) return place(iconHighlight, { x: x - 8, y: y - 8, width: width + 16, height: height + 16 });
   const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);

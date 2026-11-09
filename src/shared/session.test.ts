@@ -1630,9 +1630,10 @@ describe('Text box target', () => {
 
 describe('Gaze Scan in Chrome', () => {
   const select = (t: number) => ({ type: 'select', t }) as const;
-  // What the Accessibility lookup found around the gaze on a YouTube page: two thumbnails and a title.
+  // What the Accessibility lookup found around the gaze on a YouTube page, nearest first as chromeElements gives them:
+  // two thumbnails and a title.
   const at = (name: string, x: number, y: number, width = 160, height = 90) => ({ name, label: name, rect: { x, y, width, height } });
-  const elements = [at('Lo-fi beats', 400, 300), at('Why bridges stand', 220, 300), at('Lo-fi beats to study to', 220, 400, 300, 20)];
+  const elements = [at('Why bridges stand', 220, 300), at('Lo-fi beats', 400, 300), at('Lo-fi beats to study to', 220, 400, 300, 20)];
   const onThumbs = { x: 380, y: 340, radius: 120 };
   const awake = (options: Partial<Parameters<typeof createSession>[0]> = {}) => {
     const actions: AgentAction[] = [];
@@ -1659,7 +1660,7 @@ describe('Gaze Scan in Chrome', () => {
     expect(session(gaze(6100, onThumbs))).toMatchObject({ phase: 'icons', source: 'chrome' });
   });
 
-  it('scans the elements column by column from the left, top to bottom', () => {
+  it('scans the elements nearest the gaze first, so the scan starts on what the user looked at', () => {
     const { session } = awake();
     session(gaze(3100, onThumbs));
     session(gaze(6100, onThumbs));
@@ -1667,15 +1668,15 @@ describe('Gaze Scan in Chrome', () => {
       const state = session(tick(t));
       return state.phase === 'icons' ? state.highlight.name : null;
     });
-    expect(order).toEqual(['Why bridges stand', 'Lo-fi beats to study to', 'Lo-fi beats']);
+    expect(order).toEqual(['Why bridges stand', 'Lo-fi beats', 'Lo-fi beats to study to']);
   });
 
   it('asks for Suggested Intents about the element a Select Blink chooses, with its name and bounds as the hint', () => {
     const { session, actions } = awake();
     session(gaze(3100, onThumbs));
     session(gaze(6100, onThumbs));
-    session(tick(10_100));
-    expect(session(select(10_200)).phase).toBe('thinking');
+    session(tick(8100));
+    expect(session(select(8200)).phase).toBe('thinking');
     expect(actions).toEqual([
       {
         type: 'suggest-intents',
@@ -1707,7 +1708,7 @@ describe('Gaze Scan in Chrome', () => {
     const orderIcons = (_source: string, names: string[]) => [...names].reverse();
     const { session, all } = awake({ orderIcons });
     session(gaze(3100, onThumbs));
-    // Screen order: Icon Order never reorders Chrome elements.
+    // The lookup's order: Icon Order never reorders Chrome elements.
     expect(session(gaze(6100, onThumbs))).toMatchObject({ highlight: { name: 'Why bridges stand' } });
     session(select(6200));
     const signals = all.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));

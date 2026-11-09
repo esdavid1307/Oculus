@@ -146,11 +146,13 @@ function nearIcon(region: GazeRegion | null, icons: Icon[], screen: Screen) {
   return region !== null && iconDistance(region, icons, screen) <= region.radius;
 }
 
-// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them.
+// The whole width of the menu bar counts, since its menus and status items leave a wide gap between them. Only the gaze
+// centre on it or past the top counts, not a whole radius below: Chrome's tabs, address bar and a page's search box sit
+// within one radius of it and need their own 1 second hold.
 function menuBarDistance(region: GazeRegion | null, items: Icon[], screen: Screen) {
-  if (items.length === 0) return Infinity;
+  if (region === null || items.length === 0) return Infinity;
   const height = Math.max(...items.map(({ rect }) => rect.y + rect.height));
-  return iconDistance(region, [{ name: '', rect: { x: 0, y: 0, width: screen.width, height } }], screen);
+  return region.y <= height ? iconDistance(region, [{ name: '', rect: { x: 0, y: 0, width: screen.width, height } }], screen) : Infinity;
 }
 
 function nearMenuBar(region: GazeRegion | null, items: Icon[], screen: Screen) {
@@ -272,7 +274,8 @@ export function createSession({
     if (all.length === 0) return;
     phase = 'icons';
     source = from;
-    const inScreenOrder = [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
+    // Chrome elements come nearest the gaze first, so the scan starts on what the user looked at.
+    const inScreenOrder = from === 'chrome' ? all : [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
     scanned = inScreenOrder.map(({ name }) => name);
     // The icons this user opens most come first. Two icons with one name can't be told apart, so they keep screen order.
     // Chrome elements change with every page, so there is no order to learn for them.
@@ -289,6 +292,8 @@ export function createSession({
   function holdIcons(region: GazeRegion | null, t: number) {
     // A text box keeps its 1 second hold to the Gaze Keyboard, even among Chrome elements.
     const onTextBox = region !== null && textBoxAt(region) !== undefined;
+    // The hold grace lets it finish on a sample with no gaze, so the radius is the last one seen.
+    if (region !== null) heldRadius = region.radius;
     const nearest = (['dock', 'menubar', 'desktop', 'chrome'] as const)
       .filter((from) => !(from === 'chrome' && onTextBox) && near(region, from))
       .sort((a, b) => distance(region, a) - distance(region, b))[0];
@@ -304,7 +309,6 @@ export function createSession({
     }
     if (iconHold !== null && t - iconHold.start >= iconHoldMs) {
       held = { from: iconHold.start, to: t };
-      heldRadius = region?.radius ?? 0;
       scanIcons(iconHold.source, iconsOf[iconHold.source](), t);
     }
     return iconHold !== null;
@@ -500,6 +504,7 @@ export function createSession({
         // Look Away. Elsewhere, past the edge is still off the screen, so the Stop Gesture works over the Dock too.
         const onEdgeIcon =
           phase === 'icons' &&
+          source !== 'chrome' &&
           (source === 'menubar' ? nearMenuBar(input.region, icons, screen) : nearIcon(input.region, icons, screen));
         const away = offScreen(input.region, screen) && !onEdgeIcon;
         awaySince = away ? (awaySince ?? input.t) : null;
