@@ -428,8 +428,8 @@ export function createSession({
     intents = [];
     recent = 0;
     fixedIntents = chromeCommands();
-    // A cell for each command, plus Something else. Close comes after that, as on any picker.
-    cells = fixedIntents.length + 1;
+    // Only Something else: layoutIntents gives the commands their own cells on top of these, and Close comes after.
+    cells = 1;
     restartScan(t);
     scan(t);
   }

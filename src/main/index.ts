@@ -367,10 +367,6 @@ function createHistory(ranker: unknown) {
   };
 }
 
-// The front app's name, read without the per-site URL, so the Chrome Commands Fixed Intent can decide whether to show
-// at each picker. Kept separate from READ_FRONT so no accidental Chrome window attribute access happens on every poll.
-const READ_FRONT_APP = `Application("System Events").processes.whose({ frontmost: true })[0].name()`;
-
 // Presses the key combos for the Chrome Commands Fixed Intents: next-tab is ^Tab (keyCode 48 with control down) and
 // close-tab is ⌘W (keyCode 13 with command down). Sent through System Events like the Gaze Keyboard typing, so it needs
 // Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
@@ -491,21 +487,14 @@ function createOverlay() {
   // Walking the front window's AX tree is costly, so text boxes are only read from the Start Gesture until the session
   // goes back to idle, not all the time. The 3 s Start Gesture gives the first read time to land before a target hold.
   let wantTextBoxes = false;
-  // Updated on every icon refresh, so the Chrome Commands Fixed Intent (Cmd) shows in the picker when the user is in
-  // Google Chrome. inChrome() is the function handed to the session, read synchronously on each picker open.
-  let chromeFront = false;
-  const refreshFrontApp = () => {
-    execFile('osascript', ['-l', 'JavaScript', '-e', READ_FRONT_APP], { timeout: 2000 }, (error, stdout) => {
-      if (error) return;
-      chromeFront = stdout.trim() === 'Google Chrome';
-    });
-  };
+  // Whether Google Chrome is in front, from the menu bar read every ICON_READ_MS: its first item is the front app's
+  // menu. Used for the Chrome menu bar rule and for the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
+  const chromeFront = () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true;
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
-    refreshFrontApp();
     if (wantTextBoxes) refreshTextBoxes();
   };
   // Fires a Chrome Commands key combo through System Events. Logs a failure but never surfaces it to the overlay.
@@ -669,10 +658,10 @@ function createOverlay() {
     textBoxes: () => [...textBoxes, ...(chromeScan?.textBoxes() ?? [])],
     chrome: () => chromeScan?.elements() ?? [],
     // The front app's menus come first in the menu bar read, named by their path [process, bar, item].
-    chromeInFront: () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true,
+    chromeInFront: chromeFront,
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
-    inChrome: () => chromeFront,
+    inChrome: chromeFront,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
