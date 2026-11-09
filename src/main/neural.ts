@@ -12,11 +12,13 @@ const LOG = '[neural]';
 
 // The Neural Layer as the main process uses it: saved to one file, fed by the session's learn actions, and told about
 // the uncorrected gaze. Off with "neuralLayer": false in config.json, which leaves every feature as it was.
-export function createMainNeuralLayer({ file, screen, scanStepMs, enabled, log = console.log }: {
+// scanStepSet is true when config.json sets "scanStepMs": that step is the user's choice, so Scan Pace leaves it alone.
+export function createMainNeuralLayer({ file, screen, scanStepMs, enabled, scanStepSet = false, log = console.log }: {
   file: string;
   screen: Screen;
   scanStepMs: number;
   enabled: boolean;
+  scanStepSet?: boolean;
   log?: (line: string) => void;
 }) {
   let saved: unknown;
@@ -47,7 +49,7 @@ export function createMainNeuralLayer({ file, screen, scanStepMs, enabled, log =
   };
 
   function learn(signal: LearningSignal) {
-    if (!enabled) return;
+    if (!enabled || (scanStepSet && signal.kind === 'select')) return;
     layer.learn(signal, rawGaze);
     const { gaze, scanStepMs: step, paceSamples } = layer.stats();
     if (signal.kind === 'gaze' && gaze.active !== lastActive) {
@@ -72,7 +74,7 @@ export function createMainNeuralLayer({ file, screen, scanStepMs, enabled, log =
     },
     correct: (region: GazeRegion | null) => (enabled && region ? layer.correct(region) : region),
     orderIcons: (source: string, names: string[]) => (enabled ? layer.orderIcons(source, names) : names),
-    scanPace: () => (enabled ? layer.scanStepMs() : scanStepMs),
+    scanPace: () => (enabled && !scanStepSet ? layer.scanStepMs() : scanStepMs),
     learn,
     // A run that went well clicked what the user meant, which is the best label Gaze Correction gets. Skipping an ad
     // clicks the Skip button wherever the user looked, so it says nothing about the gaze.

@@ -477,12 +477,14 @@ function createOverlay() {
   // A run is always chosen from the latest picker, so it learns into this context.
   let askedContext: Promise<string> = Promise.resolve('');
   const step = (settings as { scanStepMs?: unknown } | undefined)?.scanStepMs;
+  const scanStepSet = typeof step === 'number' && step > 0;
   // On unless config.json says "neuralLayer": false. See docs/neural-layer.md.
   const neural = createMainNeuralLayer({
     file: join(app.getPath('userData'), 'neural-layer.json'),
     screen: bounds,
-    scanStepMs: typeof step === 'number' && step > 0 ? step : DEFAULT_SCAN_STEP_MS,
+    scanStepMs: scanStepSet ? step : DEFAULT_SCAN_STEP_MS,
     enabled: (settings as { neuralLayer?: unknown } | undefined)?.neuralLayer !== false,
+    scanStepSet,
   });
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {

@@ -1,5 +1,6 @@
 // Simulated users for the Neural Layer: each learner is measured against doing nothing, with fixed seeds so the numbers
-// in docs/neural-layer.md can be reproduced with `npm run eval:neural`. Results go to out/neural-eval.json.
+// in docs/neural-layer.md can be reproduced with
+// `npx vitest run src/shared/neural/eval.test.ts`. Results go to out/neural-eval.json.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { seededRandom } from '../predict';
