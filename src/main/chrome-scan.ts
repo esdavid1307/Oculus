@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { renameSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { GazeRegion } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
@@ -28,7 +28,7 @@ export function createChromeScan({ source, binary, display, log = console.log }:
   let helper: ChildProcessWithoutNullStreams | null = null;
   let found: Icon[] = [];
   // The lookup in flight: the region it was for and when it was sent. Lookups are answered in order.
-  let asked: { region: GazeRegion; at: number } | null = null;
+  let inFlight: { region: GazeRegion; at: number } | null = null;
   let lastLook = 0;
   let stopped = false;
 
@@ -36,8 +36,8 @@ export function createChromeScan({ source, binary, display, log = console.log }:
     const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
     helper = child;
     createInterface({ input: child.stdout }).on('line', (line) => {
-      const region = asked?.region;
-      asked = null;
+      const region = inFlight?.region;
+      inFlight = null;
       try {
         const reply = JSON.parse(line) as { front?: boolean; elements?: RawElement[] };
         found = reply.front && region && Array.isArray(reply.elements) ? chromeElements(reply.elements, region, display) : [];
@@ -51,7 +51,7 @@ export function createChromeScan({ source, binary, display, log = console.log }:
     child.on('error', (error) => log(`${LOG} could not start the helper: ${error.message}`));
     child.on('exit', (code) => {
       if (helper === child) helper = null;
-      asked = null;
+      inFlight = null;
       found = [];
       if (!stopped) log(`${LOG} helper exited (${code}), so Chrome elements are not scanned until the next start`);
     });
@@ -60,8 +60,10 @@ export function createChromeScan({ source, binary, display, log = console.log }:
   if (mtime(binary) >= mtime(source) && mtime(binary) > 0) run();
   else {
     log(`${LOG} building the Accessibility helper`);
-    execFile('xcrun', ['swiftc', '-O', source, '-o', binary], (error, _stdout, stderr) => {
+    // Built beside it and renamed, so a build cut short never leaves a half binary that the next start would run.
+    execFile('xcrun', ['swiftc', '-O', source, '-o', `${binary}.tmp`], (error, _stdout, stderr) => {
       if (error) return log(`${LOG} could not build ${source}, is Xcode or its Command Line Tools installed? ${String(stderr).trim() || error.message}`);
+      renameSync(`${binary}.tmp`, binary);
       if (!stopped) run();
     });
   }
@@ -69,14 +71,15 @@ export function createChromeScan({ source, binary, display, log = console.log }:
   return {
     elements: () => found,
     // Asks about the latest gaze, unless a lookup is still going. region is in overlay coordinates.
-    look(region: GazeRegion | null, now = Date.now()) {
-      if (now - lastLook < LOOK_MS || (asked && now - asked.at < REPLY_MS)) return;
+    look(region: GazeRegion | null) {
+      const now = Date.now();
+      if (now - lastLook < LOOK_MS || (inFlight && now - inFlight.at < REPLY_MS)) return;
       lastLook = now;
       if (!helper || !region) {
         found = [];
         return;
       }
-      asked = { region, at: now };
+      inFlight = { region, at: now };
       helper.stdin.write(`${region.x + display.x} ${region.y + display.y} ${region.radius}\n`);
     },
     clear() {

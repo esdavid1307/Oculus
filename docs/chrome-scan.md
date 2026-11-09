@@ -14,23 +14,25 @@ It's off by default. Turn it on with `"chromeScan": true` in `~/Library/Applicat
 
 Text boxes (the address bar, a search box) are left to the Gaze Keyboard: a 1 second look at one still opens the keyboard on it (#13), even when Chrome elements are around it.
 
-The choice also teaches the Neural Layer: the user held their gaze on that element, so it is a full-weight example for Gaze Correction. Chrome elements change with every page, so Icon Order learns nothing from them.
+Choosing an element confirms nothing yet, so only Scan Pace learns from that Select Blink. If the Intent then runs well, Gaze Correction learns from the 3 second hold, as it does for any run, and never for "Skip the ad". Chrome elements change with every page, so Icon Order learns nothing from them.
+
+The Gaze Region sent to Claude for a chosen element is centred on the element, with the element's name and bounds next to it.
 
 ## How it works
 
 | Part | What it does |
 |---|---|
-| `scripts/oculus-ax.swift` | The Accessibility helper. One process runs while Oculus does. For each gaze point it hit-tests Chrome's own application element (so the click-through overlay is never what it finds) at the centre and 16 points around it, then adds the named elements around each hit: up to 4 parents and 2 levels of children. It only answers while Chrome is the app in front. |
+| `scripts/oculus-ax.swift` | The Accessibility helper. One process runs while the Oculus Agent does. Once per Chrome process it watches Chrome's notifications and walks at most 3000 elements, 12 levels deep, as a screen reader does on start, so Chrome builds its tree. After that, for each gaze point it hit-tests Chrome's own application element (so the click-through overlay is never what it finds) at the centre and 16 points around it, then adds the named elements around each hit: up to 4 parents and 2 levels of children. It only answers while Chrome is the app in front. |
 | `src/main/chrome-scan.ts` | Builds the helper with `xcrun swiftc` on first use into the user data folder, and again whenever the source is newer. Sends it the Gaze Region (after Gaze Correction) at most every 300 ms while a target can be picked, one lookup at a time. |
 | `src/shared/chrome-scan.ts` | Turns what the helper found into the elements the session scans. Drops elements with no name, tiny ones, ones larger than a quarter of the screen (like the whole page), text boxes, duplicates and anything the Gaze Region doesn't touch. Keeps the 6 nearest. Names are cut to 80 characters. |
-| `src/shared/session.ts` | Chrome is one more Icon Scan source (`'chrome'`). A Select Blink on a Chrome element sends `suggest-intents` with an `element` instead of opening anything. |
+| `src/shared/session.ts` | Scans the Chrome elements with the same hold and scan code as Icon Scan, as the source `'chrome'`. A Select Blink on a Chrome element sends `suggest-intents` with an `element` instead of opening anything. |
 | `src/main/agent/intents.ts`, `run-intent.ts` | Add "They chose the element "…" at (x, y), w x h pixels." to the Suggested Intents prompt and the run goal, in screenshot pixels. The name is quoted, since it comes from a web page. |
 
 ### Why a Swift helper
 
 Chrome only shows its web content, and most of its own window, to assistive apps such as VoiceOver. It refuses the two switches meant to turn that on from outside (`AXManualAccessibility` gives -25205, `AXEnhancedUserInterface` -25208). What does work is to watch its Accessibility notifications, as a screen reader does: Chrome then builds the tree for the page and the toolbar. That needs a process that keeps running. JXA can't climb from an element to its parent either ("Ref has incompatible type"), so the helper is Swift.
 
-The helper needs the same Accessibility permission as the rest of Oculus, given to the app that runs `npm run dev`. Building it needs Xcode or its Command Line Tools (`xcode-select --install`). Without them, the log says `[chrome-scan] could not build …`, and Chrome works with the 1 second target hold as before.
+The helper needs the same Accessibility permission as the rest of the Oculus Agent, given to the app that runs `npm run dev`. Building it needs Xcode or its Command Line Tools (`xcode-select --install`). Without them, the log says `[chrome-scan] could not build …`, and Chrome works with the 1 second target hold as before.
 
 ## Results
 

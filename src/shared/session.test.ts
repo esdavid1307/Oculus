@@ -1703,17 +1703,18 @@ describe('Gaze Scan in Chrome', () => {
     expect(actions[2]).toMatchObject({ type: 'run-intent', intent: 'Play it', region: { x: 300, y: 345 } });
   });
 
-  it('teaches Gaze Correction where the user was looking, and never Icon Order', () => {
+  it('teaches only Scan Pace on choosing, and leaves Gaze Correction to a run that goes well, with the hold it came from', () => {
     const orderIcons = (_source: string, names: string[]) => [...names].reverse();
     const { session, all } = awake({ orderIcons });
     session(gaze(3100, onThumbs));
+    // Screen order: Icon Order never reorders Chrome elements.
     expect(session(gaze(6100, onThumbs))).toMatchObject({ highlight: { name: 'Why bridges stand' } });
     session(select(6200));
     const signals = all.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));
-    expect(signals.slice(1)).toEqual([
-      { kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false },
-      { kind: 'gaze', from: 3100, to: 6100, target: { x: 300, y: 345 }, weight: 1 },
-    ]);
+    expect(signals.slice(1)).toEqual([{ kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false }]);
+    session({ type: 'intents', t: 7000, request: 1, intents: ['Open this video'] });
+    session(select(7100));
+    expect(all.at(-1)).toMatchObject({ type: 'run-intent', held: { from: 3100, to: 6100 } });
   });
 
   it('leaves a text box to the Gaze Keyboard, so looking at the search box still opens it after 1 second', () => {

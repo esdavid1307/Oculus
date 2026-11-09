@@ -21,8 +21,8 @@ export type OverlayState = (
   stopInMs?: number;
 };
 
-// Something on screen the user can open: a Dock or Desktop icon, a menu bar item, a command in an open menu, or an
-// element of the Chrome page or window near the gaze.
+// Something on screen a scan steps through: a Dock or Desktop icon, a menu bar item or a command in an open menu, which
+// a Select Blink opens, or a Chrome element near the gaze, which a Select Blink makes the target of Suggested Intents.
 // The name is what the outside world needs to find it again, in overlay coordinates. The label is what a person reads:
 // the name itself can be a lookup key, as for menu bar items.
 export type Icon = { name: string; rect: Rect; label?: string };
@@ -215,9 +215,9 @@ export function createSession({
   let stepMs = scanStepMs;
   // A text box the user looked at, which teaches Gaze Correction once Done confirms what was typed into it.
   let textBoxGaze: { from: number; to: number; target: { x: number; y: number } } | null = null;
-  // When the gaze settled on the target the Suggested Intents are for, or on the icons of the latest Icon Scan.
+  // When the gaze settled on the target the Suggested Intents are for, or on the icons or Chrome elements of the latest scan.
   let held = { from: 0, to: 0 };
-  // The Gaze Region radius of the hold that started the latest Icon Scan.
+  // The Gaze Region radius of the hold that started the latest scan of icons or Chrome elements.
   let heldRadius = 0;
   // Every icon of the current Icon Scan, in screen order.
   let scanned: string[] = [];
@@ -518,10 +518,9 @@ export function createSession({
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes: false });
           if (source === 'chrome') {
             // A Chrome element isn't opened: it becomes the target of the Suggested Intents, with its name and bounds as
-            // the hint. The user held their gaze on it, so it also teaches Gaze Correction.
+            // the hint. Nothing is confirmed yet, so it teaches Gaze Correction only through a run that goes well (held).
             const { rect, label, name } = iconHighlight!;
             const centre = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-            learn({ kind: 'gaze', ...held, target: centre, weight: 1 });
             suggestIntents({ ...centre, radius: heldRadius }, [], { name: label ?? name, rect });
           } else {
             learn({ kind: 'icon-opened', source, scanned, chosen: iconHighlight!.name });
