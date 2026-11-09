@@ -145,16 +145,34 @@ body {
   display: none;
 }
 
-/* Suggested Intents reuse the keyboard's keys, without the typed text. */
+/* Suggested Intents reuse the keyboard's keys, without the typed text, in a column on one side. The rest of the
+   screen isn't dimmed, so the target and the app stay in view. */
+[data-phase='choosing'] #keyboard {
+  background: none;
+}
+
 [data-phase='choosing'] #typed {
   display: none;
 }
 
+[data-phase='choosing'] #no-intents {
+  background: rgb(15 23 42 / 94%);
+  border-radius: 16px;
+  font-size: calc(24px * var(--ui-scale, 1));
+}
+
 .key[data-key^='intent-'],
-.key[data-key='something-else'] {
-  padding: 32px;
-  font-size: calc(48px * var(--ui-scale, 1));
+.key[data-key='something-else'],
+.key[data-key='close'] {
+  padding: calc(12px * var(--ui-scale, 1));
+  font-size: calc(32px * var(--ui-scale, 1));
   text-align: center;
+  overflow: hidden;
+}
+
+.key[data-key='close'] {
+  --fill: #d97706;
+  --rest: #78350f;
 }
 
 #typed,

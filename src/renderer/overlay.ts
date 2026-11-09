@@ -41,8 +41,6 @@ function place(element: HTMLElement, { x, y, width, height }: Rect) {
 // The overlay covers the primary display, so this is the same layout the session core hit-tests against.
 const screenSize = { width: innerWidth, height: innerHeight };
 place(typed, layoutKeyboard(screenSize, null).text);
-// In the first cell, where an intent would be. The reason is in the log.
-place(noIntents, layoutIntents(screenSize, [''])[0].rect);
 
 // Which screen of keys is drawn, so they are only rebuilt when it changes.
 let shownKeys: string | undefined;
@@ -98,6 +96,7 @@ function showStopHint(state: OverlayState) {
 // (the "Thinking…" banner is in the middle).
 function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
   if (state.phase === 'typing') return 'top';
+  // The Suggested Intents are a column on one side and the target is on the other half, so the middle is clear.
   if (state.phase === 'choosing') return 'middle';
   if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
   return 'bottom';
@@ -142,8 +141,10 @@ window.overlay.onState((state) => {
   if (state.phase === 'typing') showKeyboard(state);
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    showKeys(`choosing ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells));
+    showKeys(`choosing ${state.side} ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells, state.side));
     highlightKey(state.highlight);
+    // In the first cell, where an intent would be. The reason is in the log.
+    place(noIntents, layoutIntents(screenSize, [''], state.cells, state.side)[0].rect);
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);

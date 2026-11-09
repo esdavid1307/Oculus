@@ -1,12 +1,13 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { CLOSE_KEY, GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type IntentsSide, type KeyId } from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
-  // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
+  // cells is how many slots layoutIntents draws before Close: 6 when past Intents are in the picker, otherwise 4.
+  // side is where the column goes, away from the target.
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6; side: IntentsSide }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
@@ -214,7 +215,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / scanStepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrase).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells, side()) : layoutKeyboard(screen, group, suggestions, phrase).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -291,6 +292,9 @@ export function createSession({
     }
   }
 
+  // The picker goes on the half of the screen the target isn't on.
+  const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
+
   function suggestIntents(region: GazeRegion, passedOver: string[]) {
     asked = region;
     turnedDown = passedOver;
@@ -300,6 +304,8 @@ export function createSession({
 
   function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
+    // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
+    if (key === CLOSE_KEY) return stop();
     intent = intents[Number(key.replace('intent-', ''))];
     activity = '';
     phase = 'running';
@@ -354,7 +360,7 @@ export function createSession({
 
   function shown(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
-    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
+    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells, side: side() };
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
@@ -402,7 +408,7 @@ export function createSession({
           intents = [...intents, ...added];
           // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
           // where it was, so the same key stays lit and keeps the time it already had.
-          const at = layoutIntents(screen, intents, cells).findIndex((key) => key.id === before);
+          const at = layoutIntents(screen, intents, cells, side()).findIndex((key) => key.id === before);
           scanStart = input.t - at * scanStepMs - spent;
           scan(input.t);
         }
