@@ -1,7 +1,15 @@
+import type { FieldKind } from '../shared/session';
+
 // The field that has focus in the app in front, read through Accessibility, which decides what Done does with the
 // Gaze Keyboard's text. null when there is no focused element or it can't be read. sends is a web page saying Return
 // sends or searches there (enterkeyhint), which a multi-line chat box can.
-export type FocusedField = { role: string; subrole: string; sends?: boolean } | null;
+export type FocusedField = (FieldKind & { sends?: boolean }) | null;
+
+// What a read of the focused field found: a field; no field (nothing focused, not a field, or a page Chrome can't run
+// the read in); Chrome refusing to run the page read at all; or the read failing (timed out, osascript failed, a second
+// Chrome running). Only a refusal leaves the Text Box the keyboard was opened on as a clue: in every other case it may
+// no longer be where the focus is.
+export type FieldRead = { kind: 'field'; field: NonNullable<FocusedField> } | { kind: 'none' } | { kind: 'javascript-off' } | { kind: 'failed' };
 
 // What READ_FOCUSED_FIELD prints when Chrome is in front and won't run the page read, which is Chrome's default.
 export const CHROME_JAVASCRIPT_OFF = 'chrome-javascript-off';
@@ -25,14 +33,19 @@ export const PAGE_FOCUS = `(() => {
   const role = attr('role').split(/\\s+/)[0];
   const sends = ['send', 'search', 'go'].includes(attr('enterkeyhint')) ? 'sends' : '';
   const field = (axRole, subrole) => [axRole, subrole, sends].join('\\n');
+  // Codes, card details and passwords in a plain input are as private as a password field, so they count as one.
+  const privateAutocomplete = /\\b(one-time-code|cc-[a-z-]+|current-password|new-password)\\b/.test(attr('autocomplete'));
   if (el.tagName === 'INPUT') {
     const type = (el.type || 'text').toLowerCase();
-    if (type === 'password') return field('AXTextField', 'AXSecureTextField');
+    if (type === 'password' || privateAutocomplete) return field('AXTextField', 'AXSecureTextField');
     if (type === 'search' || role === 'searchbox') return field('AXTextField', 'AXSearchField');
     if (role === 'combobox') return field('AXComboBox', '');
     return ['text', 'email', 'url', 'tel', 'number'].includes(type) ? field('AXTextField', '') : '';
   }
   if (role === 'searchbox') return field('AXTextField', 'AXSearchField');
+  // A rich editor that says combobox for its @mention list still takes many lines. Google's search box is a text area
+  // that says combobox, and is single-line.
+  if (role === 'combobox' && el.isContentEditable) return field(attr('aria-multiline') === 'false' ? 'AXTextField' : 'AXTextArea', '');
   if (role === 'combobox') return field('AXComboBox', '');
   // Rich editors that say textbox often leave out aria-multiline though they take many lines, so one is single-line
   // only when it says so. A stray Return in a document is the worse mistake.
@@ -55,19 +68,32 @@ export const READ_FOCUSED_FIELD = `function run() {
     return read('AXRole') + '\\n' + read('AXSubrole');
   }
   if (front.name() !== 'Google Chrome' || events.processes.whose({ name: 'Google Chrome' }).length !== 1) throw new Error('No focused element');
+  let answer;
+  // Any error here is Chrome refusing to run it: its message is in Chrome's language, so it isn't matched. A page that
+  // can't run it (chrome://, the PDF viewer) or a read that throws gives missing value instead, which is no field.
   try {
-    return String(Application('Google Chrome').windows[0].activeTab.execute({ javascript: ${JSON.stringify(PAGE_FOCUS)} }));
+    answer = Application('Google Chrome').windows[0].activeTab.execute({ javascript: ${JSON.stringify(PAGE_FOCUS)} });
   } catch (error) {
-    if (/turned off/i.test(String(error.message))) return '${CHROME_JAVASCRIPT_OFF}';
-    throw error;
+    return '${CHROME_JAVASCRIPT_OFF}';
   }
+  return answer === null || answer === undefined ? '' : String(answer);
 }`;
 
-export function parseFocusedField(stdout: string): FocusedField {
-  if (stdout.trim() === CHROME_JAVASCRIPT_OFF) return null;
+// What JXA prints for missing value, should one slip through as text.
+const NOTHING = new Set(['null', 'undefined', 'missing value']);
+
+export function parseFieldRead(stdout: string): FieldRead {
+  const trimmed = stdout.trim();
+  if (trimmed === CHROME_JAVASCRIPT_OFF) return { kind: 'javascript-off' };
+  if (NOTHING.has(trimmed)) return { kind: 'none' };
   const [role = '', subrole = '', sends = ''] = stdout.split('\n').map((line) => line.trim());
-  if (role === '' && subrole === '') return null;
-  return sends === 'sends' ? { role, subrole, sends: true } : { role, subrole };
+  if (role === '' && subrole === '') return { kind: 'none' };
+  return { kind: 'field', field: sends === 'sends' ? { role, subrole, sends: true } : { role, subrole } };
+}
+
+export function parseFocusedField(stdout: string): FocusedField {
+  const read = parseFieldRead(stdout);
+  return read.kind === 'field' ? read.field : null;
 }
 
 // A password field's text must never be remembered. A field that can't be read counts as one: not learning is the safe
@@ -86,4 +112,14 @@ export function pressesReturn(field: FocusedField, submit = false): boolean {
   if (submit) return true;
   if (isSecure(field)) return false;
   return field!.sends === true || SINGLE_LINE_ROLES.has(field!.role) || field!.subrole === 'AXSearchField';
+}
+
+// What Done does with the text, from what the read found and the Text Box the keyboard was opened on (if any). Learning
+// goes only by the field read now: the box was read earlier, and the page may have changed it since. Return goes by the
+// field read now too, and by the box only when Chrome refused the page read, since it is then the only clue. When the
+// page says no field has focus, or the read failed, Return is never pressed: it could land on a button.
+export function onDone(read: FieldRead, box: FieldKind | undefined, submit: boolean): { submit: boolean; learn: boolean } {
+  const field = read.kind === 'field' ? read.field : null;
+  const known = field ?? (read.kind === 'javascript-off' ? (box ?? null) : null);
+  return { submit: pressesReturn(known, submit), learn: !isSecure(field) };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHROME_JAVASCRIPT_OFF, isSecure, PAGE_FOCUS, parseFocusedField, pressesReturn } from './focused-field';
+import { CHROME_JAVASCRIPT_OFF, isSecure, onDone, PAGE_FOCUS, parseFieldRead, parseFocusedField, pressesReturn } from './focused-field';
 
 type FakeElement = {
   tagName: string;
@@ -34,6 +34,17 @@ describe('the focused field', () => {
 
   it('reads no field when Chrome will not run the page read', () => {
     expect(parseFocusedField(`${CHROME_JAVASCRIPT_OFF}\n`)).toBeNull();
+  });
+
+  it("reads no field from Chrome's missing value, which a chrome:// page, the PDF viewer or a failed page read gives", () => {
+    for (const nothing of ['null', 'undefined', 'missing value', 'null\n']) expect(parseFocusedField(nothing)).toBeNull();
+  });
+
+  it('tells a field, no field, Chrome refusing the page read, and a failed read apart', () => {
+    expect(parseFieldRead('AXTextField\n\n')).toEqual({ kind: 'field', field: { role: 'AXTextField', subrole: '' } });
+    expect(parseFieldRead('')).toEqual({ kind: 'none' });
+    expect(parseFieldRead('missing value')).toEqual({ kind: 'none' });
+    expect(parseFieldRead(`${CHROME_JAVASCRIPT_OFF}\n`)).toEqual({ kind: 'javascript-off' });
   });
 
   it('presses Return after the text in a single-line text, search or combo box', () => {
@@ -82,6 +93,16 @@ describe('the field a Chrome page has focused', () => {
     expect(pressesReturn(field)).toBe(false);
   });
 
+  it('reads one-time code, card and password inputs as secure, whatever their type, so they are never learned', () => {
+    for (const autocomplete of ['one-time-code', 'cc-number', 'cc-csc', 'cc-exp', 'current-password', 'new-password', 'section-login current-password'])
+      expect(isSecure(readPage({ tagName: 'INPUT', type: 'text', attributes: { autocomplete } })), autocomplete).toBe(true);
+    expect(isSecure(readPage({ tagName: 'INPUT', type: 'text', attributes: { autocomplete: 'email' } }))).toBe(false);
+  });
+
+  it('reads a rich editor marked as a combo box, as @mention editors are, as multi-line', () => {
+    expect(readPage({ tagName: 'DIV', isContentEditable: true, attributes: { role: 'combobox' } })).toEqual({ role: 'AXTextArea', subrole: '' });
+  });
+
   it("reads Google's search box, a text area marked as a combo box, as single-line", () => {
     const field = readPage({ tagName: 'TEXTAREA', attributes: { role: 'combobox' } });
     expect(field).toEqual({ role: 'AXComboBox', subrole: '' });
@@ -118,5 +139,34 @@ describe('the field a Chrome page has focused', () => {
     expect(readPage({ tagName: 'INPUT', type: 'checkbox' })).toBeNull();
     expect(readPage({ tagName: 'IFRAME', contentDocument: null })).toBeNull();
     expect(readPage(null)).toBeNull();
+  });
+});
+
+describe('Done', () => {
+  const textField = { role: 'AXTextField', subrole: '' };
+  const textArea = { role: 'AXTextArea', subrole: '' };
+  const password = { role: 'AXTextField', subrole: 'AXSecureTextField' };
+
+  it('submits and learns by the field read now', () => {
+    expect(onDone({ kind: 'field', field: textField }, textArea, false)).toEqual({ submit: true, learn: true });
+    expect(onDone({ kind: 'field', field: textArea }, textField, false)).toEqual({ submit: false, learn: true });
+    expect(onDone({ kind: 'field', field: password }, textField, false)).toEqual({ submit: false, learn: false });
+  });
+
+  it('goes by the Text Box only when Chrome refused the page read, and never learns then', () => {
+    expect(onDone({ kind: 'javascript-off' }, textField, false)).toEqual({ submit: true, learn: false });
+    expect(onDone({ kind: 'javascript-off' }, password, false)).toEqual({ submit: false, learn: false });
+    expect(onDone({ kind: 'javascript-off' }, undefined, false)).toEqual({ submit: false, learn: false });
+  });
+
+  it('never presses Return when the page says no field has focus, or the read failed, whatever the Text Box was', () => {
+    // The click on the box missed, or the page moved the focus to a button: Return would press it.
+    expect(onDone({ kind: 'none' }, textField, false)).toEqual({ submit: false, learn: false });
+    // Timed out, osascript failed, or a second Chrome running.
+    expect(onDone({ kind: 'failed' }, textField, false)).toEqual({ submit: false, learn: false });
+  });
+
+  it('still submits when the session asks it to, as after Search or New Tab', () => {
+    expect(onDone({ kind: 'failed' }, undefined, true)).toEqual({ submit: true, learn: false });
   });
 });

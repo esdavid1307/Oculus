@@ -46,6 +46,9 @@ export type Icon = { name: string; rect: Rect; label?: string };
 // used to focus the box again before typing lands. role and subrole are its Accessibility ones, as the lookup read them.
 export type TextBox = { name: string; rect: Rect; role?: string; subrole?: string };
 
+// A field's Accessibility role and subrole, which decide whether Done presses Return and whether the text is learned.
+export type FieldKind = { role: string; subrole: string };
+
 // 'menu' is the menu a menu bar item just opened. 'chrome' is the Chrome elements near the gaze (Gaze Scan in Chrome).
 export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu' | 'chrome';
 
@@ -74,7 +77,7 @@ export type SessionInput =
 export type AgentAction =
   // submit presses Return after the text whatever the field. Left out, Return follows only in a single-line field.
   // box is the Text Box the keyboard was opened on, as its lookup read it, for when the focused field can't be read.
-  | { type: 'type-text'; text: string; submit?: boolean; box?: { role: string; subrole: string } }
+  | { type: 'type-text'; text: string; submit?: boolean; box?: FieldKind }
   // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
   // rect is the box as matched, in overlay coordinates. name is for the log.
   // held is the time window the user held their gaze on that box, so the outside world can snapshot the uncorrected

@@ -14,7 +14,7 @@ import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { createMainNeuralLayer } from './neural';
 import { createChromeScan } from './chrome-scan';
-import { CHROME_JAVASCRIPT_OFF, isSecure, parseFocusedField, pressesReturn, READ_FOCUSED_FIELD, type FocusedField } from './focused-field';
+import { onDone, parseFieldRead, READ_FOCUSED_FIELD, type FieldRead } from './focused-field';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -251,8 +251,9 @@ const READ_TEXT_BOXES = `function run() {
             try { name = el.description() || ''; } catch (e) {}
             if (!name) try { name = el.title() || ''; } catch (e) {}
             if (!name) try { name = el.help() || ''; } catch (e) {}
+            // Only a text field can be a password or search field, and each read is a round trip on a walk near its timeout.
             var subrole = '';
-            try { subrole = el.subrole() || ''; } catch (e) {}
+            if (role === 'AXTextField') try { subrole = el.subrole() || ''; } catch (e) {}
             results.push({ name: name || role, role: role, subrole: subrole, x: pos[0], y: pos[1], width: size[0], height: size[1] });
           }
         } catch (e) {}
@@ -441,14 +442,15 @@ function typeText(text: string, submit = false) {
 // Typing waits on this, so a hung osascript is cut off and, like any other failure, reads as no field: the text is
 // still typed, only not learned or submitted.
 let toldChromeJavaScriptOff = false;
-function readFocusedField(done: (field: FocusedField) => void) {
+function readFocusedField(done: (read: FieldRead) => void) {
   execFile('osascript', ['-l', 'JavaScript', '-e', READ_FOCUSED_FIELD], { timeout: 2000 }, (error, stdout) => {
     if (error) console.warn('Could not read the focused field, so not learning or submitting:', error.message);
-    if (!error && stdout.trim() === CHROME_JAVASCRIPT_OFF && !toldChromeJavaScriptOff) {
+    const read: FieldRead = error ? { kind: 'failed' } : parseFieldRead(stdout);
+    if (read.kind === 'javascript-off' && !toldChromeJavaScriptOff) {
       toldChromeJavaScriptOff = true;
-      console.warn('Chrome hides which field has focus. To let Done submit and learn there, turn on View > Developer > Allow JavaScript from Apple Events in Chrome.');
+      console.warn("Chrome wouldn't say which field has focus. To let Done submit and learn there, turn on View > Developer > Allow JavaScript from Apple Events in Chrome.");
     }
-    done(error ? null : parseFocusedField(stdout));
+    done(read);
   });
 }
 
@@ -561,14 +563,13 @@ function createOverlay() {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
       // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
-      // When the field can't be read, the Text Box the keyboard was opened on still tells whether Return is safe. Only
-      // the field read now decides learning: the box was read earlier, and the page may have changed it since.
-      readFocusedField((field) => {
-        const known = field ?? action.box ?? null;
-        const submit = pressesReturn(known, action.submit);
-        console.log(`[type-text] field=${known ? `${known.role}/${known.subrole}` : 'unknown'}${field ? '' : known ? ' (Text Box)' : ''} submit=${submit}`);
+      // See onDone for when the Text Box the keyboard was opened on stands in for a field that can't be read.
+      readFocusedField((read) => {
+        const { submit, learn } = onDone(read, action.box, action.submit === true);
+        const field = read.kind === 'field' ? `${read.field.role}/${read.field.subrole}` : read.kind;
+        console.log(`[type-text] field=${field}${read.kind === 'javascript-off' && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
         typeText(action.text, submit);
-        if (!words.enabled || isSecure(field)) return;
+        if (!words.enabled || !learn) return;
         // A failed save must not stop the text being typed, so it only warns.
         try {
           words.learn(action.text);
