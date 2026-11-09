@@ -4,7 +4,10 @@
 import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import { CLOSE_KEY, layoutIntents } from './keyboard';
-import { createSession, type AgentAction } from './session';
+import { createSession as createBareSession, type AgentAction } from './session';
+
+// Quit only shows with an app in front to quit, so these tests put one there to keep it in its place in the scan.
+const createSession = (options: Parameters<typeof createBareSession>[0]) => createBareSession({ frontApp: () => 'TextEdit', ...options });
 
 const screen = { width: 1600, height: 1000 };
 const inBox = { x: 800, y: 500, radius: 120 };
@@ -39,16 +42,16 @@ describe('the Cmd Fixed Intent', () => {
   it('is not offered when Chrome is not in front', () => {
     const { session } = thinking(false);
     const state = session(claude(5000, ['Pause', 'Mute']));
-    expect(state).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'home', 'minimize', 'type', 'dock'] });
+    expect(state).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock'] });
     expect(ids(state)).not.toContain('cmd');
   });
 
   it('is offered in Chrome, after the other Fixed Intents and before Claude’s', () => {
     const { session } = thinking(true);
     const opened = session(pastIntents(4500, ['Pause', 'Mute']));
-    expect(opened).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'home', 'minimize', 'type', 'dock', 'cmd'], recent: 2 });
+    expect(opened).toMatchObject({ phase: 'choosing', fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'cmd'], recent: 2 });
     const state = session(claude(5000, ['Like', 'Share', 'Save']));
-    expect(ids(state)).toEqual(['intent-0', 'intent-1', CLOSE_KEY, 'home', 'minimize', 'type', 'dock', 'cmd', 'intent-2', 'intent-3', 'intent-4', 'something-else']);
+    expect(ids(state)).toEqual(['intent-0', 'intent-1', CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'cmd', 'intent-2', 'intent-3', 'intent-4', 'something-else']);
   });
 
   it('starts a scan over the Chrome Commands, without asking Claude or running anything', () => {
@@ -127,7 +130,7 @@ describe('the Chrome Commands scan', () => {
     session(gaze(21_000, inBox));
     session(gaze(21_100, target));
     session(gaze(22_100, target));
-    expect(session({ type: 'intents', t: 23_000, request: 2, intents: ['Pause'] })).toMatchObject({ fixed: [CLOSE_KEY, 'home', 'minimize', 'type', 'dock', 'cmd'] });
+    expect(session({ type: 'intents', t: 23_000, request: 2, intents: ['Pause'] })).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'cmd'] });
   });
 });
 

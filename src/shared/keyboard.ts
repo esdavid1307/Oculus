@@ -14,23 +14,24 @@ export const MAX_SUGGESTIONS = 3;
 // The Suggested Phrase key id prefix: the chosen phrase text follows the ':'.
 export const PHRASE_KEY = 'phrase:';
 export const MAX_SHOWN_PHRASES = 2;
-// Choices that run at once without Claude, mostly as key presses. Each one's key id is its name. Type opens the Gaze
-// Keyboard on whatever has focus, and Dock starts an Icon Scan of the Dock. Cmd is Chrome-only and opens the Chrome
-// Commands: Search, Next Tab, New Tab and Close Tab. Search and New Tab open the Gaze Keyboard on the address bar.
-export type FixedIntent = 'close' | 'home' | 'minimize' | 'type' | 'dock' | 'cmd' | 'search' | 'next-tab' | 'new-tab' | 'close-tab';
+// Choices that run at once without Claude, mostly as key presses. Each one's key id is its name. Quit quits the app
+// that was in front when the picker opened. Type opens the Gaze Keyboard on whatever has focus, and Dock starts an Icon
+// Scan of the Dock. Cmd is Chrome-only and opens the Chrome Commands: Search, Next Tab, New Tab and Close Tab. Search
+// and New Tab open the Gaze Keyboard on the address bar.
+export type FixedIntent = 'close' | 'quit' | 'minimize' | 'type' | 'dock' | 'cmd' | 'search' | 'next-tab' | 'new-tab' | 'close-tab';
 // Closes the Suggested Intents without running anything.
 export const CLOSE_KEY = 'close' satisfies FixedIntent;
 
 // Close is "Cancel" on screen, since Claude often offers to close the window, which is a different thing.
-const FIXED_LABELS: Record<FixedIntent, string> = { close: 'Cancel', home: 'Home', minimize: 'Minimize', type: 'Type', dock: 'Dock', cmd: 'Cmd', search: 'Search', 'next-tab': 'Next Tab', 'new-tab': 'New Tab', 'close-tab': 'Close Tab' };
+const FIXED_LABELS: Record<FixedIntent, string> = { close: 'Cancel', quit: 'Quit', minimize: 'Minimize', type: 'Type', dock: 'Dock', cmd: 'Cmd', search: 'Search', 'next-tab': 'Next Tab', 'new-tab': 'New Tab', 'close-tab': 'Close Tab' };
 
 // The Suggested Intents sit in a column on one side, so the rest of the screen, and the target, stay in view.
 export type IntentsSide = 'left' | 'right';
 
 // What the picker holds, in scan order: the first fixedAt of the intents, then the Fixed Intents, then the rest of the
 // intents, and Something else last. cells is how many tiles it keeps room for, Something else included, so the Intents
-// still to come fill empty cells instead of growing the grid.
-export type Picker = { intents: string[]; fixed: FixedIntent[]; fixedAt: number; cells: number; side: IntentsSide };
+// still to come fill empty cells instead of growing the grid. app is the app in front, which the Quit tile names.
+export type Picker = { intents: string[]; fixed: FixedIntent[]; fixedAt: number; cells: number; side: IntentsSide; app?: string };
 
 const GAP = 16;
 const COLUMNS = 3;
@@ -94,13 +95,13 @@ const INTENT_MAX_ASPECT = 1.1;
 const WIDE_PANEL = 3 / 8;
 
 // Every tile gets a cell even past cells, up to MAX_INTENT_TILES in all. Past that the last intents are left out.
-export function layoutIntents({ width, height }: Screen, { intents, fixed, fixedAt, cells, side }: Picker): Key[] {
+export function layoutIntents({ width, height }: Screen, { intents, fixed, fixedAt, cells, side, app }: Picker): Key[] {
   // Every tile keeps its place as Claude's Intents join, so nothing moves, with Something else in the last of the cells.
   const slots = Math.min(Math.max(cells, intents.length + fixed.length + 1), MAX_INTENT_TILES);
   const shown = intents.slice(0, Math.max(slots - 1 - fixed.length, fixedAt));
   const tiles = [
     ...shown.slice(0, fixedAt).map((label, i) => ({ id: `intent-${i}`, label })),
-    ...fixed.map((name) => ({ id: name, label: FIXED_LABELS[name] })),
+    ...fixed.map((name) => ({ id: name, label: name === 'quit' ? `Quit ${app}` : FIXED_LABELS[name] })),
     ...shown.slice(fixedAt).map((label, i) => ({ id: `intent-${fixedAt + i}`, label })),
   ];
   const columns = slots > 2 * INTENT_MAX_ROWS ? 3 : 2;

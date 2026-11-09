@@ -98,8 +98,9 @@ export type AgentAction =
   | { type: 'stop-run'; request: number }
   // A Fixed Intent was chosen. It never goes through Claude, so it teaches neither Gaze Correction nor Intent History.
   // Close asks nothing of the outside world, Cmd only opens the Chrome Commands, and Dock asks for show-dock, as a Dock
-  // hold does.
-  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'cmd' | 'dock'> }
+  // hold does. Quit names the app the tile showed, so main quits nothing else.
+  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'cmd' | 'dock' | 'quit'> }
+  | { type: 'fixed-intent'; name: 'quit'; app: string }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
   // A hold whose uncorrected gaze must be kept now, since it may only teach Gaze Correction long after.
@@ -118,8 +119,9 @@ export type SuggestPhrases = (text: string) => string[];
 const MAX_INTENTS = 3;
 // How long the Dock Fixed Intent waits for main to show the Dock and read it again before scanning it as last read.
 const DOCK_WAIT_MS = 2000;
-// In every picker, in this order, so the user learns where each one is in the scan.
-const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize', 'type', 'dock'];
+// In every picker, in this order, so the user learns where each one is in the scan. Quit only when there is an app in
+// front to quit.
+const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock'];
 // What Cmd opens, in scan order, with Close to leave.
 const CHROME_COMMANDS: FixedIntent[] = ['search', 'next-tab', 'new-tab', 'close-tab', CLOSE_KEY];
 
@@ -213,6 +215,7 @@ export function createSession({
   orderIcons = (_source, names) => names.map((_, i) => i),
   scanPace,
   inChrome = () => false,
+  frontApp = () => '',
 }: {
   screen: Screen;
   timings?: unknown;
@@ -238,6 +241,8 @@ export function createSession({
   scanPace?: () => number;
   // Whether Google Chrome is in front, read when a picker opens, which then offers Cmd for the Chrome Commands.
   inChrome?: () => boolean;
+  // The name of the process in front, empty when unknown, read when a picker opens for the Quit tile.
+  frontApp?: () => string;
 }) {
   const { wakeHoldMs, lookAwayMs, scanStepMs, targetHoldMs, iconHoldMs, finishedMs } = parseTimings(timings);
   const iconsOf = { dock, desktop, menubar, chrome };
@@ -287,6 +292,7 @@ export function createSession({
   // How many of the intents come before the Fixed Intents: the past ones, and a suggested "Skip the ad".
   let fixedAt = 0;
   let fixed: FixedIntent[] = [];
+  let app = '';
   // In the Chrome Commands scan, which holds only them, so Claude's late answer stays out of it.
   let inChromeCommands = false;
   let suggesting = false;
@@ -428,7 +434,7 @@ export function createSession({
 
   // The picker goes on the half of the screen the target isn't on.
   const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
-  const picker = (): Picker => ({ intents, fixed, fixedAt, cells, side: side() });
+  const picker = (): Picker => ({ intents, fixed, fixedAt, cells, side: side(), app });
 
   function suggestIntents(region: GazeRegion, passedOver: string[], element?: ElementHint) {
     asked = region;
@@ -446,7 +452,10 @@ export function createSession({
     intents = past.slice(0, MAX_PAST_INTENTS);
     recent = fixedAt = intents.length;
     // Read once, so a change of front app can't swap tiles under the gaze.
-    fixed = inChrome() ? [...FIXED_INTENTS, 'cmd'] : FIXED_INTENTS;
+    app = frontApp();
+    // Finder can't be quit for good: macOS starts it again at once.
+    const quittable = app !== '' && app !== 'Finder';
+    fixed = [...FIXED_INTENTS.filter((name) => name !== 'quit' || quittable), ...(inChrome() ? ['cmd' as const] : [])];
     inChromeCommands = false;
     cells = recent + fixed.length + MAX_INTENTS + 1;
     restartScan(t);
@@ -540,9 +549,13 @@ export function createSession({
     }
     if (key === 'cmd') return openChromeCommands(t);
     if (key === 'dock') return chooseDock(t);
-    if (key === 'home' || key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
+    if (key === 'quit') {
+      act({ type: 'fixed-intent', name: 'quit', app });
+      return stop();
+    }
+    if (key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
       act({ type: 'fixed-intent', name: key });
-      // Home goes back to the start. The others do too, for the same reason as Close.
+      // These go back to the start too, for the same reason as Close.
       return stop();
     }
     intent = intents[Number(key.replace('intent-', ''))];

@@ -26,7 +26,7 @@ const VIDEO_RULES =
   'If the user is looking at the playing video itself and there is no ad, include "Open a related video" and something like "Pause the video". ';
 
 // The picker always shows the Fixed Intents next to these, so a suggestion repeating one would waste a slot.
-const FIXED_INTENT_RULES = 'Showing the Desktop, minimizing the window and opening the Dock are always offered already, so never suggest them. ';
+const FIXED_INTENT_RULES = 'Quitting the app, minimizing the window and opening the Dock are always offered already, so never suggest them. ';
 
 // Demo flow one (#10): the run agent writes the continuation, so the user only has to pick it.
 const DOCUMENT_RULES =
