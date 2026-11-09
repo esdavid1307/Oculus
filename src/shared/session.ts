@@ -7,7 +7,8 @@ export type OverlayState = (
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
   // cells is how many slots layoutIntents draws before Close: 6 when past Intents are in the picker, otherwise 4.
   // side is where the column goes, away from the target.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6; side: IntentsSide }
+  // stepProgress runs from 0 to 1 while the highlight stays on one choice, for the ring drawn around it. Display only.
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6; side: IntentsSide; stepProgress: number }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
@@ -360,7 +361,10 @@ export function createSession({
 
   function shown(): OverlayState {
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
-    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells, side: side() };
+    if (phase === 'choosing') {
+      const stepProgress = (Math.max(now - scanStart, 0) % scanStepMs) / scanStepMs;
+      return { phase, wakeProgress, intents, highlight, cells, side: side(), stepProgress };
+    }
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };

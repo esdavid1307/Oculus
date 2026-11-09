@@ -798,6 +798,7 @@ describe('Suggested Intents', () => {
       highlight: 'intent-0',
       cells: 4,
       side: 'right',
+      stepProgress: 0,
     });
     expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
       'Skip the ad',
@@ -965,8 +966,10 @@ describe('Suggested Intents', () => {
 
     it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, side: 'right' });
-      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1' });
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
+      // The ring around the lit choice fills over its scan step and starts again on the next one.
+      expect(session(tick(5500))).toMatchObject({ highlight: 'intent-0', stepProgress: 0.5 });
+      expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1', stepProgress: 0 });
       expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
     });
 
@@ -1197,20 +1200,24 @@ describe('Running an Intent', () => {
 describe('Suggested Intents side panel', () => {
   const overlap = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-  it('stacks the choices in one column on the given side, Close last, leaving the rest of the screen clear', () => {
+  it('sets the choices out in a 2-column grid on the given side, Close last, leaving the rest of the screen clear', () => {
     for (const side of ['left', 'right'] as const) {
       const keys = layoutIntents(screen, ['Skip the ad', 'Pause'], 4, side);
       expect(keys.map(({ id }) => id)).toEqual(['intent-0', 'intent-1', 'something-else', 'close']);
       expect(keys.at(-1)!.label).toBe('Close');
+      const panel = { x: side === 'left' ? 0 : screen.width - Math.floor(screen.width / 3), width: Math.floor(screen.width / 3) };
       for (const { rect } of keys) {
-        // A third of the screen at most, against its own edge.
-        expect(rect.width).toBeLessThanOrEqual(screen.width / 3);
-        expect(side === 'left' ? rect.x : screen.width - (rect.x + rect.width)).toBe(0);
+        // Inside a third of the screen against its own edge.
+        expect(rect.x >= panel.x && rect.x + rect.width <= panel.x + panel.width + 0.001).toBe(true);
         expect(rect.y >= 0 && rect.y + rect.height <= screen.height).toBe(true);
+        // Square-ish.
+        expect(rect.height / rect.width).toBeLessThanOrEqual(1.1);
         for (const other of keys) if (other.rect !== rect) expect(overlap(rect, other.rect)).toBe(false);
       }
-      // Top to bottom in scan order.
-      expect(keys.map(({ rect }) => rect.y)).toEqual([...keys.map(({ rect }) => rect.y)].sort((a, b) => a - b));
+      // Two across, in scan order: left to right, then down.
+      expect(keys[0].rect.y).toBe(keys[1].rect.y);
+      expect(keys[0].rect.x).toBeLessThan(keys[1].rect.x);
+      expect(keys[2].rect.y).toBeGreaterThan(keys[0].rect.y);
     }
   });
 

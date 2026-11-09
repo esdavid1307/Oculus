@@ -503,7 +503,11 @@ function createOverlay() {
       pendingIntents?.abort();
       const controller = (pendingIntents = new AbortController());
       void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal)
-        .then((intents) => advance({ type: 'intents', t: Date.now(), request: action.request, intents }))
+        .then((intents) => {
+          // Looks first, so the tiles have their label and icon the moment the session adds them.
+          overlay.webContents.send('intent-looks', Object.fromEntries(intents.map(({ text, look }) => [text, look])));
+          advance({ type: 'intents', t: Date.now(), request: action.request, intents: intents.map(({ text }) => text) });
+        })
         .finally(() => {
           if (pendingIntents === controller) pendingIntents = null;
           rmSync(saveDir, { recursive: true, force: true });
