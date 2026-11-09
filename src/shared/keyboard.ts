@@ -17,6 +17,9 @@ export const MAX_SHOWN_PHRASES = 2;
 // Closes the Suggested Intents without running anything.
 export const CLOSE_KEY = 'close';
 
+// The choices the picker always offers, which run at once without Claude. Each one's key id is its name.
+export type FixedIntent = 'close' | 'home' | 'minimize' | 'dock' | 'type' | 'cmd' | 'next-tab' | 'close-tab' | 'search' | 'new-tab';
+
 // The Suggested Intents sit in a column on one side, so the rest of the screen, and the target, stay in view.
 export type IntentsSide = 'left' | 'right';
 
@@ -82,12 +85,19 @@ const INTENT_MAX_ASPECT = 1.1;
 const WIDE_PANEL = 3 / 8;
 
 // cells is how many slots come before Close, Something else included. Every Intent gets a cell even past that, up to
-// MAX_INTENT_TILES in all.
-export function layoutIntents({ width, height }: Screen, intents: string[], cells = 4, side: IntentsSide = 'right'): Key[] {
-  // Every slot keeps its place as Claude's Intents join, so nothing moves: the Intents, then Something else in the last
-  // of the cells, then Close.
-  const slots = Math.min(Math.max(cells, intents.length + 1), MAX_INTENT_TILES - 1);
-  const shown = intents.slice(0, slots - 1);
+// MAX_INTENT_TILES in all. The first recent of the intents are past Intents, and the Fixed Intents come after them.
+export function layoutIntents(
+  { width, height }: Screen,
+  intents: string[],
+  cells = 4,
+  side: IntentsSide = 'right',
+  recent = 0,
+  fixed: FixedIntent[] = [],
+): Key[] {
+  // Every slot keeps its place as Claude's Intents join, so nothing moves: the past Intents, the Fixed Intents, Claude's
+  // Intents, then Something else in the last of the cells, then Close.
+  const slots = Math.min(Math.max(cells, intents.length + fixed.length + 1), MAX_INTENT_TILES - 1);
+  const shown = intents.slice(0, slots - 1 - fixed.length);
   const columns = slots + 1 > 2 * INTENT_MAX_ROWS ? 3 : 2;
   const rows = Math.ceil((slots + 1) / columns);
   const panelWidth = Math.floor(columns === 2 ? width / 3 : width * WIDE_PANEL);
@@ -102,8 +112,14 @@ export function layoutIntents({ width, height }: Screen, intents: string[], cell
     width: tileWidth,
     height: tileHeight,
   });
+  const intent = (label: string, i: number) => ({ id: `intent-${i}`, label });
+  const tiles = [
+    ...shown.slice(0, recent).map(intent),
+    ...fixed.map((name) => ({ id: name, label: name[0].toUpperCase() + name.slice(1) })),
+    ...shown.slice(recent).map((label, i) => intent(label, recent + i)),
+  ];
   return [
-    ...shown.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) })),
+    ...tiles.map((tile, i) => ({ ...tile, rect: cell(i) })),
     { id: 'something-else', label: 'Something else', rect: cell(slots - 1) },
     { id: CLOSE_KEY, label: 'Close', rect: cell(slots) },
   ];

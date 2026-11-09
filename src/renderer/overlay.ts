@@ -221,6 +221,7 @@ window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, lo
 function lookOf({ id, label }: Key): IntentLook {
   if (id === 'something-else') return { label: 'More', icon: 'more' };
   if (id === CLOSE_KEY) return { label: 'Close', icon: 'close' };
+  if (id === 'type') return { label: 'Type', icon: 'type' };
   return intentLooks.get(label) ?? fallbackLook(label);
 }
 
@@ -426,12 +427,12 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons' && entering) iconMagnifier.textContent = '';
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    const { side, cells, recent, intents } = state;
-    showKeys(`choosing ${side} ${cells} ${recent} ${intents.join('\n')}`, layoutIntents(screenSize, intents, cells, side), drawTile, recent);
+    const { side, cells, recent, fixed, intents } = state;
+    showKeys(`choosing ${side} ${cells} ${recent} ${fixed} ${intents.join('\n')}`, layoutIntents(screenSize, intents, cells, side, recent, fixed), drawTile, recent);
     highlightKey(state.highlight);
     showStepProgress(state.stepProgress);
-    // In the first cell, where an intent would be. The reason is in the log.
-    place(noIntents, onSheet(layoutIntents(screenSize, [''], state.cells, state.side)[0].rect));
+    // In the cell Claude's first Intent would take, after the Fixed Intents. The reason is in the log.
+    place(noIntents, onSheet(layoutIntents(screenSize, [''], cells, side, 0, fixed).find((key) => key.id === 'intent-0')!.rect));
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);

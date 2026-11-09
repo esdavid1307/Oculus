@@ -25,7 +25,7 @@ The Intents this user chose before that ran ok, kept per app on this machine, an
 _Avoid_: Memory, favourites
 
 **Gaze Keyboard**:
-The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
+The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key. It opens on a Text Box, or on Type in the Suggested Intents, which focuses nothing so the text goes to whatever already has focus. Done types the text, then presses Return when it went into a single-line field such as a search or message box, never in a text area like a document or in a password field.
 _Avoid_: Virtual keyboard, typing mode
 
 **Text Box**:

@@ -1,17 +1,39 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { LearningSignal } from './neural/layer';
 import type { Rect, Screen } from './geometry';
-import { CLOSE_KEY, GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type IntentsSide, type KeyId } from './keyboard';
+import {
+  CLOSE_KEY,
+  GROUPS,
+  layoutIntents,
+  layoutKeyboard,
+  MAX_SHOWN_PHRASES,
+  MAX_SUGGESTIONS,
+  PHRASE_KEY,
+  SUGGESTION_KEY,
+  type FixedIntent,
+  type IntentsSide,
+  type KeyId,
+} from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   // stepMs is how long the highlight stays on one key or icon, for the bar drawn under it. Display only.
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[]; stepMs: number }
   // cells is how many slots layoutIntents draws before Close, with room kept for the Intents still to come.
-  // recent is how many of the intents, from the first, are past Intents.
+  // recent is how many of the intents, from the first, are past Intents. fixed are the Fixed Intents shown after them.
   // side is where the column goes, away from the target.
   // stepProgress runs from 0 to 1 while the highlight stays on one choice, for the ring drawn around it. Display only.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: number; recent: number; side: IntentsSide; stepProgress: number }
+  | {
+      phase: 'choosing';
+      wakeProgress: number;
+      intents: string[];
+      highlight: KeyId;
+      cells: number;
+      recent: number;
+      fixed: FixedIntent[];
+      side: IntentsSide;
+      stepProgress: number;
+    }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon; stepMs: number }
@@ -57,7 +79,10 @@ export type SessionInput =
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
-  | { type: 'type-text'; text: string }
+  // submit presses Return after the text whatever the field. Left out, Return follows only in a single-line field.
+  | { type: 'type-text'; text: string; submit?: boolean }
+  // A Fixed Intent was chosen. It never goes through Claude.
+  | { type: 'fixed-intent'; name: FixedIntent }
   // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
   // rect is the box as matched, in overlay coordinates. name is for the log.
   // held is the time window the user held their gaze on that box, so the outside world can snapshot the uncorrected
@@ -90,6 +115,8 @@ export type Suggest = (text: string) => string[];
 export type SuggestPhrases = (text: string) => string[];
 
 const MAX_INTENTS = 3;
+// In every picker, in this order, so the user learns where each one is in the scan.
+const FIXED_INTENTS: FixedIntent[] = ['type'];
 
 // The sources an icon hold can stick to.
 type HeldSource = 'dock' | 'desktop' | 'menubar' | 'chrome';
@@ -239,6 +266,8 @@ export function createSession({
   // Whether the last Gaze Keyboard press was a letter (or group / word / phrase), so only a Back/Delete that follows one
   // counts as an undo: a second Delete in a row, or a deliberate round of editing, is not a mis-timed press.
   let lastKeyboardPressWasLetter = false;
+  // Set for text that is always submitted, whatever the field.
+  let submitOnDone = false;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let phrases: string[] = [];
@@ -279,7 +308,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / stepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells, side()) : layoutKeyboard(screen, group, suggestions, phrases).keys;
+      const keys = phase === 'choosing' ? pickerKeys() : layoutKeyboard(screen, group, suggestions, phrases).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -339,8 +368,10 @@ export function createSession({
     phrases = suggestPhrases(text).slice(0, MAX_SHOWN_PHRASES);
   }
 
-  function openKeyboard(t: number) {
+  // submit makes Done press Return after the text, whatever the field.
+  function openKeyboard(t: number, submit = false) {
     phase = 'typing';
+    submitOnDone = submit;
     holdStart = null;
     wakeProgress = 0;
     text = '';
@@ -367,7 +398,7 @@ export function createSession({
     else if (key === 'space') text += ' ';
     else if (key === 'done') {
       if (text !== '') {
-        act({ type: 'type-text', text });
+        act({ type: 'type-text', text, ...(submitOnDone && { submit: true }) });
         if (textBoxGaze) learn({ kind: 'gaze', ...textBoxGaze, weight: 1 });
       }
       textBoxGaze = null;
@@ -380,6 +411,7 @@ export function createSession({
 
   // The picker goes on the half of the screen the target isn't on.
   const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
+  const pickerKeys = () => layoutIntents(screen, intents, cells, side(), recent, FIXED_INTENTS);
 
   function suggestIntents(region: GazeRegion, passedOver: string[], element?: ElementHint) {
     asked = region;
@@ -393,6 +425,12 @@ export function createSession({
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents], askedElement);
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
+    if (key === 'type') {
+      act({ type: 'fixed-intent', name: 'type' });
+      // The text goes to whatever already has focus, so no Text Box is focused and nothing teaches Gaze Correction.
+      textBoxGaze = null;
+      return openKeyboard(t);
+    }
     intent = intents[Number(key.replace('intent-', ''))];
     activity = '';
     phase = 'running';
@@ -452,7 +490,7 @@ export function createSession({
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases, stepMs };
     if (phase === 'choosing') {
       const stepProgress = (Math.max(now - scanStart, 0) % stepMs) / stepMs;
-      return { phase, wakeProgress, intents, highlight, cells, recent, side: side(), stepProgress };
+      return { phase, wakeProgress, intents, highlight, cells, recent, fixed: FIXED_INTENTS, side: side(), stepProgress };
     }
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight!, stepMs };
@@ -480,8 +518,8 @@ export function createSession({
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_PAST_INTENTS);
         recent = intents.length;
-        // Room for Claude's Intents, which join later, and Something else.
-        cells = recent + MAX_INTENTS + 1;
+        // Room for the Fixed Intents, Claude's Intents, which join later, and Something else.
+        cells = recent + FIXED_INTENTS.length + MAX_INTENTS + 1;
         restartScan(input.t);
         scan(input.t);
       }
@@ -490,7 +528,7 @@ export function createSession({
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
         recent = 0;
-        cells = MAX_INTENTS + 1;
+        cells = FIXED_INTENTS.length + MAX_INTENTS + 1;
         restartScan(input.t);
         scan(input.t);
       } else if (phase === 'choosing' && input.request === request) {
@@ -504,7 +542,7 @@ export function createSession({
           intents = [...intents, ...added];
           // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
           // where it was, so the same key stays lit and keeps the time it already had.
-          const at = layoutIntents(screen, intents, cells, side()).findIndex((key) => key.id === before);
+          const at = pickerKeys().findIndex((key) => key.id === before);
           scanStart = input.t - at * stepMs - spent;
           scan(input.t);
         }
@@ -570,14 +608,14 @@ export function createSession({
         if (input.type === 'select') {
           // Back and Delete take back the press before, which then landed a step late — but only when the press before
           // was a letter. A second Delete in a row, or deliberate editing, is not a mis-timed press.
-          const isUndoKey = phase === 'typing' && (highlight === 'back' || highlight === 'delete');
+          const typing = phase === 'typing';
+          const isUndoKey = typing && (highlight === 'back' || highlight === 'delete');
           const undoes = isUndoKey && lastKeyboardPressWasLetter;
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes });
           press(highlight, input.t);
-          if (phase === 'typing') {
-            refreshSuggestions();
-            lastKeyboardPressWasLetter = !isUndoKey;
-          }
+          if (phase === 'typing') refreshSuggestions();
+          // Type opening the keyboard is not a letter press, so a first Delete there is not an undo.
+          if (typing && phase === 'typing') lastKeyboardPressWasLetter = !isUndoKey;
           restartScan(input.t);
           scan(input.t);
         }
