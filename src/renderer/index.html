@@ -9,12 +9,37 @@
     <script type="module" src="./overlay.ts"></script>
   </head>
   <body>
-    <div id="keyboard"><div id="typed"></div><div id="no-intents" hidden>No suggestions this time. Choose Something else to try again.</div></div>
-    <div id="wake" class="target"><div class="ring"></div><span>Look here for 3 seconds to start</span></div>
+    <svg class="svg-filters" aria-hidden="true">
+      <filter id="noise" x="0" y="0" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="4" stitchTiles="stitch" />
+      </filter>
+    </svg>
+    <div id="glow"><div></div></div>
+    <div id="keyboard">
+      <div class="aurora" aria-hidden="true"></div>
+      <div class="noise" aria-hidden="true"></div>
+      <div id="typed"></div>
+      <div id="no-intents" hidden>Nothing this time. Blink on Something else to try again.</div>
+    </div>
+    <div id="wake" class="target">
+      <div class="wake-aurora" aria-hidden="true"></div>
+      <div class="wake-specular" aria-hidden="true"></div>
+      <div class="ring"></div>
+      <div class="wake-label">
+        <strong>Look here to start</strong>
+        <span class="rest">Keep looking to begin</span>
+        <span class="holding">Keep looking…</span>
+        <em class="wake-brand">Oculus Agent</em>
+      </div>
+    </div>
+    <div id="face-ring"></div>
     <p id="gaze-message" hidden></p>
     <div id="icon-highlight"></div>
     <div id="icon-magnifier" hidden></div>
-    <p id="status" hidden></p>
+    <div id="status" hidden>
+      <span class="glyph"></span>
+      <span class="lines"><strong></strong><span class="detail"></span><small></small></span>
+    </div>
     <p id="stop-hint" hidden></p>
     <div id="dot" hidden></div>
   </body>

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en" data-calibrating="face">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Oculus Agent</title>
+    <link rel="stylesheet" href="./overlay.css" />
+    <style>
+      html,
+      body {
+        background: #07080c !important;
+      }
+
+      #desktop {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(50% 42% at 50% 0%, rgb(48 64 112 / 55%), transparent 70%),
+          radial-gradient(40% 36% at 100% 100%, rgb(88 40 120 / 28%), transparent 70%),
+          #12141a;
+        color: #f5f5f7;
+        font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      }
+
+      #menubar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 28px;
+        padding: 0 16px;
+        font-size: 13px;
+        font-weight: 560;
+        background: rgb(22 22 26 / 72%);
+        box-shadow: inset 0 -1px 0 rgb(255 255 255 / 8%);
+      }
+
+      #menubar b {
+        font-weight: 680;
+      }
+
+      #stage {
+        display: grid;
+        place-items: center;
+        height: calc(100% - 28px - 96px);
+        padding: 28px;
+      }
+
+      #watch {
+        width: min(1080px, 92vw);
+        overflow: hidden;
+        border-radius: 18px;
+        background: rgb(28 28 32 / 92%);
+        box-shadow:
+          0 0 0 1px rgb(255 255 255 / 10%),
+          0 30px 80px rgb(0 0 0 / 45%);
+      }
+
+      #watch header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 40px;
+        padding: 0 14px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      #watch header i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #ff5f57;
+        box-shadow: 18px 0 #febc2e, 36px 0 #28c840;
+      }
+
+      #watch header span {
+        margin-left: 48px;
+        color: rgb(235 235 245 / 72%);
+      }
+
+      #library {
+        display: grid;
+        grid-template-columns: 1.7fr 0.8fr;
+        gap: 18px;
+        padding: 8px 18px 22px;
+      }
+
+      #hero {
+        position: relative;
+        overflow: hidden;
+        aspect-ratio: 16 / 9;
+        border-radius: 14px;
+        background:
+          radial-gradient(80% 80% at 70% 20%, rgb(120 170 255 / 55%), transparent 60%),
+          linear-gradient(160deg, #1c3f78, #14122a 70%);
+      }
+
+      #hero .play {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 74px;
+        height: 74px;
+        translate: -50% -50%;
+        border-radius: 50%;
+        background: rgb(255 255 255 / 92%);
+        box-shadow: 0 10px 30px rgb(0 0 0 / 35%);
+      }
+
+      #hero .play::before {
+        content: '';
+        position: absolute;
+        top: 24px;
+        left: 30px;
+        border-style: solid;
+        border-width: 13px 0 13px 20px;
+        border-color: transparent transparent transparent #111;
+      }
+
+      #hero p,
+      .card p {
+        position: absolute;
+        right: 16px;
+        bottom: 14px;
+        left: 16px;
+        margin: 0;
+        font-size: 18px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+
+      #rail {
+        display: grid;
+        gap: 12px;
+      }
+
+      .card {
+        position: relative;
+        overflow: hidden;
+        min-height: 92px;
+        border-radius: 12px;
+        background: linear-gradient(145deg, #2a3148, #1a1428);
+      }
+
+      .card:nth-child(2) {
+        background: linear-gradient(145deg, #3a2a48, #1a2030);
+      }
+
+      .card:nth-child(3) {
+        background: linear-gradient(145deg, #1e3a40, #221828);
+      }
+
+      .card p {
+        font-size: 15px;
+      }
+
+      #dock {
+        position: absolute;
+        bottom: 10px;
+        left: 50%;
+        display: flex;
+        gap: 10px;
+        padding: 10px 14px;
+        translate: -50% 0;
+        border-radius: 26px;
+        background: rgb(40 40 46 / 55%);
+        box-shadow:
+          inset 0 0 0 1px rgb(255 255 255 / 16%),
+          0 10px 30px rgb(0 0 0 / 35%);
+        backdrop-filter: blur(20px);
+      }
+
+      .tile {
+        width: 68px;
+        height: 68px;
+        border-radius: 16px;
+        box-shadow: inset 0 0 0 1px rgb(255 255 255 / 18%);
+      }
+
+      .tile.safari {
+        background: linear-gradient(#5ac8fa, #007aff);
+      }
+
+      .tile.notes {
+        background: linear-gradient(#ffe08a, #ffcc00);
+      }
+
+      .tile.photos {
+        background: linear-gradient(#ffd0e0, #ff2d55);
+      }
+
+      .tile.messages {
+        background: linear-gradient(#b0f0c0, #30d158);
+      }
+
+      #demo-cam {
+        position: fixed;
+        top: 42%;
+        left: 50%;
+        z-index: 1;
+        display: none;
+        width: 38vmin;
+        height: 38vmin;
+        translate: -50% -50%;
+        border-radius: 50%;
+        background:
+          radial-gradient(ellipse 42% 46% at 50% 58%, #e4c2a6 0 68%, transparent 70%),
+          radial-gradient(ellipse 62% 36% at 50% 24%, #3a2c26 0 72%, transparent 74%),
+          radial-gradient(ellipse 90% 28% at 50% 108%, #d7b09a 0 70%, transparent 72%),
+          #16181c;
+        box-shadow: 0 24px 60px rgb(0 0 0 / 40%);
+      }
+
+      [data-calibrating='face'] #demo-cam {
+        display: block;
+      }
+
+      [data-calibrating] #hero .play,
+      [data-phase='idle'] #hero .play {
+        opacity: 0;
+      }
+
+      /* The product pill sits at the bottom edge. Lift it clear of the demo Dock. */
+      #stop-hint {
+        bottom: 118px;
+      }
+
+      #face-ring {
+        z-index: 2;
+      }
+    </style>
+    <script>
+      window.overlay = {
+        onState(listener) {
+          window.__push = listener;
+        },
+        onLargeView(listener) {
+          listener({ enabled: true, uiScale: 1.15, dockIconSize: 96 });
+        },
+        sendGaze() {},
+      };
+    </script>
+    <script type="module" src="./overlay.ts"></script>
+    <script type="module" src="./demo-director.ts"></script>
+  </head>
+  <body>
+    <div id="desktop">
+      <div id="menubar"><b>Watch</b><span>9:41</span></div>
+      <div id="stage">
+        <div id="watch">
+          <header><i></i><span>Library</span></header>
+          <div id="library">
+            <div id="hero"><div class="play"></div><p>Evening light</p></div>
+            <div id="rail">
+              <div class="card"><p>Quiet rooms</p></div>
+              <div class="card"><p>A letter home</p></div>
+              <div class="card"><p>The long walk</p></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="dock">
+        <div class="tile safari" data-label="Safari"></div>
+        <div class="tile notes" data-label="Notes"></div>
+        <div class="tile photos" data-label="Photos"></div>
+        <div class="tile messages" data-label="Messages"></div>
+      </div>
+    </div>
+    <div id="demo-cam"></div>
+    <svg class="svg-filters" aria-hidden="true">
+      <filter id="noise" x="0" y="0" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.75" numOctaves="4" stitchTiles="stitch" />
+      </filter>
+    </svg>
+    <div id="glow"><div></div></div>
+    <div id="keyboard">
+      <div class="aurora" aria-hidden="true"></div>
+      <div class="noise" aria-hidden="true"></div>
+      <div id="typed"></div>
+      <div id="no-intents" hidden>Nothing this time. Blink on Something else to try again.</div>
+    </div>
+    <div id="wake" class="target">
+      <div class="wake-aurora" aria-hidden="true"></div>
+      <div class="wake-specular" aria-hidden="true"></div>
+      <div class="ring"></div>
+      <div class="wake-label">
+        <strong>Look here to start</strong>
+        <span class="rest">Keep looking to begin</span>
+        <span class="holding">Keep looking…</span>
+        <em class="wake-brand">Oculus Agent</em>
+      </div>
+    </div>
+    <div id="face-ring"></div>
+    <p id="gaze-message"><strong>Centre your face</strong><span>Hold still. Blink 4 times quickly to start over.</span></p>
+    <div id="icon-highlight"></div>
+    <div id="icon-magnifier" hidden></div>
+    <div id="status" hidden>
+      <span class="glyph"></span>
+      <span class="lines"><strong></strong><span class="detail"></span><small></small></span>
+    </div>
+    <p id="stop-hint" hidden></p>
+    <div id="dot" hidden></div>
+  </body>
+</html>

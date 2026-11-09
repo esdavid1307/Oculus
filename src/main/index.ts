@@ -12,6 +12,7 @@ import { execute } from './agent/executor';
 import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
+import { createMainNeuralLayer } from './neural';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -24,6 +25,8 @@ try {
 }
 
 const TICK_MS = 100;
+// Same default as the session timings, used when config.json leaves the scan step unset.
+const DEFAULT_SCAN_STEP_MS = 2000;
 const MOUSE_SAMPLE_MS = 33;
 const MOUSE_REGION_RADIUS = 60;
 // shortcut: polls for icons and windows moving, listen for Accessibility changes if the delay shows up in use.
@@ -45,6 +48,9 @@ const OVERLAY_DRAW_MS = 1000;
 const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
+// shortcut: OCULUS_MOUSE_SHIFT="-100,60" makes the mouse input read off like a badly calibrated webcam, to watch Gaze
+// Correction learn it.
+const [mouseShiftX = 0, mouseShiftY = 0] = (process.env.OCULUS_MOUSE_SHIFT ?? '').split(',').map((n) => Number(n) || 0);
 
 function readTimingsFile(): unknown {
   const file = join(app.getPath('userData'), 'config.json');
@@ -429,7 +435,7 @@ function createOverlay() {
     focusable: false,
     enableLargerThanScreen: true,
     // The tracker must keep running while the user is in another app.
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false, sandbox: false },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -470,6 +476,14 @@ function createOverlay() {
   // The context of the latest suggest-intents request, read when it starts since the front app can change during a run.
   // A run is always chosen from the latest picker, so it learns into this context.
   let askedContext: Promise<string> = Promise.resolve('');
+  const step = (settings as { scanStepMs?: unknown } | undefined)?.scanStepMs;
+  // On unless config.json says "neuralLayer": false. See docs/neural-layer.md.
+  const neural = createMainNeuralLayer({
+    file: join(app.getPath('userData'), 'neural-layer.json'),
+    screen: bounds,
+    scanStepMs: typeof step === 'number' && step > 0 ? step : DEFAULT_SCAN_STEP_MS,
+    enabled: (settings as { neuralLayer?: unknown } | undefined)?.neuralLayer !== false,
+  });
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
@@ -509,7 +523,7 @@ function createOverlay() {
           rmSync(saveDir, { recursive: true, force: true });
         });
     } else if (action.type === 'run-intent') {
-      const { intent, region, request, sinceWakeMs } = action;
+      const { intent, region, request, sinceWakeMs, held } = action;
       // Taken now: by the time the run ends, Something else could have asked about a new target.
       const context = askedContext;
       const finish = (ok: boolean, summary: string) => advance({ type: 'run-finished', t: Date.now(), request, ok, summary });
@@ -525,6 +539,7 @@ function createOverlay() {
       void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
         currentRun = null;
         running = false;
+        if (outcome.ok) neural.runSucceeded(intent, region, held, outcome.firstClick, bounds);
         if (outcome.ok)
           void context.then((name) => {
             try {
@@ -559,7 +574,8 @@ function createOverlay() {
     else if (action.source === 'menu') {
       openMenu = null;
       runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
-    } else openIcon(action.source, action.name);
+    } else if (action.type === 'learn') neural.learn(action.signal);
+    else openIcon(action.source, action.name);
   };
   const session = createSession({
     screen: bounds,
@@ -571,6 +587,8 @@ function createOverlay() {
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,
     textBoxes: () => textBoxes,
+    orderIcons: neural.orderIcons,
+    scanPace: neural.scanPace,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);
@@ -592,14 +610,27 @@ function createOverlay() {
   if (useMouse) {
     timers.push(
       setInterval(() => {
-        const region = mouseRegion(screen.getCursorScreenPoint(), bounds, MOUSE_REGION_RADIUS, lookingAway);
-        advance({ type: 'gaze', t: Date.now(), region });
+        const cursor = screen.getCursorScreenPoint();
+        const region = mouseRegion({ x: cursor.x + mouseShiftX, y: cursor.y + mouseShiftY }, bounds, MOUSE_REGION_RADIUS, lookingAway);
+        const t = Date.now();
+        neural.seen(t, region);
+        advance({ type: 'gaze', t, region: neural.correct(region) });
       }, MOUSE_SAMPLE_MS),
     );
   } else {
     // The overlay page only sends gaze, Select Blinks and recalibrating. A model answer must never come from it.
     ipcMain.on('gaze', (_event, input: SessionInput) => {
-      if (input?.type === 'gaze' || input?.type === 'select' || input?.type === 'recalibrate') advance(input);
+      if (input?.type === 'gaze') {
+        neural.seen(input.t, input.region);
+        const region = neural.correct(input.region);
+        // The Gaze Dot shows the corrected gaze, so it sits where choices will land.
+        overlay.webContents.send('gaze-dot', region && { x: region.x, y: region.y });
+        advance({ ...input, region });
+      } else if (input?.type === 'select') advance(input);
+      else if (input?.type === 'recalibrate') {
+        neural.recalibrated();
+        advance(input);
+      }
     });
   }
   if (!globalShortcut.register(QUIT_SHORTCUT, () => app.quit())) console.warn(`${QUIT_SHORTCUT} is taken, so quit from the terminal.`);
