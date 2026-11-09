@@ -7,11 +7,12 @@ import type { Rect } from '../shared/geometry';
 import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
-import { createSession, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
+import { createSession, parseTimings, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
 import { execute } from './agent/executor';
 import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
+import type { IntentOutcome } from './agent/run-intent';
 import { createMainNeuralLayer } from './neural';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
@@ -25,8 +26,6 @@ try {
 }
 
 const TICK_MS = 100;
-// Same default as the session timings, used when config.json leaves the scan step unset.
-const DEFAULT_SCAN_STEP_MS = 2000;
 const MOUSE_SAMPLE_MS = 33;
 const MOUSE_REGION_RADIUS = 60;
 // shortcut: polls for icons and windows moving, listen for Accessibility changes if the delay shows up in use.
@@ -47,7 +46,12 @@ const OVERLAY_DRAW_MS = 1000;
 // Time for the Dock to come back up after it restarts with a new icon size.
 const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
-const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera';
+// OCULUS_GAZE=test is for the e2e tests: gaze and Select Blinks come from the page, as with the camera, but no camera
+// starts, Claude and the run agent are stubbed, and nothing outside the app (the Dock) is changed.
+const testMode = !app.isPackaged && process.env.OCULUS_GAZE === 'test';
+const useMouse = !app.isPackaged && process.env.OCULUS_GAZE !== 'camera' && !testMode;
+// Each e2e test gets its own folder, so it never reads or writes the user's Intent History or config.json.
+if (testMode && process.env.OCULUS_USER_DATA) app.setPath('userData', process.env.OCULUS_USER_DATA);
 // shortcut: OCULUS_MOUSE_SHIFT="-100,60" makes the mouse input read off like a badly calibrated webcam, to watch Gaze
 // Correction learn it.
 const [mouseShiftX = 0, mouseShiftY = 0] = (process.env.OCULUS_MOUSE_SHIFT ?? '').split(',').map((n) => Number(n) || 0);
@@ -410,6 +414,8 @@ let running = false;
 let currentRun: { request: number; controller: AbortController } | null = null;
 // The Suggested Intents request in flight, aborted once the session stops waiting for it.
 let pendingIntents: AbortController | null = null;
+// The Neural Layer of the overlay, so a save still waiting is written on quit.
+let neuralLayer: ReturnType<typeof createMainNeuralLayer> | null = null;
 async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'shortcut') {
   const config = readAgentConfig(process.env, trigger);
   if (!config || running) return;
@@ -420,6 +426,30 @@ async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'short
   } finally {
     running = false;
   }
+}
+
+// The e2e tests' stand-ins for Claude and the run agent: OCULUS_FAKE_INTENTS is a JSON list of Suggested Intents, and
+// a run takes OCULUS_FAKE_RUN_MS and succeeds unless the Stop Gesture ends it first.
+function fakeIntents(signal: AbortSignal): Promise<string[]> {
+  let intents: string[] = [];
+  try {
+    intents = JSON.parse(process.env.OCULUS_FAKE_INTENTS ?? '[]');
+  } catch {
+    console.warn('OCULUS_FAKE_INTENTS is not a JSON list');
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(intents), Number(process.env.OCULUS_FAKE_INTENTS_MS) || 300);
+    signal.addEventListener('abort', () => (clearTimeout(timer), resolve([])), { once: true });
+  });
+}
+
+function fakeRun(intent: string, signal: AbortSignal): Promise<IntentOutcome> {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const done = (ok: boolean, stopped: boolean) => resolve({ ok, stopped, summary: stopped ? 'Stopped' : `Ran ${intent}`, ms: Date.now() - started });
+    const timer = setTimeout(() => done(true, false), Number(process.env.OCULUS_FAKE_RUN_MS) || 1000);
+    signal.addEventListener('abort', () => (clearTimeout(timer), done(false, true)), { once: true });
+  });
 }
 
 function createOverlay() {
@@ -435,14 +465,15 @@ function createOverlay() {
     focusable: false,
     enableLargerThanScreen: true,
     // The tracker must keep running while the user is in another app.
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false, sandbox: false },
+    // Sandboxed: the overlay shows text from pages Claude read, and the preload needs only contextBridge and ipcRenderer.
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false, sandbox: true },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // The agent's clicks must reach the apps beneath the overlay.
   overlay.setIgnoreMouseEvents(true);
 
-  const search = useMouse ? '' : '?camera';
+  const search = useMouse ? '' : testMode ? '?test' : '?camera';
   if (process.env.ELECTRON_RENDERER_URL) overlay.loadURL(process.env.ELECTRON_RENDERER_URL + search);
   else overlay.loadFile(join(__dirname, '../renderer/index.html'), { search });
 
@@ -453,6 +484,8 @@ function createOverlay() {
   let wantTextBoxes = false;
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
+    // The e2e tests run on the user's own machine, so real icons near a test's target must not start an Icon Scan.
+    if (testMode) return;
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
@@ -463,7 +496,7 @@ function createOverlay() {
   // The renderer has no file access, so it gets the settings once the page has loaded.
   overlay.webContents.once('did-finish-load', () => overlay.webContents.send('large-view', largeView));
   // A bigger Dock moves its icons, so they are read again once it has restarted.
-  const dockChanged = applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
+  const dockChanged = !testMode && applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
   if (dockChanged) setTimeout(refreshIcons, DOCK_RESTART_MS);
   refreshIcons();
   // On unless config.json says "wordPrediction": false.
@@ -476,14 +509,13 @@ function createOverlay() {
   // The context of the latest suggest-intents request, read when it starts since the front app can change during a run.
   // A run is always chosen from the latest picker, so it learns into this context.
   let askedContext: Promise<string> = Promise.resolve('');
-  const step = (settings as { scanStepMs?: unknown } | undefined)?.scanStepMs;
   // On unless config.json says "neuralLayer": false. See docs/neural-layer.md.
-  const neural = createMainNeuralLayer({
+  const neural = (neuralLayer = createMainNeuralLayer({
     file: join(app.getPath('userData'), 'neural-layer.json'),
     screen: bounds,
-    scanStepMs: typeof step === 'number' && step > 0 ? step : DEFAULT_SCAN_STEP_MS,
+    scanStepMs: parseTimings(settings).scanStepMs,
     enabled: (settings as { neuralLayer?: unknown } | undefined)?.neuralLayer !== false,
-  });
+  }));
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
@@ -516,7 +548,8 @@ function createOverlay() {
       const capture = createCapture({ overlay, display: screen.getPrimaryDisplay(), saveDir, hideOverlay: true });
       pendingIntents?.abort();
       const controller = (pendingIntents = new AbortController());
-      void suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal)
+      const ask = testMode ? fakeIntents(controller.signal) : suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal);
+      void ask
         .then((intents) => advance({ type: 'intents', t: Date.now(), request: action.request, intents }))
         .finally(() => {
           if (pendingIntents === controller) pendingIntents = null;
@@ -536,7 +569,8 @@ function createOverlay() {
       running = true;
       currentRun = { request, controller };
       const onActivity = (activity: string) => advance({ type: 'run-progress', t: Date.now(), request, activity });
-      void runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity).then((outcome) => {
+      const run = testMode ? fakeRun(intent, controller.signal) : runIntentInElectron(overlay, { intent, region, request }, controller.signal, onActivity);
+      void run.then((outcome) => {
         currentRun = null;
         running = false;
         if (outcome.ok) neural.runSucceeded(intent, region, held, outcome.firstClick, bounds);
@@ -569,13 +603,13 @@ function createOverlay() {
     else if (action.type === 'close-menu') {
       if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
       openMenu = null;
-    } else if (action.source === 'menubar')
+    } else if (action.type === 'learn') neural.learn(action.signal);
+    else if (action.source === 'menubar')
       openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
     else if (action.source === 'menu') {
       openMenu = null;
       runMenuScript(PRESS_MENU_COMMAND, action.name, 'Could not run the menu command:');
-    } else if (action.type === 'learn') neural.learn(action.signal);
-    else openIcon(action.source, action.name);
+    } else openIcon(action.source, action.name);
   };
   const session = createSession({
     screen: bounds,
@@ -650,7 +684,7 @@ function createOverlay() {
 
 app.whenReady().then(async () => {
   // A refusal shows up as a camera error on the overlay.
-  if (!useMouse) await systemPreferences.askForMediaAccess('camera');
+  if (!useMouse && !testMode) await systemPreferences.askForMediaAccess('camera');
   const overlay = createOverlay();
   if (app.isPackaged) return;
   globalShortcut.register(DEV_AGENT_CHECK_SHORTCUT, () => void runAgentCheckOnce(overlay, 'shortcut'));
@@ -658,6 +692,7 @@ app.whenReady().then(async () => {
 });
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  neuralLayer?.flush();
   restoreDock(app.getPath('userData'));
   currentRun?.controller.abort();
 });

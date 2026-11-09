@@ -7,5 +7,7 @@ contextBridge.exposeInMainWorld('overlay', {
     ipcRenderer.on('overlay-state', (_event, state) => listener(state)),
   onLargeView: (listener: (settings: LargeView) => void) =>
     ipcRenderer.on('large-view', (_event, settings) => listener(settings)),
+  onGazeDot: (listener: (position: { x: number; y: number } | null) => void) =>
+    ipcRenderer.on('gaze-dot', (_event, position) => listener(position)),
   sendGaze: (input: SessionInput) => ipcRenderer.send('gaze', input),
 });

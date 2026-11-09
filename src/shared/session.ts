@@ -16,6 +16,9 @@ export type OverlayState = (
 ) & {
   // The milliseconds left before the Stop Gesture stops the agent. Only there while the gaze is off the screen.
   stopInMs?: number;
+  // While a scan runs (typing, choosing, icons): its step, which Scan Pace can change, and how far into the current
+  // step it is, so the step bar fills in time with the highlight.
+  scan?: { stepMs: number; elapsedMs: number };
 };
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
@@ -92,7 +95,8 @@ const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, 
 type Timings = typeof DEFAULT_TIMINGS;
 
 // Timings come from a file the user edits, so anything unusable falls back to its default.
-function parseTimings(raw: unknown): Timings {
+// main reads the scan step through this too, so both fall back to the same default.
+export function parseTimings(raw: unknown): Timings {
   const timing = (key: keyof Timings) => {
     const value = (raw as Record<string, unknown> | null | undefined)?.[key];
     return typeof value === 'number' && value > 0 ? value : DEFAULT_TIMINGS[key];
@@ -402,7 +406,8 @@ export function createSession({
   }
 
   function state(): OverlayState {
-    const base = shown();
+    const scanning = phase === 'typing' || phase === 'choosing' || phase === 'icons';
+    const base = { ...shown(), ...(scanning ? { scan: { stepMs, elapsedMs: Math.max(now - scanStart, 0) % stepMs } } : {}) };
     // The result of a finished run isn't stopped by looking away, it just goes away.
     if (awaySince === null || now - awaySince < STOP_HINT_DELAY_MS || phase === 'idle' || phase === 'finished') return base;
     return { ...base, stopInMs: Math.max(lookAwayMs - (now - awaySince), 0) };

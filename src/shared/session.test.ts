@@ -182,7 +182,7 @@ describe('Gaze Keyboard', () => {
 
   it('opens on the group screen with no text, highlighting the first key', () => {
     const session = createSession({ screen });
-    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [] });
+    expect(session({ type: 'open-keyboard', t: 0 })).toEqual({ phase: 'typing', wakeProgress: 0, text: '', group: null, highlight: 'abcde', suggestions: [], scan: { stepMs: 2000, elapsedMs: 0 } });
   });
 
   it('moves the highlight to the next key every 2 seconds, and wraps round', () => {
@@ -311,7 +311,7 @@ describe('Dock', () => {
     const { session } = awake();
     session(gaze(3100, nearDock));
     expect(session(gaze(6099, nearDock)).phase).toBe('waiting-for-target');
-    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0] });
+    expect(session(gaze(6100, nearDock))).toEqual({ phase: 'icons', wakeProgress: 0, source: 'dock', highlight: items[0], scan: { stepMs: 2000, elapsedMs: 0 } });
   });
 
   describe('showing the Dock', () => {
@@ -801,6 +801,7 @@ describe('Suggested Intents', () => {
       intents: ['Skip the ad', 'Open a related video', 'Pause'],
       highlight: 'intent-0',
       cells: 4,
+      scan: { stepMs: 2000, elapsedMs: 0 },
     });
     expect(layoutIntents(screen, ['Skip the ad', 'Open a related video', 'Pause']).map((key) => key.label)).toEqual([
       'Skip the ad',
@@ -964,7 +965,9 @@ describe('Suggested Intents', () => {
 
     it('moves to choosing at once and starts scanning, in a 6-cell grid', () => {
       const { session } = past();
-      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6 });
+      expect(session(tick(4500))).toEqual({ phase: 'choosing', wakeProgress: 0, intents: ['Pause', 'Mute'], highlight: 'intent-0', cells: 6, scan: { stepMs: 2000, elapsedMs: 0 } });
+      // The step bar is drawn from this: half way through the step at 5.5 s.
+      expect(session(tick(5500))).toMatchObject({ scan: { stepMs: 2000, elapsedMs: 1000 } });
       expect(session(tick(6500))).toMatchObject({ highlight: 'intent-1' });
       expect(session(tick(8500))).toMatchObject({ highlight: 'something-else' });
     });

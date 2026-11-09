@@ -5,7 +5,13 @@ import type { OverlayState, SessionInput } from '../shared/session';
 
 declare global {
   interface Window {
-    overlay: { onState(listener: (state: OverlayState) => void): void; onLargeView(listener: (settings: LargeView) => void): void; sendGaze(input: SessionInput): void };
+    overlay: {
+      onState(listener: (state: OverlayState) => void): void;
+      onLargeView(listener: (settings: LargeView) => void): void;
+      // The gaze after Gaze Correction, where the Gaze Dot goes. null when there is no gaze.
+      onGazeDot(listener: (position: { x: number; y: number } | null) => void): void;
+      sendGaze(input: SessionInput): void;
+    };
   }
 }
 
@@ -149,42 +155,48 @@ function showKeys(name: string, keys: Key[], recent = 0) {
 
 let lastPhase: OverlayState['phase'] = 'idle';
 
-function showKeyboard({ text, group, highlight, suggestions, phrase }: Extract<OverlayState, { phase: 'typing' }>) {
+function showKeyboard({ text, group, highlight, suggestions, phrase, scan }: Extract<OverlayState, { phase: 'typing' }>) {
   if (typed.textContent !== text) {
     typed.textContent = text;
     typed.scrollLeft = typed.scrollWidth;
   }
   showKeys(`typing ${JSON.stringify([group, suggestions, phrase])}`, layoutKeyboard(screenSize, group, suggestions, phrase).keys);
-  highlightKey(highlight);
+  highlightKey(highlight, scan);
 }
 
-// The scan's step isn't in the state, so it's timed between moves of the highlight onto the next key. A press restarts
-// the scan and new keys can join mid-step, so a move only counts when the move before it was a step too.
-let stepMs = 2000;
-let lit: { element: HTMLElement; index: number; at: number; stepped: boolean } | undefined;
+let lit: { element: HTMLElement } | undefined;
 let stepBar: Animation | undefined;
+let stepBarOn: HTMLElement | undefined;
+// How far the bar may drift from the session's own step before it's put back in time.
+const STEP_DRIFT_MS = 80;
 
-function highlightKey(id: KeyId) {
+function highlightKey(id: KeyId, scan: OverlayState['scan']) {
   const element = keyElements.get(id);
-  if (!element || element === lit?.element) return;
-  const index = [...keyElements.keys()].indexOf(id);
-  const at = performance.now();
-  const stepped = lit !== undefined && index === (lit.index + 1) % keyElements.size;
-  if (stepped && lit!.stepped && at - lit!.at > 300) stepMs = at - lit!.at;
-  lit?.element.classList.remove('highlighted');
-  element.classList.add('highlighted');
-  lit = { element, index, at, stepped };
-  showStep(element);
+  if (!element) return;
+  if (element !== lit?.element) {
+    lit?.element.classList.remove('highlighted');
+    element.classList.add('highlighted');
+    lit = { element };
+  }
+  showStep(element, scan);
 }
 
-// Fills the bar under the highlight over one step, so the user can see how long is left to blink.
-function showStep(element: HTMLElement) {
-  stepBar?.cancel();
-  stepBar = element.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], {
-    duration: stepMs,
-    iterations: Infinity,
-    pseudoElement: '::after',
-  });
+// Fills the bar under the highlight over one step, so the user can see how long is left to blink. The step and how far
+// into it the scan is come from the session, so a press that restarts the scan on the same key restarts the bar, and a
+// step Scan Pace changed is drawn at its new length.
+function showStep(element: HTMLElement, scan: OverlayState['scan']) {
+  if (!scan) return;
+  if (element !== stepBarOn || !stepBar || stepBar.effect?.getTiming().duration !== scan.stepMs) {
+    stepBar?.cancel();
+    stepBar = element.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], {
+      duration: scan.stepMs,
+      iterations: Infinity,
+      pseudoElement: '::after',
+    });
+    stepBarOn = element;
+  }
+  const at = Number(stepBar.currentTime ?? 0) % scan.stepMs;
+  if (Math.abs(at - scan.elapsedMs) > STEP_DRIFT_MS) stepBar.currentTime = scan.elapsedMs;
 }
 
 const stopping = (ms: number) => `Stopping in ${Math.ceil(ms / 1000)}…`;
@@ -281,16 +293,15 @@ window.overlay.onLargeView((settings) => {
 });
 
 // textContent only: icon names come from other apps.
-function showIcon({ highlight }: Extract<OverlayState, { phase: 'icons' }>) {
+function showIcon({ highlight, scan }: Extract<OverlayState, { phase: 'icons' }>) {
   iconMagnifier.hidden = largeView === undefined;
   if (largeView === undefined) return place(iconHighlight, highlight.rect);
   const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);
   const label = highlight.label ?? highlight.name;
-  if (iconMagnifier.textContent === label) return;
-  iconMagnifier.textContent = label;
-  showStep(iconMagnifier);
+  if (iconMagnifier.textContent !== label) iconMagnifier.textContent = label;
+  showStep(iconMagnifier, scan);
 }
 
 // The past Intents come first, and only in a picker that opened on them, before Claude answered. See layoutIntents.
@@ -309,7 +320,7 @@ window.overlay.onState((state) => {
   if (state.phase === 'choosing') {
     if (entering) recent = state.cells === 6 ? state.intents.length : 0;
     showKeys(`choosing ${recent} ${state.intents.join('\n')}`, layoutIntents(screenSize, state.intents, state.cells), recent);
-    highlightKey(state.highlight);
+    highlightKey(state.highlight, state.scan);
   }
   noIntents.hidden = state.phase !== 'choosing' || state.intents.length > 0;
   showStatus(state);
