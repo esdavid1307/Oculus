@@ -7,10 +7,11 @@ export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
   // stepMs is how long the highlight stays on one key or icon, for the bar drawn under it. Display only.
   | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[]; stepMs: number }
-  // cells is how many slots layoutIntents draws before Close: 6 when past Intents are in the picker, otherwise 4.
+  // cells is how many slots layoutIntents draws before Close, with room kept for the Intents still to come.
+  // recent is how many of the intents, from the first, are past Intents.
   // side is where the column goes, away from the target.
   // stepProgress runs from 0 to 1 while the highlight stays on one choice, for the ring drawn around it. Display only.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6; side: IntentsSide; stepProgress: number }
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: number; recent: number; side: IntentsSide; stepProgress: number }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
   | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon; stepMs: number }
@@ -220,7 +221,8 @@ export function createSession({
   let suggestions: string[] = [];
   let phrases: string[] = [];
   let intents: string[] = [];
-  let cells: 4 | 6 = 4;
+  let cells = 0;
+  let recent = 0;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
   let asked: GazeRegion | null = null;
   let turnedDown: string[] = [];
@@ -415,7 +417,7 @@ export function createSession({
     if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases, stepMs };
     if (phase === 'choosing') {
       const stepProgress = (Math.max(now - scanStart, 0) % stepMs) / stepMs;
-      return { phase, wakeProgress, intents, highlight, cells, side: side(), stepProgress };
+      return { phase, wakeProgress, intents, highlight, cells, recent, side: side(), stepProgress };
     }
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
     if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight!, stepMs };
@@ -442,7 +444,9 @@ export function createSession({
       if (phase === 'thinking' && input.request === request && input.intents.length > 0) {
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_PAST_INTENTS);
-        cells = 6;
+        recent = intents.length;
+        // Room for Claude's Intents, which join later, and Something else.
+        cells = recent + MAX_INTENTS + 1;
         restartScan(input.t);
         scan(input.t);
       }
@@ -450,7 +454,8 @@ export function createSession({
       if (phase === 'thinking' && input.request === request) {
         phase = 'choosing';
         intents = input.intents.slice(0, MAX_INTENTS);
-        cells = 4;
+        recent = 0;
+        cells = MAX_INTENTS + 1;
         restartScan(input.t);
         scan(input.t);
       } else if (phase === 'choosing' && input.request === request) {
