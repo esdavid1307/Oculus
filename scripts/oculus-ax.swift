@@ -2,7 +2,7 @@
 // The Oculus Agent compiles this on first use (swiftc) and keeps one process running while "chromeScan" is on.
 //
 // stdin, one line per lookup: "<x> <y> <radius>" in screen points.
-// stdout, one JSON line per lookup: {"front": <Chrome is the app in front>, "elements": [{role, name, x, y, width, height}]}
+// stdout, one JSON line per lookup: {"front": <Chrome is the app in front>, "elements": [{role, subrole, name, x, y, width, height}]}
 //
 // Chrome only shows its web content and most of its window to assistive apps. Watching its Accessibility notifications,
 // as a screen reader does, is what makes it build them: setting AXEnhancedUserInterface or AXManualAccessibility is
@@ -73,7 +73,7 @@ func lookup(x: Double, y: Double, radius: Double) -> [String: Any] {
     if role.isEmpty || skipped.contains(role) { return }
     let name = [text(element, "AXTitle"), text(element, "AXDescription"), text(element, "AXValue"), text(element, "AXHelp")].first { !$0.isEmpty } ?? ""
     guard !name.isEmpty, let rect = frame(element) else { return }
-    found.append(["role": role, "name": name, "x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height])
+    found.append(["role": role, "subrole": text(element, "AXSubrole"), "name": name, "x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height])
   }
   func below(_ element: AXUIElement, _ depth: Int, _ budget: inout Int) {
     if depth > descend { return }

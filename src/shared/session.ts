@@ -43,8 +43,11 @@ export type OverlayState = (
 export type Icon = { name: string; rect: Rect; label?: string };
 
 // A text field or search box on screen the Gaze Keyboard can type into. The name is the outside world's handle for it,
-// used to focus the box again before typing lands.
-export type TextBox = { name: string; rect: Rect };
+// used to focus the box again before typing lands. role and subrole are its Accessibility ones, as the lookup read them.
+export type TextBox = { name: string; rect: Rect; role?: string; subrole?: string };
+
+// A field's Accessibility role and subrole, which decide whether Done presses Return and whether the text is learned.
+export type FieldKind = { role: string; subrole: string };
 
 // 'menu' is the menu a menu bar item just opened. 'chrome' is the Chrome elements near the gaze (Gaze Scan in Chrome).
 export type IconSource = 'dock' | 'desktop' | 'menubar' | 'menu' | 'chrome';
@@ -75,7 +78,8 @@ export type SessionInput =
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
   // submit presses Return after the text whatever the field. Left out, Return follows only in a single-line field.
-  | { type: 'type-text'; text: string; submit?: boolean }
+  // box is the Text Box the keyboard was opened on, as its lookup read it, for when the focused field can't be read.
+  | { type: 'type-text'; text: string; submit?: boolean; box?: FieldKind }
   // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
   // rect is the box as matched, in overlay coordinates. name is for the log.
   // held is the time window the user held their gaze on that box, so the outside world can snapshot the uncorrected
@@ -272,6 +276,8 @@ export function createSession({
   let lastKeyboardPressWasLetter = false;
   // Set for text that is always submitted, whatever the field.
   let submitOnDone = false;
+  // The Text Box the Gaze Keyboard was opened on. null after Type or the keyboard shortcut.
+  let typingInto: TextBox | null = null;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let phrases: string[] = [];
@@ -377,10 +383,11 @@ export function createSession({
     phrases = suggestPhrases(text).slice(0, MAX_SHOWN_PHRASES);
   }
 
-  // submit makes Done press Return after the text, whatever the field.
-  function openKeyboard(t: number, submit = false) {
+  // submit makes Done press Return after the text, whatever the field. box is the Text Box it was opened on.
+  function openKeyboard(t: number, submit = false, box: TextBox | null = null) {
     phase = 'typing';
     submitOnDone = submit;
+    typingInto = box;
     holdStart = null;
     wakeProgress = 0;
     text = '';
@@ -407,7 +414,8 @@ export function createSession({
     else if (key === 'space') text += ' ';
     else if (key === 'done') {
       if (text !== '') {
-        act({ type: 'type-text', text, ...(submitOnDone && { submit: true }) });
+        const box = typingInto?.role ? { role: typingInto.role, subrole: typingInto.subrole ?? '' } : undefined;
+        act({ type: 'type-text', text, ...(submitOnDone && { submit: true }), ...(box && { box }) });
         if (textBoxGaze) learn({ kind: 'gaze', ...textBoxGaze, weight: 1 });
       }
       textBoxGaze = null;
@@ -574,7 +582,7 @@ export function createSession({
       if (box) {
         act({ type: 'focus-text-box', name: box.name, rect: box.rect, held });
         textBoxGaze = { ...held, target: { x: box.rect.x + box.rect.width / 2, y: box.rect.y + box.rect.height / 2 } };
-        openKeyboard(t);
+        openKeyboard(t, false, box);
       } else suggestIntents(region, []);
       target = null;
     }

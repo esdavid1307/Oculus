@@ -29,7 +29,7 @@ An Intent shown in every picker without asking Claude: Close, Home, Minimize, Ty
 _Avoid_: Built-in, default, shortcut
 
 **Gaze Keyboard**:
-The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key. It opens on a Text Box, or on Type in the Suggested Intents, which focuses nothing so the text goes to whatever already has focus. Done types the text, then presses Return when it went into a single-line field such as a search or message box, never in a text area like a document or in a password field.
+The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key. It opens on a Text Box, or on Type in the Suggested Intents, which focuses nothing so the text goes to whatever already has focus. Done types the text, then presses Return when it went into a single-line field such as a search or message box, never in a text area like a document or in a password field. Chrome hides which field has focus, so there the page or the Text Box tells (see `docs/chrome-scan.md`).
 _Avoid_: Virtual keyboard, typing mode
 
 **Text Box**:

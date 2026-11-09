@@ -1880,6 +1880,29 @@ describe('Text box target', () => {
     expect(actions).toEqual([{ type: 'focus-text-box', name: 'YouTube search', rect: box.rect, held: { from: 3100, to: 4100 } }, { type: 'type-text', text: 'k' }]);
   });
 
+  it('tells Done which kind of text box it was opened on, for when the focused field cannot be read', () => {
+    const searchBox = { ...box, role: 'AXComboBox', subrole: '' };
+    const { session, actions } = awake([searchBox]);
+    session(gaze(3100, onBox));
+    session(gaze(4100, onBox));
+    let t = 4100;
+    const tickTo = (id: string) => {
+      let state = session(tick(t));
+      while (state.phase === 'typing' && state.highlight !== id) state = session(tick((t += 100)));
+      return session(select(t));
+    };
+    tickTo('klmno');
+    tickTo('k');
+    tickTo('done');
+    expect(actions.at(-1)).toEqual({ type: 'type-text', text: 'k', box: { role: 'AXComboBox', subrole: '' } });
+    // Opened another way, the keyboard is not typing into that box any more.
+    session({ type: 'open-keyboard', t: (t += 100) });
+    tickTo('abcde');
+    tickTo('a');
+    tickTo('done');
+    expect(actions.at(-1)).toEqual({ type: 'type-text', text: 'a' });
+  });
+
   it('ignores a text box the Gaze Region does not touch', () => {
     const { session, actions } = awake();
     const far = { x: 50, y: 800, radius: 60 };
