@@ -25,6 +25,9 @@ const VIDEO_RULES =
   'If the user is looking at a video thumbnail or title (recommendations, search results, a home grid), offer exactly "Open this video", first after any ad. ' +
   'If the user is looking at the playing video itself and there is no ad, include "Open a related video" and something like "Pause the video". ';
 
+// The picker always shows the Fixed Intents next to these, so a suggestion repeating one would waste a slot.
+const FIXED_INTENT_RULES = 'Showing the Desktop and minimizing the window are always offered already, so never suggest them. ';
+
 // Demo flow one (#10): the run agent writes the continuation, so the user only has to pick it.
 const DOCUMENT_RULES =
   'If the user is looking at a document they are writing, such as an essay in Google Docs, offer exactly "Continue the essay", first after any ad. ';
@@ -75,6 +78,7 @@ export function intentsPrompt(region: GazeRegion, frame: ScreenFrame, turnedDown
     `Suggest up to ${MAX_INTENTS} things they most likely want done with what is there, most likely first. ` +
     VIDEO_RULES +
     DOCUMENT_RULES +
+    FIXED_INTENT_RULES +
     (turnedDown.length ? `They turned down ${JSON.stringify(turnedDown)}, so suggest different ones. ` : '') +
     'Each is one short action of at most 6 words. ' +
     'Give each a label of 1 or 2 words for a small tile, such as "Screenshot" or "Scroll", ' +

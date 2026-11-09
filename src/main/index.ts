@@ -368,6 +368,14 @@ function createHistory(ranker: unknown) {
   };
 }
 
+// Presses the key combos for the Chrome Commands Fixed Intents: next-tab is ^Tab (keyCode 48 with control down) and
+// close-tab is ⌘W (keyCode 13 with command down). Sent through System Events like the Gaze Keyboard typing, so it needs
+// Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
+const CHROME_COMMAND_SCRIPTS: Record<'next-tab' | 'close-tab', string> = {
+  'next-tab': `Application('System Events').keyCode(48, { using: 'control down' })`,
+  'close-tab': `Application('System Events').keyCode(13, { using: 'command down' })`,
+};
+
 // The app in front, and with "per-site" the URL of Chrome's front tab. One osascript, so a browser costs no extra
 // launch. An Incognito window gives no URL, so private browsing is never written to the history file.
 const READ_FRONT = `function run(argv) {
@@ -430,6 +438,10 @@ function readFocusedField(done: (field: FocusedField) => void) {
   });
 }
 
+// Home is macOS's Show Desktop: Cmd and the Mission Control key, which is F3 on Apple keyboards. The F3 keycode itself
+// doesn't do it, and F11, the Keyboard Shortcuts setting, can be turned off. Cmd+M with no window does nothing.
+const FIXED_INTENT_KEYS: Record<'home' | 'minimize', string> = { home: 'cmd+mission_control', minimize: 'cmd+m' };
+
 // Runs never overlap: two would fight over the same cursor.
 let running = false;
 // The Intent run in progress, so the Stop Gesture and quitting can abort it.
@@ -477,12 +489,25 @@ function createOverlay() {
   // Walking the front window's AX tree is costly, so text boxes are only read from the Start Gesture until the session
   // goes back to idle, not all the time. The 3 s Start Gesture gives the first read time to land before a target hold.
   let wantTextBoxes = false;
+  // Whether Google Chrome is in front, from the menu bar read every ICON_READ_MS: its first item is the front app's
+  // menu. Used for the Chrome menu bar rule and for the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
+  const chromeFront = () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true;
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
     readIcons('desktop', bounds, (read) => (icons.desktop = read));
     readMenuBar(bounds, (read) => (icons.menubar = read));
     if (wantTextBoxes) refreshTextBoxes();
+  };
+  // Fires a Chrome Commands key combo through System Events. Logs a failure but never surfaces it to the overlay.
+  const runFixedIntent = (name: keyof typeof CHROME_COMMAND_SCRIPTS) => {
+    const script = CHROME_COMMAND_SCRIPTS[name];
+    // The keys go to whatever app is in front. The user may have spent several scan steps in the Chrome Commands, and
+    // Chrome may have lost the front (its last tab closed, a notification clicked), so ⌘W must not close another app.
+    if (!chromeFront()) return console.warn(`[fixed-intent] ${name} skipped: Google Chrome is no longer in front`);
+    execFile('osascript', ['-l', 'JavaScript', '-e', script], (error) => {
+      if (error) console.error(`Could not run the ${name} Fixed Intent:`, error.message);
+    });
   };
   const settings = readTimingsFile();
   const largeView = readLargeView(settings);
@@ -537,11 +562,11 @@ function createOverlay() {
     } else if (action.type === 'suggest-intents') {
       const context = (askedContext = readContext(perSite));
       // Not after Something else: those are the ones the user just turned down. The answer comes after this session
-      // call has returned, because osascript is asynchronous.
+      // call has returned, because osascript is asynchronous. It goes in even when empty, since it opens the picker.
       if (action.turnedDown.length === 0)
         void context.then((name) => {
           const past = name === '' ? [] : history.suggest(name);
-          if (past.length > 0) advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
+          advance({ type: 'past-intents', t: Date.now(), request: action.request, intents: past });
         });
       // A folder per request, so overlapping requests never share a screenshot. It's deleted once answered.
       const saveDir = join(app.getPath('userData'), 'intents', String(action.request));
@@ -589,6 +614,15 @@ function createOverlay() {
           });
         finish(outcome.ok, outcome.summary);
       });
+    } else if (action.type === 'fixed-intent') {
+      // Key presses only, so the overlay, which never takes focus, leaves them to the app in front.
+      console.log(`[fixed-intent] ${action.name}`);
+      // Type needs nothing from here: the session opens the Gaze Keyboard, and the text goes to whatever has focus.
+      if (action.name === 'type') return;
+      if (action.name === 'next-tab' || action.name === 'close-tab') return runFixedIntent(action.name);
+      void execute({ type: 'key', keys: FIXED_INTENT_KEYS[action.name], repeat: 1 }).catch((error: Error) =>
+        console.error(`Could not run the Fixed Intent ${action.name}:`, error.message),
+      );
     } else if (action.type === 'stop-run') {
       if (currentRun?.request !== action.request) return;
       console.log(`[intent-run] stop request=${action.request}`);
@@ -610,8 +644,6 @@ function createOverlay() {
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
     else if (action.type === 'release-dock') releaseDock();
     else if (action.type === 'learn') neural.learn(action.signal);
-    // Type needs nothing from here: the session opens the Gaze Keyboard, and the text goes to whatever has focus.
-    else if (action.type === 'fixed-intent') console.log(`[fixed-intent] ${action.name}`);
     else if (action.type === 'close-menu') {
       if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
       openMenu = null;
@@ -636,9 +668,10 @@ function createOverlay() {
     textBoxes: () => [...textBoxes, ...(chromeScan?.textBoxes() ?? [])],
     chrome: () => chromeScan?.elements() ?? [],
     // The front app's menus come first in the menu bar read, named by their path [process, bar, item].
-    chromeInFront: () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true,
+    chromeInFront: chromeFront,
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
+    inChrome: chromeFront,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);

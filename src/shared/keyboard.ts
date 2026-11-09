@@ -14,14 +14,22 @@ export const MAX_SUGGESTIONS = 3;
 // The Suggested Phrase key id prefix: the chosen phrase text follows the ':'.
 export const PHRASE_KEY = 'phrase:';
 export const MAX_SHOWN_PHRASES = 2;
+// Choices that run at once without Claude, mostly as key presses. Each one's key id is its name. Type opens the Gaze
+// Keyboard on whatever has focus. Cmd is Chrome-only and opens the Chrome Commands, Next Tab and Close Tab.
+export type FixedIntent = 'close' | 'home' | 'minimize' | 'type' | 'cmd' | 'next-tab' | 'close-tab';
 // Closes the Suggested Intents without running anything.
-export const CLOSE_KEY = 'close';
+export const CLOSE_KEY = 'close' satisfies FixedIntent;
 
-// The choices the picker always offers, which run at once without Claude. Each one's key id is its name.
-export type FixedIntent = 'close' | 'home' | 'minimize' | 'dock' | 'type' | 'cmd' | 'next-tab' | 'close-tab' | 'search' | 'new-tab';
+// Close is "Cancel" on screen, since Claude often offers to close the window, which is a different thing.
+const FIXED_LABELS: Record<FixedIntent, string> = { close: 'Cancel', home: 'Home', minimize: 'Minimize', type: 'Type', cmd: 'Cmd', 'next-tab': 'Next Tab', 'close-tab': 'Close Tab' };
 
 // The Suggested Intents sit in a column on one side, so the rest of the screen, and the target, stay in view.
 export type IntentsSide = 'left' | 'right';
+
+// What the picker holds, in scan order: the first fixedAt of the intents, then the Fixed Intents, then the rest of the
+// intents, and Something else last. cells is how many tiles it keeps room for, Something else included, so the Intents
+// still to come fill empty cells instead of growing the grid.
+export type Picker = { intents: string[]; fixed: FixedIntent[]; fixedAt: number; cells: number; side: IntentsSide };
 
 const GAP = 16;
 const COLUMNS = 3;
@@ -72,8 +80,8 @@ export function layoutKeyboard({ width, height }: Screen, group: string | null, 
 
 // Suggested Intents sit in a grid of tiles in a panel on the side away from the target: two across in a third of the
 // screen, and three across in a little more once there are more than 8 tiles, up to 3 x 4. Something else always takes
-// the last of the cells, so it stays put when fresh suggestions arrive, and Close comes after it. The caller reserves
-// the cells for Intents still to come, since a grid that grew later would move everything on screen.
+// the last of the cells, so it stays put when fresh suggestions arrive. The caller reserves the cells for Intents still
+// to come, since a grid that grew later would move everything on screen.
 const MAX_INTENT_TILES = 12;
 const INTENT_MAX_ROWS = 4;
 const INTENT_GAP = 14;
@@ -84,22 +92,18 @@ const INTENT_MAX_ASPECT = 1.1;
 // Three across stays clear of the Stop Gesture countdown in the middle of the screen.
 const WIDE_PANEL = 3 / 8;
 
-// cells is how many slots come before Close, Something else included. Every Intent gets a cell even past that, up to
-// MAX_INTENT_TILES in all. The first recent of the intents are past Intents, and the Fixed Intents come after them.
-export function layoutIntents(
-  { width, height }: Screen,
-  intents: string[],
-  cells = 4,
-  side: IntentsSide = 'right',
-  recent = 0,
-  fixed: FixedIntent[] = [],
-): Key[] {
-  // Every slot keeps its place as Claude's Intents join, so nothing moves: the past Intents, the Fixed Intents, Claude's
-  // Intents, then Something else in the last of the cells, then Close.
-  const slots = Math.min(Math.max(cells, intents.length + fixed.length + 1), MAX_INTENT_TILES - 1);
-  const shown = intents.slice(0, slots - 1 - fixed.length);
-  const columns = slots + 1 > 2 * INTENT_MAX_ROWS ? 3 : 2;
-  const rows = Math.ceil((slots + 1) / columns);
+// Every tile gets a cell even past cells, up to MAX_INTENT_TILES in all. Past that the last intents are left out.
+export function layoutIntents({ width, height }: Screen, { intents, fixed, fixedAt, cells, side }: Picker): Key[] {
+  // Every tile keeps its place as Claude's Intents join, so nothing moves, with Something else in the last of the cells.
+  const slots = Math.min(Math.max(cells, intents.length + fixed.length + 1), MAX_INTENT_TILES);
+  const shown = intents.slice(0, Math.max(slots - 1 - fixed.length, fixedAt));
+  const tiles = [
+    ...shown.slice(0, fixedAt).map((label, i) => ({ id: `intent-${i}`, label })),
+    ...fixed.map((name) => ({ id: name, label: FIXED_LABELS[name] })),
+    ...shown.slice(fixedAt).map((label, i) => ({ id: `intent-${fixedAt + i}`, label })),
+  ];
+  const columns = slots > 2 * INTENT_MAX_ROWS ? 3 : 2;
+  const rows = Math.ceil(slots / columns);
   const panelWidth = Math.floor(columns === 2 ? width / 3 : width * WIDE_PANEL);
   const tileWidth = (panelWidth - 2 * INTENT_MARGIN - (columns - 1) * INTENT_GAP) / columns;
   const tileHeight = Math.min((height - 2 * INTENT_MARGIN - (rows - 1) * INTENT_GAP) / rows, tileWidth * INTENT_MAX_ASPECT);
@@ -112,15 +116,5 @@ export function layoutIntents(
     width: tileWidth,
     height: tileHeight,
   });
-  const intent = (label: string, i: number) => ({ id: `intent-${i}`, label });
-  const tiles = [
-    ...shown.slice(0, recent).map(intent),
-    ...fixed.map((name) => ({ id: name, label: name[0].toUpperCase() + name.slice(1) })),
-    ...shown.slice(recent).map((label, i) => intent(label, recent + i)),
-  ];
-  return [
-    ...tiles.map((tile, i) => ({ ...tile, rect: cell(i) })),
-    { id: 'something-else', label: 'Something else', rect: cell(slots - 1) },
-    { id: CLOSE_KEY, label: 'Close', rect: cell(slots) },
-  ];
+  return [...tiles.map((tile, i) => ({ ...tile, rect: cell(i) })), { id: 'something-else', label: 'Something else', rect: cell(slots - 1) }];
 }

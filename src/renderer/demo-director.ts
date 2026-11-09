@@ -1,3 +1,4 @@
+import type { FixedIntent } from '../shared/keyboard';
 import type { OverlayState } from '../shared/session';
 
 declare global {
@@ -95,11 +96,13 @@ async function play() {
   push({ phase: 'thinking', wakeProgress: 1 });
   await sleep(2200);
 
-  push({ phase: 'choosing', wakeProgress: 1, intents: past, highlight: 'intent-0', cells: 6, recent: past.length, fixed: [], side: 'right', stepProgress: 0 });
-  push({ phase: 'choosing', wakeProgress: 1, intents, highlight: 'intent-0', cells: 6, recent: past.length, fixed: [], side: 'right', stepProgress: 0 });
+  const fixed: FixedIntent[] = ['close', 'home', 'minimize'];
+  const picker = { phase: 'choosing' as const, wakeProgress: 1, fixed, fixedAt: past.length, cells: 9, recent: past.length, side: 'right' as const, stepProgress: 0 };
+  push({ ...picker, intents: past, highlight: 'intent-0', suggesting: true });
+  push({ ...picker, intents, highlight: 'intent-0', suggesting: false });
   await sleep(950);
-  for (const highlight of ['intent-1', 'intent-2', 'intent-3', 'something-else', 'intent-0']) {
-    push({ phase: 'choosing', wakeProgress: 1, intents, highlight, cells: 6, recent: past.length, fixed: [], side: 'right', stepProgress: 0 });
+  for (const highlight of ['intent-1', 'close', 'home', 'minimize', 'intent-2', 'intent-0']) {
+    push({ ...picker, intents, highlight, suggesting: false });
     await sleep(850);
   }
 
