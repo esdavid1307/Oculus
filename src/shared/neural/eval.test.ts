@@ -125,13 +125,14 @@ describe('Icon Order', () => {
       t += 3_600_000;
       const chosen = pick();
       const byCount = [...names].sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0) || names.indexOf(a) - names.indexOf(b));
+      const chosenIndex = names.indexOf(chosen);
       steps.push({
-        screen: names.indexOf(chosen),
-        learned: order.order('dock', names, t).indexOf(chosen),
+        screen: chosenIndex,
+        learned: order.order('dock', names, t).indexOf(chosenIndex),
         ideal: favourite.indexOf(chosen),
         counts: byCount.indexOf(chosen),
       });
-      order.learn('dock', names, chosen, t);
+      order.learn('dock', names, chosenIndex, t);
       counts[chosen] = (counts[chosen] ?? 0) + 1;
     }
     return steps;
@@ -160,7 +161,7 @@ describe('Icon Order', () => {
 
   it('keeps screen order before anything is learned', () => {
     const names = ['Finder', 'Safari', 'Notes'];
-    expect(createIconOrder().order('dock', names)).toEqual(names);
+    expect(createIconOrder().order('dock', names)).toEqual([0, 1, 2]);
   });
 });
 

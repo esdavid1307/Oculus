@@ -63,7 +63,8 @@ export function createScanPace(base: number, model: ScanPaceModel = emptyScanPac
   return {
     stepMs: () => Math.min(model.stepMs ?? base, maxStep),
     // offsetMs is how long the pressed key had been highlighted. undoes is true for a press that takes the last one
-    // back, such as Back right after a letter group: that one landed a step late, so the user needed longer.
+    // back, such as Back right after a letter group: that one landed a step late, so the user needed longer. A second
+    // undo in a row has no late press to rewrite, so it's remembered as an ordinary reaction time, not re-interpreted.
     select(offsetMs: number, stepMs: number, undoes: boolean) {
       if (undoes && last) {
         // The press meant the key before, so the user took a whole step more than the offset that was recorded.
@@ -74,7 +75,9 @@ export function createScanPace(base: number, model: ScanPaceModel = emptyScanPac
         last = null;
       } else {
         remember(offsetMs);
-        last = { offsetMs, stepMs };
+        // Only non-undoing presses can later be reinterpreted as mis-timed. Clearing last after an undo too keeps a
+        // second undo in a row (a common Delete-Delete pattern) from rewriting the first undo's reaction.
+        last = undoes ? null : { offsetMs, stepMs };
       }
       update();
     },

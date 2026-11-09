@@ -59,7 +59,10 @@ export type AgentAction =
   | { type: 'type-text'; text: string }
   // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
   // rect is the box as matched, in overlay coordinates. name is for the log.
-  | { type: 'focus-text-box'; name: string; rect: Rect }
+  // held is the time window the user held their gaze on that box, so the outside world can snapshot the uncorrected
+  // gaze right then: by the time Done confirms the typed text (which fires the gaze learn), the raw buffer may have
+  // evicted the samples.
+  | { type: 'focus-text-box'; name: string; rect: Rect; held: { from: number; to: number } }
   // turnedDown holds the Suggested Intents passed over with Something else, so the model offers different ones.
   // element is the Chrome element the Suggested Intents are for, when a Gaze Scan in Chrome chose it.
   | { type: 'suggest-intents'; region: GazeRegion; request: number; turnedDown: string[]; element?: ElementHint }
@@ -172,7 +175,7 @@ export function createSession({
   textBoxes = () => [],
   chrome = () => [],
   chromeInFront = () => false,
-  orderIcons = (_source, names) => names,
+  orderIcons = (_source, names) => names.map((_, i) => i),
   scanPace,
 }: {
   screen: Screen;
@@ -192,8 +195,9 @@ export function createSession({
   chrome?: () => Icon[];
   // Whether Chrome is the app in front, whose tabs and address bar sit just under the menu bar.
   chromeInFront?: () => boolean;
-  // The Neural Layer's Icon Order: icon names in screen order in, the order to scan them out.
-  orderIcons?: (source: IconSource, names: string[]) => string[];
+  // The Neural Layer's Icon Order: icon names in screen order in, the indices to scan them in out. Indices, not names,
+  // so two icons sharing a name can still be reordered without collapsing to one.
+  orderIcons?: (source: IconSource, names: string[]) => number[];
   // The Neural Layer's Scan Pace: the step to use from the next restart of a scan. scanStepMs when left out.
   scanPace?: () => number;
 }) {
@@ -225,8 +229,13 @@ export function createSession({
   let held = { from: 0, to: 0 };
   // The Gaze Region radius of the hold that started the latest scan of icons or Chrome elements.
   let heldRadius = 0;
-  // Every icon of the current Icon Scan, in screen order.
+  // Every icon of the current Icon Scan, in screen order. scannedInOrder keeps the Icon objects themselves so the
+  // chosen index can be found by identity, even when two icons share a name.
   let scanned: string[] = [];
+  let scannedInOrder: Icon[] = [];
+  // Whether the last Gaze Keyboard press was a letter (or group / word / phrase), so only a Back/Delete that follows one
+  // counts as an undo: a second Delete in a row, or a deliberate round of editing, is not a mis-timed press.
+  let lastKeyboardPressWasLetter = false;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let phrases: string[] = [];
@@ -281,11 +290,12 @@ export function createSession({
     // Chrome elements come nearest the gaze first, so the scan starts on what the user looked at.
     const inScreenOrder = from === 'chrome' ? all : [...all].sort((a, b) => a.rect.x - b.rect.x || a.rect.y - b.rect.y);
     scanned = inScreenOrder.map(({ name }) => name);
-    // The icons this user opens most come first. Two icons with one name can't be told apart, so they keep screen order.
+    scannedInOrder = inScreenOrder;
+    // The icons this user opens most come first. Ordering by index, not by name, so two icons sharing a name still get
+    // ranked; the ranker ties on their shared score and the input-order tie-break keeps them adjacent.
     // Chrome elements change with every page, so there is no order to learn for them.
-    const byName = new Map(inScreenOrder.map((icon) => [icon.name, icon]));
-    const ordered = byName.size === inScreenOrder.length && from !== 'chrome' ? orderIcons(from, scanned).map((name) => byName.get(name)) : [];
-    icons = ordered.length === inScreenOrder.length && ordered.every(Boolean) ? (ordered as Icon[]) : inScreenOrder;
+    const orderedIndices = from === 'chrome' ? [] : orderIcons(from, scanned);
+    icons = orderedIndices.length === inScreenOrder.length ? orderedIndices.map((i) => inScreenOrder[i]) : inScreenOrder;
     restartScan(t);
     scan(t);
   }
@@ -329,6 +339,7 @@ export function createSession({
     wakeProgress = 0;
     text = '';
     group = null;
+    lastKeyboardPressWasLetter = false;
     refreshSuggestions();
     restartScan(t);
     scan(t);
@@ -411,7 +422,7 @@ export function createSession({
       const box = textBoxAt(region);
       held = { from: target.start, to: t };
       if (box) {
-        act({ type: 'focus-text-box', name: box.name, rect: box.rect });
+        act({ type: 'focus-text-box', name: box.name, rect: box.rect, held });
         textBoxGaze = { ...held, target: { x: box.rect.x + box.rect.width / 2, y: box.rect.y + box.rect.height / 2 } };
         openKeyboard(t);
       } else suggestIntents(region, []);
@@ -532,7 +543,9 @@ export function createSession({
             const centre = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
             suggestIntents({ ...centre, radius: heldRadius }, [], { name: label ?? name, rect });
           } else {
-            learn({ kind: 'icon-opened', source, scanned, chosen: iconHighlight!.name });
+            // Identity, not name, so a Dock with two icons sharing a name teaches on the exact one picked.
+            const chosenIndex = scannedInOrder.indexOf(iconHighlight!);
+            if (chosenIndex >= 0) learn({ kind: 'icon-opened', source, scanned, chosenIndex });
             act({ type: 'open-icon', source, name: iconHighlight!.name });
             // The opened app takes the focus, which drops the Dock. Opening also gives back any focus the Dock kept.
             dockShown = false;
@@ -546,11 +559,16 @@ export function createSession({
       } else if (phase === 'typing' || phase === 'choosing') {
         scan(input.t);
         if (input.type === 'select') {
-          // Back and Delete take back the press before, which then landed a step late.
-          const undoes = phase === 'typing' && (highlight === 'back' || highlight === 'delete');
+          // Back and Delete take back the press before, which then landed a step late — but only when the press before
+          // was a letter. A second Delete in a row, or deliberate editing, is not a mis-timed press.
+          const isUndoKey = phase === 'typing' && (highlight === 'back' || highlight === 'delete');
+          const undoes = isUndoKey && lastKeyboardPressWasLetter;
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes });
           press(highlight, input.t);
-          if (phase === 'typing') refreshSuggestions();
+          if (phase === 'typing') {
+            refreshSuggestions();
+            lastKeyboardPressWasLetter = !isUndoKey;
+          }
           restartScan(input.t);
           scan(input.t);
         }
