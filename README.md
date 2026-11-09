@@ -1,6 +1,6 @@
 # Oculus Agent
 
-**An assistant that turns gaze-based intent into fewer, simpler computer interactions.**
+**Control your computer with your eyes, and let Oculus Agent handle the rest.**
 
 Built for **natHacks 2026** · Healthcare & Accessibility
 
