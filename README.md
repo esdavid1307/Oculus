@@ -14,8 +14,8 @@ Oculus Agent explores a different model: instead of using eye movement as a repl
 
 1. **Wake.** The user looks at the Centre Box in the middle of the screen for 3 seconds. A ring fills and a chime plays, so a passing glance never wakes it.
 2. **Point at what matters.** The user holds their gaze on something for 1 second: a YouTube video, an essay in Google Docs, a text box. Gaze is always treated as a rough area (a Gaze Region), never an exact point.
-3. **Choose.** The overlay hides for one screenshot, and Claude suggests a few Intents for that spot, such as "Skip the ad" or "Continue the essay". They appear as large tiles next to Fixed Intents that never need Claude (Cancel, Quit, Minimize, Type, Dock). A highlight steps through the tiles, and a **Select Blink** (both eyes closed for half a second) chooses the lit one. Choosing is the user's confirmation. "Something else" asks for different suggestions.
-4. **Let the agent work.** Claude does every click and keystroke in a computer-use loop: screenshot, next action, perform it, repeat. A banner shows what it's doing right now.
+3. **Choose.** The overlay hides for one screenshot, and Oculus Agent suggests a few Intents for that spot, such as "Skip the ad" or "Continue the essay". They appear as large tiles next to Fixed Intents that never need the AI model (Cancel, Quit, Minimize, Type, Dock). A highlight steps through the tiles, and a **Select Blink** (both eyes closed for half a second) chooses the lit one. Choosing is the user's confirmation. "Something else" asks for different suggestions.
+4. **Let the agent work.** Oculus Agent does every click and keystroke in a computer-use loop: screenshot, next action, perform it, repeat. A banner shows what it's doing right now.
 5. **Stop at any time.** Looking off the screen for 5 seconds stops any run, with a visible countdown. Losing the user's face counts too.
 
 The goal is to reduce repeated gaze selections, **not** to remove user control.
@@ -25,7 +25,7 @@ The goal is to reduce repeated gaze selections, **not** to remove user control.
 Everything below is on `main` and runs with the laptop webcam.
 
 - **Webcam gaze tracking.** MediaPipe Face Landmarker iris tracking runs locally, with calibration and 300 ms smoothing. A blink sequence restarts calibration.
-- **Suggested Intents and the agent.** Claude suggests Intents for the spot the user looked at, then runs the chosen one. Two demo flows are tested end to end: continuing an essay in Google Docs ([docs/essay-flow.md](docs/essay-flow.md)) and YouTube, including picking a related video and skipping an ad ([docs/youtube-flow.md](docs/youtube-flow.md)).
+- **Suggested Intents and the agent.** Oculus Agent suggests Intents for the spot the user looked at, then runs the chosen one. Two demo flows are tested end to end: continuing an essay in Google Docs ([docs/essay-flow.md](docs/essay-flow.md)) and YouTube, including picking a related video and skipping an ad ([docs/youtube-flow.md](docs/youtube-flow.md)).
 - **Fixed Intents.** Cancel, Quit (names the app it will quit), Minimize, Type and Dock show in every picker immediately. With Chrome in front, Search joins them, and a Chrome tile scans New Tab, Next Tab and Close Tab ([docs/fixed-intents.md](docs/fixed-intents.md)).
 - **Gaze Keyboard.** A full-screen scanning keyboard where each letter takes two Select Blinks (a group, then a letter). It opens by looking at a text box or choosing Type. Done types the text into that box, presses Return in single-line fields such as search boxes, and sends in Messages.
 - **Word and phrase suggestions.** Up to three Suggested Words finish the current word or predict the next one, and up to two Suggested Phrases offer texts the user sent before. Both learn the user's own words ([docs/word-prediction.md](docs/word-prediction.md)).
@@ -68,7 +68,7 @@ Oculus runs on an ordinary laptop webcam rather than a dedicated eye tracker. Ac
 ## Privacy
 
 - Camera frames and gaze are processed on the computer. **No video leaves the machine** and none is stored.
-- After the user picks a target, a screenshot of the screen goes to Anthropic's Claude to suggest and run Intents. Screenshots are only taken after the user asks for something, never streamed.
+- After the user picks a target, a screenshot of the screen goes to Anthropic's AI model to suggest and run Intents. Screenshots are only taken after the user asks for something, never streamed.
 - Learning data (Gaze Correction, Intent History, the user's words and phrases) stays on the computer in `~/Library/Application Support/oculus-agent/`.
 
 Oculus is therefore not fully local. A local-only mode is planned (#90).
@@ -145,7 +145,7 @@ Dev mouse stand-in ────────────────┤
          Session core: wake, target, picker, keyboard, run, stop
           |                        |                       |
           v                        v                       v
-   Overlay (Electron)      Intent engine (Claude)   Agent loop (Claude computer use)
+   Overlay (Electron)      Intent engine (AI model) Agent loop (computer use)   
    Centre Box, tiles,      screenshot + Gaze Region  screenshot → action → System Events
    Gaze Keyboard, banner   → Suggested Intents       / Swift Accessibility helper
                                    |
@@ -168,11 +168,11 @@ The session core takes gaze events and timer ticks and returns overlay state and
 
 - **Webcam gaze is coarse.** Median error is often over 100 px, mostly as a steady offset. We switched from dwell keys to scanning, and Gaze Correction learns the offset.
 - **Gaze overshoots screen edges.** A look at the Dock can land well below the display. Near the scanned icons, gaze just past the edge counts as on them, not as Look Away.
-- **The agent had to see the screen, not the overlay.** The overlay hides for each screenshot, and Claude's clicks had to land on the right Retina pixels.
+- **The agent had to see the screen, not the overlay.** The overlay hides for each screenshot, and the agent's clicks had to land on the right Retina pixels.
 
 ### Next steps
 
-- **Safety limits enforced in code (#12).** Today, the rule against logins, passwords and payments is an instruction to Claude only. Next, the session core blocks them and asks for confirmation before anything is sent or deleted.
+- **Safety limits enforced in code (#12).** Today, the rule against logins, passwords and payments is an instruction to the AI model only. Next, the session core blocks them and asks for confirmation before anything is sent or deleted.
 - **Accessibility audit (#78).** We audited Oculus against WCAG 2.2 AA, Section 508 and EN 301 549 and filed 13 fixes (#79 to #91):
   - switch and keyboard input
   - keeping a draft when typing is interrupted
