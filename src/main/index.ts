@@ -610,6 +610,7 @@ function createOverlay() {
       );
     }
     // The Dock moves when it shows, so it is read again for the scan.
+    else if (action.type === 'snapshot-gaze') neural.snapshotHold(action.held.from, action.held.to);
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
     else if (action.type === 'release-dock') releaseDock();
     else if (action.type === 'learn') neural.learn(action.signal);

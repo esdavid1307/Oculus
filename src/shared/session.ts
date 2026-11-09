@@ -75,6 +75,8 @@ export type AgentAction =
   | { type: 'stop-run'; request: number }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
+  // A hold whose uncorrected gaze must be kept now, since it may only teach Gaze Correction long after.
+  | { type: 'snapshot-gaze'; held: { from: number; to: number } }
   | { type: 'release-dock' }
   | { type: 'close-menu' }
   // A confirmed choice for the Neural Layer to learn from. See src/shared/neural/layer.ts.
@@ -324,6 +326,8 @@ export function createSession({
     if (iconHold !== null && t - iconHold.start >= iconHoldMs) {
       held = { from: iconHold.start, to: t };
       scanIcons(iconHold.source, iconsOf[iconHold.source](), t);
+      // A Chrome scan can loop past the 30 s of raw gaze kept, so a run that goes well later still has this hold.
+      if (phase === 'icons' && source === 'chrome') act({ type: 'snapshot-gaze', held });
     }
     return iconHold !== null;
   }

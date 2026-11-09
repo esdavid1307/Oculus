@@ -11,7 +11,8 @@ const offScreen = { x: 800, y: -400, radius: 120 };
 
 // The Neural Layer's learn actions are tested on their own, under 'Learning signals', and left out everywhere else.
 const record = (into: AgentAction[]) => (action: AgentAction) => {
-  if (action.type !== 'learn') into.push(action);
+  // Neural Layer bookkeeping, checked in its own tests.
+  if (action.type !== 'learn' && action.type !== 'snapshot-gaze') into.push(action);
 };
 const typedText = (state: OverlayState) => (state.phase === 'typing' ? state.text : null);
 const tick = (t: number) => ({ type: 'tick', t }) as const;
@@ -1710,6 +1711,8 @@ describe('Gaze Scan in Chrome', () => {
     session(gaze(3100, onThumbs));
     // The lookup's order: Icon Order never reorders Chrome elements.
     expect(session(gaze(6100, onThumbs))).toMatchObject({ highlight: { name: 'Why bridges stand' } });
+    // Kept now: the scan can loop past the 30 s of raw gaze before a run confirms the hold.
+    expect(all.filter((action) => action.type === 'snapshot-gaze')).toEqual([{ type: 'snapshot-gaze', held: { from: 3100, to: 6100 } }]);
     session(select(6200));
     const signals = all.flatMap((action) => (action.type === 'learn' ? [action.signal] : []));
     expect(signals.slice(1)).toEqual([{ kind: 'select', offsetMs: 100, stepMs: 2000, undoes: false }]);
