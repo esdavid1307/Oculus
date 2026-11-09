@@ -314,6 +314,11 @@ function stopHintPlace(state: OverlayState): 'top' | 'middle' | 'bottom' {
   if (state.phase === 'typing') return 'top';
   // The Suggested Intents are a column on one side and the target is on the other half, so the middle is clear.
   if (state.phase === 'choosing') return 'middle';
+  if (state.phase === 'icons' && state.source === 'chrome') {
+    // Chrome elements can be anywhere, so the countdown goes on the half of the screen the highlight isn't on.
+    const { y, height } = state.highlight.rect;
+    return y + height / 2 < innerHeight / 2 ? 'bottom' : 'top';
+  }
   if (state.phase === 'icons') return state.source === 'menubar' || state.source === 'menu' ? 'bottom' : 'top';
   return 'bottom';
 }
@@ -392,9 +397,14 @@ window.overlay.onLargeView((settings) => {
 });
 
 // textContent only: icon names come from other apps.
-function showIcon({ highlight, stepMs }: Extract<OverlayState, { phase: 'icons' }>) {
+function showIcon({ highlight, stepMs, source }: Extract<OverlayState, { phase: 'icons' }>) {
   iconMagnifier.hidden = largeView === undefined;
-  if (largeView === undefined) return place(iconHighlight, highlight.rect);
+  // A Chrome element is chosen, never opened, so its label says so.
+  iconMagnifier.dataset.source = source;
+  // A Chrome element can be a 16 point line of text, so its frame is grown past the border to keep the text readable.
+  const { x, y, width, height } = highlight.rect;
+  const pad = source === 'chrome' ? 8 : 0;
+  if (largeView === undefined) return place(iconHighlight, { x: x - pad, y: y - pad, width: width + 2 * pad, height: height + 2 * pad });
   const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);

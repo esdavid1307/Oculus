@@ -1,4 +1,6 @@
 import type { GazeRegion } from '../../shared/gaze';
+import type { ElementHint } from '../../shared/session';
+import { elementHint } from './intents';
 import { runClaudeCode } from './claude-code';
 import { runAgentCheck } from './loop';
 import {
@@ -39,6 +41,8 @@ export type IntentRun = {
   request: number;
   // Where the screenshots the agent sees sit on screen, so the goal can give the region in screenshot pixels.
   frame: ScreenFrame;
+  // The Chrome element a Gaze Scan chose, if any.
+  element?: ElementHint;
 };
 
 export type IntentOutcome = {
@@ -76,13 +80,13 @@ export type RunIntentDeps = {
 };
 
 // The goal the run agent gets: the Intent, where the user was looking in screenshot pixels, and tight bounds.
-export function intentGoal(run: Pick<IntentRun, 'intent' | 'region' | 'frame'>): string {
-  const { intent, region, frame } = run;
+export function intentGoal(run: Pick<IntentRun, 'intent' | 'region' | 'frame' | 'element'>): string {
+  const { intent, region, frame, element } = run;
   const scale = frame.imageWidth / frame.width;
   const [x, y, radius] = [region.x, region.y, region.radius].map((value) => Math.round(value * scale));
   return [
     `The user chose this Intent: "${intent}". Do only this, in the app on screen, in as few actions as possible.`,
-    `They chose it while looking at about (${x}, ${y}), within about ${radius} pixels, in the ${frame.imageWidth} x ${frame.imageHeight} screenshot. "This" or "that" in the Intent means what is there.`,
+    `They chose it while looking at about (${x}, ${y}), within about ${radius} pixels, in the ${frame.imageWidth} x ${frame.imageHeight} screenshot. ${elementHint(element, frame)}"This" or "that" in the Intent means what is there.`,
     'For a video: click its thumbnail or title once. "A related video" means one from the recommendations beside or below the player, not the one playing.',
     'For an ad: click "Skip" or "Skip ad" if it is shown; if a countdown is shown, wait for it (at most 10 seconds) and then click it. If no ad is playing, stop.',
     // Only for its own Intent: "Summarize the essay" got these steps too and typed a paragraph into the essay.

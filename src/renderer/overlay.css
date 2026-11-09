@@ -1108,6 +1108,10 @@ body > video {
   color: var(--label-2);
 }
 
+#icon-magnifier[data-source='chrome']::before {
+  content: 'Blink to choose';
+}
+
 [data-phase='icons'] #icon-magnifier:not([hidden]) {
   display: flex;
 }

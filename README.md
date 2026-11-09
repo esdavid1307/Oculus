@@ -206,6 +206,8 @@ Large View is on by default. It makes the Dock icons big while Oculus runs (`doc
 { "largeView": true, "uiScale": 1.25, "dockIconSize": 96 }
 ```
 
+Add `"chromeScan": true` for Gaze Scan in Google Chrome (#22): a 3 second look at named things in Chrome, such as a video title or the Skip Ad button, scans them, and a Select Blink asks for Suggested Intents about the one chosen. It builds a small Swift helper on first use, so it needs Xcode or its Command Line Tools. See `docs/chrome-scan.md`.
+
 Add `"historyPerSite": true` to keep Intent History per site in Google Chrome, for example "Pause" on youtube.com but not on mail.google.com. A site with fewer than 2 past Intents is topped up from Chrome's own history. Incognito windows are never read, and Safari always uses the app alone, since it can't tell a script which windows are private. It needs macOS to let Oculus control Chrome: the dialog shows when Oculus starts if Chrome is open, otherwise the first time Oculus reads Chrome, so turn it on while someone can answer the dialog. Until it is allowed, history is kept for Chrome as a whole.
 
 Add `"intentRanker": "neural"` to rank the user's past Intents with a small ranker that learns from each confirmed Intent. Without it, or with any other value, they are ranked by count and recency.
