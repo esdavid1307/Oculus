@@ -26,12 +26,21 @@ const scanFrom = (session: ReturnType<typeof createSession>, t: number) =>
     return state.phase === 'icons' ? state.highlight.name : state.phase;
   });
 
-// Claude answered at 5 s with no past Intents, so Dock, the fourth tile, is lit from 11 s.
+const dockShown = (t: number, icons = dockIcons) => ({ type: 'dock-shown', t, icons }) as const;
+
+// Claude answered at 5 s with no past Intents, so Dock, the fourth tile, is lit from 11 s. Chosen at 11.1 s.
 function chooseDock(options: Partial<Parameters<typeof createSession>[0]> = {}) {
   const started = thinking({ ...withDock, ...options });
   started.session(claude(5000, ['Pause']));
   expect(started.session(tick(11_050))).toMatchObject({ highlight: 'dock' });
   started.session(select(11_100));
+  return started;
+}
+
+// The same, and main has shown the Dock and read it again by 11.6 s, so its scan runs from there.
+function scanningDock(options: Partial<Parameters<typeof createSession>[0]> = {}) {
+  const started = chooseDock(options);
+  started.session(dockShown(11_600));
   return started;
 }
 
@@ -59,31 +68,59 @@ describe('the Dock Fixed Intent', () => {
 });
 
 describe('choosing Dock', () => {
-  it('shows the Dock and starts an Icon Scan of it, without asking Claude or running anything', () => {
+  it('shows the Dock and waits for main to read it, choosing nothing else in the meantime', () => {
     const { session, fromPicker } = chooseDock();
-    expect(session(tick(11_150))).toMatchObject({ phase: 'icons', source: 'dock' });
     expect(fromPicker().filter(({ type }) => type === 'show-dock')).toHaveLength(1);
-    expect(fromPicker().filter(({ type }) => ['suggest-intents', 'run-intent', 'fixed-intent'].includes(type))).toEqual([]);
+    // The picker has gone, and a look at the target while the Dock comes up starts nothing.
+    expect(session(gaze(11_200, target)).phase).toBe('waiting-for-target');
+    expect(session(gaze(12_400, target)).phase).toBe('waiting-for-target');
+    expect(fromPicker().filter(({ type }) => ['suggest-intents', 'run-intent', 'fixed-intent', 'release-dock'].includes(type))).toEqual([]);
+  });
+
+  it('starts the Icon Scan of the Dock where it shows, once main has read it again', () => {
+    const { session } = chooseDock({ dock: () => dockIcons.map((icon) => ({ ...icon, rect: { ...icon.rect, y: 1010 } })) });
+    // Read past the bottom edge before it showed, as with a hidden Dock; scanned where it is now.
+    expect(session(dockShown(11_600))).toMatchObject({ phase: 'icons', source: 'dock', highlight: { name: 'Notes', rect: { y: 920 } } });
   });
 
   it('scans the Dock in the same order as a Dock hold, Icon Order first', () => {
-    const fromDock = chooseDock().session;
+    const fromDock = scanningDock().session;
     // The same Dock reached with a 3 second hold near it, from waiting-for-target.
-    const actions: AgentAction[] = [];
-    const held = createSession({ screen, act: (action) => actions.push(action), ...withDock });
+    const held = createSession({ screen, act: () => {}, ...withDock });
     held(gaze(0, inBox));
     held(gaze(3000, inBox));
     held(gaze(3100, nearDock));
     held(gaze(6100, nearDock));
-    expect(scanFrom(fromDock, 11_100)).toEqual(['Notes', 'Finder', 'Safari', 'Mail']);
+    expect(scanFrom(fromDock, 11_600)).toEqual(['Notes', 'Finder', 'Safari', 'Mail']);
     expect(scanFrom(held, 6100)).toEqual(['Notes', 'Finder', 'Safari', 'Mail']);
+  });
+
+  it('ends on the Stop Gesture while the Dock is still coming up, releasing it and scanning nothing', () => {
+    const { session, fromPicker } = chooseDock();
+    session(gaze(11_200, offScreen));
+    expect(session(gaze(16_200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(fromPicker().filter(({ type }) => type === 'release-dock')).toHaveLength(1);
+    // Main's late answer starts nothing.
+    expect(session(dockShown(16_300))).toEqual({ phase: 'idle', wakeProgress: 0 });
+  });
+
+  it('scans the Dock as last read if main never answers within 2 seconds', () => {
+    const { session } = chooseDock();
+    expect(session(tick(13_000)).phase).toBe('waiting-for-target');
+    expect(session(tick(13_100))).toMatchObject({ phase: 'icons', source: 'dock', highlight: { name: 'Notes' } });
+  });
+
+  it('goes back to sleep and releases the Dock when there is nothing in it to scan', () => {
+    const { session, fromPicker } = chooseDock({ dock: () => [] });
+    expect(session(dockShown(11_600, []))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    expect(fromPicker().filter(({ type }) => type === 'release-dock')).toHaveLength(1);
   });
 });
 
 describe('the Dock scan from the Dock Fixed Intent', () => {
   it('opens the highlighted app on a Select Blink, teaching Icon Order and never Gaze Correction', () => {
-    const { session, fromPicker } = chooseDock();
-    session(select(11_200));
+    const { session, fromPicker } = scanningDock();
+    session(select(11_700));
     expect(fromPicker().filter(({ type }) => type === 'open-icon')).toEqual([{ type: 'open-icon', source: 'dock', name: 'Notes' }]);
     const learned = fromPicker().flatMap((action) => (action.type === 'learn' ? [action.signal.kind] : []));
     expect(learned).toContain('icon-opened');
@@ -91,31 +128,17 @@ describe('the Dock scan from the Dock Fixed Intent', () => {
   });
 
   it('ends on the Stop Gesture and releases the Dock, opening nothing', () => {
-    const { session, fromPicker } = chooseDock();
-    session(gaze(11_200, offScreen));
-    expect(session(gaze(16_199, offScreen)).phase).toBe('icons');
-    expect(session(gaze(16_200, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
+    const { session, fromPicker } = scanningDock();
+    session(gaze(11_700, offScreen));
+    expect(session(gaze(16_699, offScreen)).phase).toBe('icons');
+    expect(session(gaze(16_700, offScreen))).toEqual({ phase: 'idle', wakeProgress: 0 });
     expect(fromPicker().filter(({ type }) => type === 'release-dock')).toHaveLength(1);
     expect(fromPicker().filter(({ type }) => type === 'open-icon')).toEqual([]);
   });
-});
 
-describe('a hidden Dock', () => {
-  // Other apps can hide the Dock just past the bottom edge, so it's read there until it has shown.
-  const hidden = dockIcons.map((icon) => ({ ...icon, rect: { ...icon.rect, y: 1010 } }));
-
-  it('is scanned where it shows, once main has read it again', () => {
-    const { session } = chooseDock({ dock: () => hidden });
-    expect(session(tick(11_150))).toMatchObject({ phase: 'icons', highlight: { name: 'Notes', rect: { y: 1010 } } });
-    const state = session({ type: 'dock-shown', t: 11_600, icons: dockIcons });
-    expect(state).toMatchObject({ phase: 'icons', source: 'dock', highlight: { name: 'Notes', rect: { y: 920 } } });
-    // The scan starts again on the first icon, in Icon Order.
-    expect(scanFrom(session, 11_600)).toEqual(['Notes', 'Finder', 'Safari', 'Mail']);
-  });
-
-  it('leaves a scan alone once the user has moved on from it', () => {
-    const { session } = chooseDock({ dock: () => hidden });
-    session(select(11_200));
-    expect(session({ type: 'dock-shown', t: 11_600, icons: dockIcons }).phase).toBe('waiting-for-target');
+  it('ignores a read of the Dock that no Dock Fixed Intent is waiting for', () => {
+    const { session } = scanningDock();
+    session(select(11_700));
+    expect(session(dockShown(12_000)).phase).toBe('waiting-for-target');
   });
 });

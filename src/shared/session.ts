@@ -111,6 +111,8 @@ export type Suggest = (text: string) => string[];
 export type SuggestPhrases = (text: string) => string[];
 
 const MAX_INTENTS = 3;
+// How long the Dock Fixed Intent waits for main to show the Dock and read it again before scanning it as last read.
+const DOCK_WAIT_MS = 2000;
 // In every picker, in this order, so the user learns where each one is in the scan.
 const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize', 'dock'];
 // What Cmd opens, in scan order, with Close to leave.
@@ -293,8 +295,8 @@ export function createSession({
   let iconHold: { source: HeldSource; start: number; seen: number } | null = null;
   // A Dock that was asked to show stays up until it's released, or an icon is opened from it.
   let dockShown = false;
-  // Whether the Dock scan running now came from the Dock Fixed Intent and is still waiting for the Dock's shown icons.
-  let dockScanToRefresh = false;
+  // When the Dock Fixed Intent asked for the Dock, while it waits for main to show it and read it again.
+  let dockWaitSince: number | null = null;
   // Copied when the icon scan starts, so the icons can't shift under the highlight.
   let source: IconSource = 'dock';
   let icons: Icon[] = [];
@@ -355,10 +357,7 @@ export function createSession({
     // show, as the mouse would. Whether it's hidden right now is checked on the spot, outside the session.
     if (iconHold !== null && nearest === iconHold.source) iconHold.seen = t;
     else if (iconHold === null || t - iconHold.seen > HOLD_GRACE_MS) {
-      if (nearest === 'dock' && !dockShown) {
-        act({ type: 'show-dock' });
-        dockShown = true;
-      }
+      if (nearest === 'dock') showDockOnce();
       iconHold = nearest === undefined ? null : { source: nearest, start: t, seen: t };
     }
     if (iconHold !== null && t - iconHold.start >= iconHoldMs) {
@@ -441,18 +440,28 @@ export function createSession({
     scan(t);
   }
 
-  // The Dock Fixed Intent: what a completed Dock hold does, without holding the gaze at the screen edge. Shows the Dock
-  // and scans its icons in Icon Order, so a Select Blink opens the highlighted one.
-  function scanDock(t: number) {
-    // A hold gives the Dock 3 seconds to show before its scan; this doesn't, so a hidden Dock is scanned where it was
-    // read, past the bottom edge, until main reads it again.
-    dockScanToRefresh = true;
-    if (!dockShown) {
-      act({ type: 'show-dock' });
-      dockShown = true;
-    }
-    scanIcons('dock', dock(), t);
-    // An empty Dock read leaves nothing to scan, so the picker goes away as after Close.
+  // Asks for the Dock to show, once until it is released.
+  function showDockOnce() {
+    if (dockShown) return;
+    act({ type: 'show-dock' });
+    dockShown = true;
+  }
+
+  // The Dock Fixed Intent: what a completed Dock hold does, without holding the gaze at the screen edge. A hold asks for
+  // the Dock 3 seconds before its scan, so a hidden Dock is up by then. This can't, so it shows the Dock and waits for
+  // main to read it again (dock-shown), as a menu bar item waits for its menu, and scans it then, in Icon Order.
+  function chooseDock(t: number) {
+    if (dockShown) return scanDock(dock(), t);
+    showDockOnce();
+    // The picker goes, and nothing else can be chosen while the Dock comes up.
+    phase = 'waiting-for-target';
+    dockWaitSince = t;
+  }
+
+  function scanDock(all: Icon[], t: number) {
+    dockWaitSince = null;
+    scanIcons('dock', all, t);
+    // An empty Dock leaves nothing to scan, so it goes back to sleep, as after Close.
     if (phase !== 'icons') stop();
   }
 
@@ -505,7 +514,7 @@ export function createSession({
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
     if (key === 'cmd') return openChromeCommands(t);
-    if (key === 'dock') return scanDock(t);
+    if (key === 'dock') return chooseDock(t);
     if (key === 'home' || key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
       act({ type: 'fixed-intent', name: key });
       // Home goes back to the start. The others do too, for the same reason as Close.
@@ -557,7 +566,7 @@ export function createSession({
   // The Stop Gesture, and recalibrating. Closes the Gaze Keyboard without typing the text, the icon scan without
   // opening anything, and stops a run. Nothing is asked of the outside world after the stop-run.
   function stop() {
-    dockScanToRefresh = false;
+    dockWaitSince = null;
     if (phase === 'running') act({ type: 'stop-run', request });
     if (phase === 'icons' && source === 'menu') act({ type: 'close-menu' });
     phase = 'idle';
@@ -589,6 +598,9 @@ export function createSession({
 
   return (input: SessionInput): OverlayState => {
     now = input.t;
+    // Main shows the Dock and reads it again within a second or so. If its answer is lost (a failed read, or a show
+    // already on its way), the Dock as last read is scanned rather than leaving the user waiting.
+    if (dockWaitSince !== null && input.type !== 'dock-shown' && input.t - dockWaitSince >= DOCK_WAIT_MS) scanDock(dock(), input.t);
     if (input.type === 'recalibrate') {
       if (phase !== 'idle') stop();
     } else if (input.type === 'open-keyboard') {
@@ -613,9 +625,8 @@ export function createSession({
     } else if (input.type === 'run-progress') {
       if (phase === 'running' && input.request === request) activity = input.activity;
     } else if (input.type === 'dock-shown') {
-      // Only the scan the Dock Fixed Intent started, and only until the user has moved on from it.
-      if (dockScanToRefresh && phase === 'icons' && source === 'dock' && input.icons.length > 0) scanIcons('dock', input.icons, input.t);
-      dockScanToRefresh = false;
+      // Only while the Dock Fixed Intent is waiting for it: a hold's show-dock gets an answer too.
+      if (dockWaitSince !== null) scanDock(input.icons, input.t);
     } else if (input.type === 'menu-opened') {
       // The menu opens after the Select Blink. If the user has moved on by then, it's closed again.
       if (phase === 'waiting-for-target') scanIcons('menu', input.icons, input.t);
@@ -635,15 +646,13 @@ export function createSession({
         stop();
       } else if (awaySince !== null && input.t - awaySince >= lookAwayMs) {
         stop();
-      } else if (phase === 'waiting-for-target' && input.type === 'gaze') {
+      } else if (phase === 'waiting-for-target' && input.type === 'gaze' && dockWaitSince === null) {
         // An icon hold wins, so the shorter target hold can't fire on the way to the Dock.
         if (holdIcons(input.region, input.t)) target = null;
         else holdTarget(input.region, input.t);
       } else if (phase === 'icons') {
         scan(input.t);
         if (input.type === 'select') {
-          // Chosen from where it is: a late read of the Dock must not restart a scan the user has moved on from.
-          dockScanToRefresh = false;
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes: false });
           if (source === 'chrome') {
             // A Chrome element isn't opened: it becomes the target of the Suggested Intents, with its name and bounds as
@@ -704,7 +713,7 @@ export function createSession({
       }
     }
     // Leaving the Dock without opening anything takes the focus off it, so the app that hid it hides it again.
-    const onDock = iconHold?.source === 'dock' || (phase === 'icons' && source === 'dock');
+    const onDock = iconHold?.source === 'dock' || (phase === 'icons' && source === 'dock') || dockWaitSince !== null;
     if (dockShown && !onDock) {
       act({ type: 'release-dock' });
       dockShown = false;

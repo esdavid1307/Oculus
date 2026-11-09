@@ -16,7 +16,7 @@ Cells are kept for everything that can still come, so tiles never move once show
 
 | Part | What it does |
 |---|---|
-| `src/shared/session.ts` | Owns the picker. It opens on the past Intents answer, which main now always sends (empty if there are none), or on Claude's, whichever comes first. Choosing Dock does what a completed Dock hold does: `show-dock`, then an Icon Scan of the Dock in Icon Order, which `dock-shown` restarts with the Dock's real positions if it was hidden. Choosing Home or Minimize sends a `fixed-intent` action and goes back to idle, like Close, since the gaze resting on the panel would otherwise pick a new target. Only the Select Blink's `learn` for Scan Pace goes out: no `run-intent`, so nothing teaches Intent History or Gaze Correction. |
+| `src/shared/session.ts` | Owns the picker. It opens on the past Intents answer, which main now always sends (empty if there are none), or on Claude's, whichever comes first. Choosing Dock does what a completed Dock hold does: `show-dock`, then an Icon Scan of the Dock in Icon Order. It waits for `dock-shown` to start the scan, as a menu bar item waits for `menu-opened`, so a hidden Dock is scanned where it shows; after 2 s without an answer it scans the Dock as last read. Choosing Home or Minimize sends a `fixed-intent` action and goes back to idle, like Close, since the gaze resting on the panel would otherwise pick a new target. Only the Select Blink's `learn` for Scan Pace goes out: no `run-intent`, so nothing teaches Intent History or Gaze Correction. |
 | `src/shared/keyboard.ts` | `layoutIntents` puts the Fixed Intents after the first `fixedAt` Intents. |
 | `src/main/index.ts` | Performs `fixed-intent` as key presses through the same CGEvent path as the agent's, with no Claude call. After `show-dock` it reads the Dock again and sends `dock-shown`. |
 | `src/main/agent/intents.ts` | Tells Claude the Desktop, Minimize and the Dock are already offered, so it doesn't suggest them. |
@@ -41,6 +41,6 @@ The hand check posts the exact events main builds (`jxaFor` from `src/main/agent
 ## Limits
 
 - **Home toggles.** Choosing Home while the Desktop is already showing brings the windows back.
-- **Dock without a hold.** A hold sends `show-dock` 3 seconds before its scan, so a hidden Dock is up by then. The Dock Fixed Intent scans at once, so with a hidden Dock the first highlight is where the Dock was read, past the bottom edge, until `dock-shown` brings the real positions a moment later. Not checked by hand yet.
+- **Dock waits for the Dock.** Between choosing Dock and the scan starting (main shows the Dock and reads it again, about a second) the picker is gone and nothing can be chosen. Not checked by hand yet.
 - **Minimize acts on the window in front**, which isn't always the one under the target. A Desktop icon or the Dock can't be minimized.
 - **Not checked on the demo laptop** (an M5 MacBook Pro). Add a row above when it is.
