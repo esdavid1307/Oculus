@@ -25,11 +25,11 @@ The Intents this user chose before that ran ok, kept per app on this machine, an
 _Avoid_: Memory, favourites
 
 **Fixed Intent**:
-An Intent shown in every picker without asking Claude: Close, Home and Minimize. They show the moment a target is picked, after any Intent History and before Claude's Suggested Intents, except that a suggested "Skip the ad" goes ahead of them. Close, shown as "Cancel" so it isn't mistaken for Claude closing a window, ends the picker choosing nothing, Home shows the Desktop (Cmd and the Mission Control key) and Minimize minimizes the window in front (Cmd+M, which does nothing with no window). Home and Minimize are key presses main makes, then the session goes back to waiting for the Start Gesture. A Fixed Intent is never kept in Intent History and never teaches Gaze Correction, but its Select Blink still counts for Scan Pace. With Chrome in front a Cmd tile follows them, which opens a scan of the Chrome Commands Next Tab and Close Tab.
+An Intent shown in every picker without asking Claude: Close, Home, Minimize and Type. They show the moment a target is picked, after any Intent History and before Claude's Suggested Intents, except that a suggested "Skip the ad" goes ahead of them. Close, shown as "Cancel" so it isn't mistaken for Claude closing a window, ends the picker choosing nothing, Home shows the Desktop (Cmd and the Mission Control key) and Minimize minimizes the window in front (Cmd+M, which does nothing with no window). Home and Minimize are key presses main makes, then the session goes back to waiting for the Start Gesture. Type opens the Gaze Keyboard on whatever already has focus. A Fixed Intent is never kept in Intent History and never teaches Gaze Correction, but its Select Blink still counts for Scan Pace. With Chrome in front a Cmd tile follows them, which opens a scan of the Chrome Commands Next Tab and Close Tab.
 _Avoid_: Built-in, default, shortcut
 
 **Gaze Keyboard**:
-The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key.
+The on-screen keyboard that pops up so the user can fill in text. It scans, highlighting one key at a time, and a Select Blink presses the highlighted key. It opens on a Text Box, or on Type in the Suggested Intents, which focuses nothing so the text goes to whatever already has focus. Done types the text, then presses Return when it went into a single-line field such as a search or message box, never in a text area like a document or in a password field.
 _Avoid_: Virtual keyboard, typing mode
 
 **Text Box**:

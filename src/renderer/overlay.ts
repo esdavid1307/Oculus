@@ -227,6 +227,7 @@ const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
   close: { label: 'Cancel', glyph: Ban },
   home: { label: 'Home', glyph: House },
   minimize: { label: 'Minimize', glyph: Minimize2 },
+  type: { label: 'Type', glyph: Keyboard },
   cmd: { label: 'Cmd', glyph: Terminal },
   'next-tab': { label: 'Next Tab', glyph: SkipForward },
   'close-tab': { label: 'Close Tab', glyph: X },

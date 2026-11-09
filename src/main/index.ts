@@ -14,6 +14,7 @@ import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { createMainNeuralLayer } from './neural';
 import { createChromeScan } from './chrome-scan';
+import { isSecure, parseFocusedField, pressesReturn, READ_FOCUSED_FIELD, type FocusedField } from './focused-field';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -411,8 +412,14 @@ function readContext(perSite: boolean): Promise<string> {
 
 // The overlay never takes focus, so keystrokes land in the box that has focus in the app beneath.
 // shortcut: types through System Events, which needs the Accessibility permission. #6 may replace this.
-function typeText(text: string) {
-  const script = ['on run argv', 'tell application "System Events" to keystroke (item 1 of argv)', 'end run'];
+// submit presses Return after the text, in the same script so it can't land before the last keystroke.
+function typeText(text: string, submit = false) {
+  const script = [
+    'on run argv',
+    'tell application "System Events" to keystroke (item 1 of argv)',
+    ...(submit ? ['tell application "System Events" to key code 36'] : []),
+    'end run',
+  ];
   execFile('osascript', [...script.flatMap((line) => ['-e', line]), text], (error) => {
     if (!error) return;
     // The keyboard has already closed, so the clipboard is the only copy of the text left.
@@ -421,22 +428,13 @@ function typeText(text: string) {
   });
 }
 
-// Whether the box the text is about to go into is a password field, whose text must never be remembered. Checked on
-// the focused element's subrole. If there is no focused element or it can't be read, the script throws and that
-// counts as secure: not learning is the safe mistake. A field with no subrole is an ordinary field.
-const FOCUSED_SUBROLE = `const events = Application('System Events');
-const focused = events.processes.whose({ frontmost: true })[0].attributes.byName('AXFocusedUIElement').value();
-if (!focused) throw new Error('No focused element');
-let subrole = '';
-try { subrole = focused.attributes.byName('AXSubrole').value() || ''; } catch (error) {}
-subrole`;
-
-// Typing waits on this, so a hung osascript is cut off and, like any other failure, counts as secure: the text is
-// still typed, only not learned.
-function isSecureField(done: (secure: boolean) => void) {
-  execFile('osascript', ['-l', 'JavaScript', '-e', FOCUSED_SUBROLE], { timeout: 2000 }, (error, stdout) => {
-    if (error) console.warn('Could not tell whether the field is a password field, so not learning:', error.message);
-    done(error !== null || stdout.trim() === 'AXSecureTextField');
+// The box the text is about to go into, which decides whether it is learned and whether Done submits it.
+// Typing waits on this, so a hung osascript is cut off and, like any other failure, reads as no field: the text is
+// still typed, only not learned or submitted.
+function readFocusedField(done: (field: FocusedField) => void) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', READ_FOCUSED_FIELD], { timeout: 2000 }, (error, stdout) => {
+    if (error) console.warn('Could not read the focused field, so not learning or submitting:', error.message);
+    done(error ? null : parseFocusedField(stdout));
   });
 }
 
@@ -548,14 +546,12 @@ function createOverlay() {
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
-      if (!words.enabled) {
-        typeText(action.text);
-        return;
-      }
       // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
-      isSecureField((secure) => {
-        typeText(action.text);
-        if (secure) return;
+      readFocusedField((field) => {
+        const submit = pressesReturn(field, action.submit);
+        console.log(`[type-text] field=${field ? `${field.role}/${field.subrole}` : 'unknown'} submit=${submit}`);
+        typeText(action.text, submit);
+        if (!words.enabled || isSecure(field)) return;
         // A failed save must not stop the text being typed, so it only warns.
         try {
           words.learn(action.text);
@@ -621,6 +617,8 @@ function createOverlay() {
     } else if (action.type === 'fixed-intent') {
       // Key presses only, so the overlay, which never takes focus, leaves them to the app in front.
       console.log(`[fixed-intent] ${action.name}`);
+      // Type needs nothing from here: the session opens the Gaze Keyboard, and the text goes to whatever has focus.
+      if (action.name === 'type') return;
       if (action.name === 'next-tab' || action.name === 'close-tab') return runFixedIntent(action.name);
       void execute({ type: 'key', keys: FIXED_INTENT_KEYS[action.name], repeat: 1 }).catch((error: Error) =>
         console.error(`Could not run the Fixed Intent ${action.name}:`, error.message),

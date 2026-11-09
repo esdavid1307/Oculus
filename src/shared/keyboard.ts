@@ -14,14 +14,14 @@ export const MAX_SUGGESTIONS = 3;
 // The Suggested Phrase key id prefix: the chosen phrase text follows the ':'.
 export const PHRASE_KEY = 'phrase:';
 export const MAX_SHOWN_PHRASES = 2;
-// Choices that run at once as key presses, without Claude. Each one's key id is its name. Cmd is Chrome-only and opens
-// the Chrome Commands, Next Tab and Close Tab.
-export type FixedIntent = 'close' | 'home' | 'minimize' | 'cmd' | 'next-tab' | 'close-tab';
+// Choices that run at once without Claude, mostly as key presses. Each one's key id is its name. Type opens the Gaze
+// Keyboard on whatever has focus. Cmd is Chrome-only and opens the Chrome Commands, Next Tab and Close Tab.
+export type FixedIntent = 'close' | 'home' | 'minimize' | 'type' | 'cmd' | 'next-tab' | 'close-tab';
 // Closes the Suggested Intents without running anything.
 export const CLOSE_KEY = 'close' satisfies FixedIntent;
 
 // Close is "Cancel" on screen, since Claude often offers to close the window, which is a different thing.
-const FIXED_LABELS: Record<FixedIntent, string> = { close: 'Cancel', home: 'Home', minimize: 'Minimize', cmd: 'Cmd', 'next-tab': 'Next Tab', 'close-tab': 'Close Tab' };
+const FIXED_LABELS: Record<FixedIntent, string> = { close: 'Cancel', home: 'Home', minimize: 'Minimize', type: 'Type', cmd: 'Cmd', 'next-tab': 'Next Tab', 'close-tab': 'Close Tab' };
 
 // The Suggested Intents sit in a column on one side, so the rest of the screen, and the target, stay in view.
 export type IntentsSide = 'left' | 'right';
