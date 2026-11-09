@@ -74,7 +74,8 @@ export type SessionInput =
 
 // Requests for the outside world. The session core never acts on the OS itself.
 export type AgentAction =
-  | { type: 'type-text'; text: string }
+  // submit presses Return after the text whatever the field. Left out, Return follows only in a single-line field.
+  | { type: 'type-text'; text: string; submit?: boolean }
   // Focus a text box the user looked at, so the Gaze Keyboard's text lands there.
   // rect is the box as matched, in overlay coordinates. name is for the log.
   // held is the time window the user held their gaze on that box, so the outside world can snapshot the uncorrected
@@ -114,7 +115,7 @@ const MAX_INTENTS = 3;
 // How long the Dock Fixed Intent waits for main to show the Dock and read it again before scanning it as last read.
 const DOCK_WAIT_MS = 2000;
 // In every picker, in this order, so the user learns where each one is in the scan.
-const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize', 'dock'];
+const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'home', 'minimize', 'type', 'dock'];
 // What Cmd opens, in scan order, with Close to leave.
 const CHROME_COMMANDS: FixedIntent[] = ['next-tab', 'close-tab', CLOSE_KEY];
 
@@ -269,6 +270,8 @@ export function createSession({
   // Whether the last Gaze Keyboard press was a letter (or group / word / phrase), so only a Back/Delete that follows one
   // counts as an undo: a second Delete in a row, or a deliberate round of editing, is not a mis-timed press.
   let lastKeyboardPressWasLetter = false;
+  // Set for text that is always submitted, whatever the field.
+  let submitOnDone = false;
   let highlight: KeyId = '';
   let suggestions: string[] = [];
   let phrases: string[] = [];
@@ -374,8 +377,10 @@ export function createSession({
     phrases = suggestPhrases(text).slice(0, MAX_SHOWN_PHRASES);
   }
 
-  function openKeyboard(t: number) {
+  // submit makes Done press Return after the text, whatever the field.
+  function openKeyboard(t: number, submit = false) {
     phase = 'typing';
+    submitOnDone = submit;
     holdStart = null;
     wakeProgress = 0;
     text = '';
@@ -402,7 +407,7 @@ export function createSession({
     else if (key === 'space') text += ' ';
     else if (key === 'done') {
       if (text !== '') {
-        act({ type: 'type-text', text });
+        act({ type: 'type-text', text, ...(submitOnDone && { submit: true }) });
         if (textBoxGaze) learn({ kind: 'gaze', ...textBoxGaze, weight: 1 });
       }
       textBoxGaze = null;
@@ -513,6 +518,12 @@ export function createSession({
     }
     // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
     if (key === CLOSE_KEY) return stop();
+    if (key === 'type') {
+      act({ type: 'fixed-intent', name: 'type' });
+      // The text goes to whatever already has focus, so no Text Box is focused and nothing teaches Gaze Correction.
+      textBoxGaze = null;
+      return openKeyboard(t);
+    }
     if (key === 'cmd') return openChromeCommands(t);
     if (key === 'dock') return chooseDock(t);
     if (key === 'home' || key === 'minimize' || key === 'next-tab' || key === 'close-tab') {
@@ -679,14 +690,14 @@ export function createSession({
         if (input.type === 'select') {
           // Back and Delete take back the press before, which then landed a step late — but only when the press before
           // was a letter. A second Delete in a row, or deliberate editing, is not a mis-timed press.
-          const isUndoKey = phase === 'typing' && (highlight === 'back' || highlight === 'delete');
+          const typing = phase === 'typing';
+          const isUndoKey = typing && (highlight === 'back' || highlight === 'delete');
           const undoes = isUndoKey && lastKeyboardPressWasLetter;
           learn({ kind: 'select', offsetMs: Math.max(input.t - scanStart, 0) % stepMs, stepMs, undoes });
           press(highlight, input.t);
-          if (phase === 'typing') {
-            refreshSuggestions();
-            lastKeyboardPressWasLetter = !isUndoKey;
-          }
+          if (phase === 'typing') refreshSuggestions();
+          // Type opening the keyboard is not a letter press, so a first Delete there is not an undo.
+          if (typing && phase === 'typing') lastKeyboardPressWasLetter = !isUndoKey;
           restartScan(input.t);
           scan(input.t);
         }
