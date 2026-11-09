@@ -62,6 +62,12 @@ describe('Icon Order', () => {
     expect(restored.order('dock', names, 1000)).toEqual(order.order('dock', names, 1000));
     for (const raw of [null, 'x', { version: 2 }]) expect(readIconOrder(raw).uses).toEqual({});
   });
+
+  it('drops malformed uses and keeps the rest', () => {
+    const notes = { count: 2, last: 0, heat: 1.5 };
+    const uses = { dock: { Notes: notes, Safari: { count: 'x' }, Mail: null }, desktop: 'junk' };
+    expect(readIconOrder({ version: 1, uses }).uses).toEqual({ dock: { Notes: notes } });
+  });
 });
 
 describe('Scan Pace', () => {

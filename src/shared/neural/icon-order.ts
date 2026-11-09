@@ -23,10 +23,20 @@ const MAX_NAMES_PER_SOURCE = 300;
 
 export const emptyIconOrder = (): IconOrderModel => ({ version: 1, uses: {}, ranker: createRanker(PRIOR, HIDDEN, 23) });
 
+const isUse = (use: unknown): use is IconUse =>
+  typeof use === 'object' && use !== null && ['count', 'last', 'heat'].every((key) => Number.isFinite((use as Record<string, unknown>)[key]));
+
 export function readIconOrder(raw: unknown): IconOrderModel {
   const model = raw as IconOrderModel | null | undefined;
   if (model?.version !== 1 || typeof model.uses !== 'object' || model.uses === null) return emptyIconOrder();
-  return { version: 1, uses: model.uses, ranker: readRanker(model.ranker, emptyIconOrder().ranker) };
+  // A malformed use would score NaN and scramble the order, so it is dropped and the rest are kept.
+  const uses = Object.fromEntries(
+    Object.entries(model.uses)
+      .filter(([, names]) => typeof names === 'object' && names !== null)
+      .map(([source, names]) => [source, Object.fromEntries(Object.entries(names).filter(([, use]) => isUse(use)))] as const)
+      .filter(([, names]) => Object.keys(names).length > 0),
+  );
+  return { version: 1, uses, ranker: readRanker(model.ranker, emptyIconOrder().ranker) };
 }
 
 const heatAt = (use: IconUse, now: number) => use.heat * 0.5 ** ((now - use.last) / HALF_LIFE_MS);

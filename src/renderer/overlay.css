@@ -645,9 +645,145 @@ body > video {
   display: none;
 }
 
-/* Suggested Intents reuse the keyboard's keys, without the typed text. */
+/* Suggested Intents reuse the keyboard's keys, without the typed text, in a column on one side. The rest of the
+   screen isn't dimmed, so the target and the app stay in view. */
+[data-phase='choosing'] #keyboard {
+  background: none;
+}
+
 [data-phase='choosing'] #typed {
   display: none;
+}
+
+[data-phase='choosing'] #no-intents {
+  padding: calc(12px * var(--ui-scale, 1));
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+  background: #263042;
+  color: #eef2f8;
+  border-radius: 16px;
+  font-size: calc(15px * var(--ui-scale, 1));
+}
+
+/* Each choice is a tile: an icon in a circle over a 1–2 word label. The full intent is its aria-label and tooltip.
+   Contrast against the tile: #eef2f8 on #263042 is 11.8:1, #f5c4b3 on #3a2a24 is 8.7:1 (7:1 needed). */
+.key.tile {
+  --rest: #263042;
+  --fill: var(--rest);
+  --ink: #eef2f8;
+  --badge: #33405a;
+  --teal: #5dcaa5;
+  --badge-size: calc(44px * var(--ui-scale, 1));
+  --ring-size: calc(58px * var(--ui-scale, 1));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(12px * var(--ui-scale, 1));
+  padding: calc(12px * var(--ui-scale, 1));
+  border: none;
+  border-radius: 16px;
+  color: var(--ink);
+  overflow: hidden;
+  background: var(--rest);
+  backdrop-filter: none;
+}
+
+/* The tile's ring shows the step, in place of the bar under other keys. */
+.key.tile::after {
+  display: none;
+}
+
+.key.tile[data-key='close'] {
+  --rest: #3a2a24;
+  --ink: #f5c4b3;
+  --badge: #4d3830;
+}
+
+.tile-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--badge-size);
+  height: var(--badge-size);
+  border-radius: 50%;
+  background: var(--badge);
+}
+
+.tile-glyph {
+  width: calc(24px * var(--ui-scale, 1));
+  height: calc(24px * var(--ui-scale, 1));
+}
+
+/* Fills clockwise from the top over the time the scan stays on this tile (--step, 0 to 1). */
+.tile-ring {
+  position: absolute;
+  inset: calc((var(--badge-size) - var(--ring-size)) / 2);
+  width: var(--ring-size);
+  height: var(--ring-size);
+  transform: rotate(-90deg);
+  fill: none;
+  stroke-width: 6;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.tile-ring-track {
+  stroke: rgb(93 202 165 / 20%);
+}
+
+.tile-ring-fill {
+  stroke: var(--teal);
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: calc(1 - var(--step, 0));
+  /* Back to empty quickly when the scan moves on, not a snap. */
+  transition: stroke-dashoffset 150ms ease-out;
+}
+
+.tile-label {
+  max-width: 100%;
+  font-size: calc(15px * var(--ui-scale, 1));
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  /* Wraps rather than cutting the label off: Large View scales it up, and past Intents fall back to their first two
+     words, which can be long. Two lines at most. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.key.tile.highlighted {
+  outline: 2px solid var(--teal);
+  outline-offset: 0;
+}
+
+.key.tile.highlighted .tile-ring {
+  opacity: 1;
+}
+
+/* The state comes every 100 ms, so a linear step that long keeps the fill smooth. */
+.key.tile.highlighted .tile-ring-fill {
+  transition: stroke-dashoffset 100ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-ring,
+  .tile-ring-fill,
+  .key.tile.highlighted .tile-ring-fill {
+    transition: none;
+  }
+}
+
+#typed,
+.key {
+  position: absolute;
+  box-sizing: border-box;
 }
 
 #typed {
@@ -701,7 +837,9 @@ body > video {
   padding: calc(16px * var(--s)) calc(28px * var(--s));
   text-align: center;
   text-wrap: balance;
-  font-size: calc(68px * var(--s));
+  --font: calc(68px * var(--s));
+  /* One line of label fits however short the rows get. */
+  font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.65));
   font-weight: 590;
   line-height: 1.08;
   border-radius: calc(32px * var(--s));
@@ -749,7 +887,7 @@ body > video {
 .key[data-key='done'],
 .key[data-key='delete'],
 .key[data-key='back'] {
-  font-size: calc(38px * var(--s));
+  --font: calc(38px * var(--s));
   letter-spacing: -0.02em;
 }
 
@@ -776,22 +914,24 @@ body > video {
 /* Suggested words: lower case, as they'll be typed, and a colour of their own so they read as words, not keys. */
 .key[data-key^='word:'] {
   --fill: #0a6a8f;
-  font-size: calc(50px * var(--s));
+  --font: calc(50px * var(--s));
   font-weight: 510;
   background-color: rgb(100 210 255 / 12%);
 }
 
-/* The Suggested Phrase: a whole sentence, so smaller type and room to wrap, with an Apple Intelligence rim. */
-.key[data-key='phrase'] {
+/* Each Suggested Phrase: a whole sentence, so smaller type and room to wrap, with an Apple Intelligence rim. */
+.key[data-key^='phrase:'] {
   --fill: #6e30b8;
   flex-direction: row;
   gap: calc(20px * var(--s));
-  font-size: calc(42px * var(--s));
+  --font: calc(42px * var(--s));
+  /* Two lines fit, for a phrase that wraps. */
+  font-size: min(var(--font), calc(var(--key-height, 1000px) * 0.36));
   font-weight: 510;
   background-color: rgb(191 90 242 / 14%);
 }
 
-.key[data-key='phrase']::before {
+.key[data-key^='phrase:']::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -804,25 +944,9 @@ body > video {
   mask-composite: exclude;
 }
 
-.key[data-key='phrase'] .icon {
+.key[data-key^='phrase:'] .icon {
   width: 0.95em;
   height: 0.95em;
-  color: var(--purple);
-  fill: currentColor;
-  stroke: none;
-}
-
-.key[data-key^='intent-'] {
-  --fill: #0b64d8;
-  gap: calc(16px * var(--s));
-  padding: calc(36px * var(--s)) calc(40px * var(--s));
-  font-size: calc(44px * var(--s));
-  font-weight: 590;
-}
-
-.key[data-key^='intent-'] .icon {
-  width: 0.7em;
-  height: 0.7em;
   color: var(--purple);
   fill: currentColor;
   stroke: none;
@@ -836,13 +960,6 @@ body > video {
   fill: none;
   stroke: currentColor;
   color: var(--indigo);
-}
-
-.key[data-key='something-else'] {
-  font-size: calc(36px * var(--s));
-  font-weight: 510;
-  color: var(--label-2);
-  background-color: rgb(255 255 255 / 5%);
 }
 
 /* An Intent from this user's own history. */
@@ -868,6 +985,14 @@ body > video {
 .badge .icon {
   width: 1em;
   height: 1em;
+}
+
+/* Tiles are small, so the badge tucks into the corner, clear of the icon. */
+.key.tile .badge {
+  top: calc(8px * var(--s));
+  left: calc(8px * var(--s));
+  padding: calc(3px * var(--s)) calc(8px * var(--s)) calc(3px * var(--s)) calc(6px * var(--s));
+  font-size: calc(11px * var(--s));
 }
 
 /* The key the scan is on: filled, lifted, and ringed in white, so it stands out without relying on colour. */

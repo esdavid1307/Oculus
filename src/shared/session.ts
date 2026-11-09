@@ -1,24 +1,24 @@
 import { offScreen, type GazeEvent, type GazeRegion } from './gaze';
 import type { LearningSignal } from './neural/layer';
 import type { Rect, Screen } from './geometry';
-import { GROUPS, layoutIntents, layoutKeyboard, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type KeyId } from './keyboard';
+import { CLOSE_KEY, GROUPS, layoutIntents, layoutKeyboard, MAX_SHOWN_PHRASES, MAX_SUGGESTIONS, PHRASE_KEY, SUGGESTION_KEY, type IntentsSide, type KeyId } from './keyboard';
 
 export type OverlayState = (
   | { phase: 'idle' | 'waiting-for-target' | 'thinking'; wakeProgress: number }
-  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrase?: string }
-  // cells is the grid size layoutIntents draws: 6 when past Intents are in the picker, otherwise 4.
-  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6 }
+  // stepMs is how long the highlight stays on one key or icon, for the bar drawn under it. Display only.
+  | { phase: 'typing'; wakeProgress: number; text: string; group: string | null; highlight: KeyId; suggestions: string[]; phrases: string[]; stepMs: number }
+  // cells is how many slots layoutIntents draws before Close: 6 when past Intents are in the picker, otherwise 4.
+  // side is where the column goes, away from the target.
+  // stepProgress runs from 0 to 1 while the highlight stays on one choice, for the ring drawn around it. Display only.
+  | { phase: 'choosing'; wakeProgress: number; intents: string[]; highlight: KeyId; cells: 4 | 6; side: IntentsSide; stepProgress: number }
   // activity is what the agent is doing right now, such as "Typing", or '' before its first step.
   | { phase: 'running'; wakeProgress: number; intent: string; activity: string }
-  | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon }
+  | { phase: 'icons'; wakeProgress: number; source: IconSource; highlight: Icon; stepMs: number }
   // Shown for finishedMs after a run ends on its own, then idle. A stopped run goes straight to idle.
   | { phase: 'finished'; wakeProgress: number; intent: string; ok: boolean; summary: string }
 ) & {
   // The milliseconds left before the Stop Gesture stops the agent. Only there while the gaze is off the screen.
   stopInMs?: number;
-  // While a scan runs (typing, choosing, icons): its step, which Scan Pace can change, and how far into the current
-  // step it is, so the step bar fills in time with the highlight.
-  scan?: { stepMs: number; elapsedMs: number };
 };
 
 // Something on screen the user can open: a Dock or Desktop icon, a menu bar item, or a command in an open menu.
@@ -75,8 +75,8 @@ export type AgentAction =
 // Word prediction: the typed text in, the best words to finish it or follow it out. See src/shared/predict.ts.
 export type Suggest = (text: string) => string[];
 
-// The one text submitted before that the typed text starts, if any. See src/shared/predict.ts.
-export type SuggestPhrase = (text: string) => string | undefined;
+// Up to a few texts the user submitted before that the typed text starts, best first. See src/shared/predict.ts.
+export type SuggestPhrases = (text: string) => string[];
 
 const MAX_INTENTS = 3;
 const MAX_PAST_INTENTS = 2;
@@ -95,8 +95,7 @@ const DEFAULT_TIMINGS = { wakeHoldMs: 3000, lookAwayMs: 5000, scanStepMs: 2000, 
 type Timings = typeof DEFAULT_TIMINGS;
 
 // Timings come from a file the user edits, so anything unusable falls back to its default.
-// main reads the scan step through this too, so both fall back to the same default.
-export function parseTimings(raw: unknown): Timings {
+function parseTimings(raw: unknown): Timings {
   const timing = (key: keyof Timings) => {
     const value = (raw as Record<string, unknown> | null | undefined)?.[key];
     return typeof value === 'number' && value > 0 ? value : DEFAULT_TIMINGS[key];
@@ -155,7 +154,7 @@ export function createSession({
   timings,
   act = () => {},
   suggest = () => [],
-  suggestPhrase = () => undefined,
+  suggestPhrases = () => [],
   dock = () => [],
   desktop = () => [],
   menubar = () => [],
@@ -167,7 +166,7 @@ export function createSession({
   timings?: unknown;
   act?: (action: AgentAction) => void;
   suggest?: Suggest;
-  suggestPhrase?: SuggestPhrase;
+  suggestPhrases?: SuggestPhrases;
   dock?: () => Icon[];
   // Only the Desktop icons no window covers.
   desktop?: () => Icon[];
@@ -210,7 +209,7 @@ export function createSession({
   let scanned: string[] = [];
   let highlight: KeyId = '';
   let suggestions: string[] = [];
-  let phrase: string | undefined;
+  let phrases: string[] = [];
   let intents: string[] = [];
   let cells: 4 | 6 = 4;
   // The target the model was asked about and what was turned down there, so Something else can ask again.
@@ -246,7 +245,7 @@ export function createSession({
     const step = (length: number) => Math.floor(Math.max(t - scanStart, 0) / stepMs) % length;
     if (phase === 'icons') iconHighlight = icons[step(icons.length)];
     else {
-      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells) : layoutKeyboard(screen, group, suggestions, phrase).keys;
+      const keys = phase === 'choosing' ? layoutIntents(screen, intents, cells, side()) : layoutKeyboard(screen, group, suggestions, phrases).keys;
       highlight = keys[step(keys.length)].id;
     }
   }
@@ -291,7 +290,7 @@ export function createSession({
 
   function refreshSuggestions() {
     suggestions = suggest(text).slice(0, MAX_SUGGESTIONS);
-    phrase = suggestPhrase(text) || undefined;
+    phrases = suggestPhrases(text).slice(0, MAX_SHOWN_PHRASES);
   }
 
   function openKeyboard(t: number) {
@@ -307,9 +306,9 @@ export function createSession({
 
   function press(key: KeyId, t: number) {
     if (phase === 'choosing') choose(key, t);
-    else if (key === PHRASE_KEY) {
-      // The phrase starts with what was typed, so it replaces all of it.
-      text = phrase ?? text;
+    else if (key.startsWith(PHRASE_KEY)) {
+      // The phrase starts with what was typed, so it replaces all of it. The chosen text is carried in the key id.
+      text = key.slice(PHRASE_KEY.length);
       group = null;
     } else if (key.startsWith(SUGGESTION_KEY)) {
       // The word replaces the letters typed so far, and the space after it is free.
@@ -332,6 +331,9 @@ export function createSession({
     }
   }
 
+  // The picker goes on the half of the screen the target isn't on.
+  const side = (): IntentsSide => (asked !== null && asked.x >= screen.width / 2 ? 'left' : 'right');
+
   function suggestIntents(region: GazeRegion, passedOver: string[]) {
     asked = region;
     turnedDown = passedOver;
@@ -341,6 +343,8 @@ export function createSession({
 
   function choose(key: KeyId, t: number) {
     if (key === 'something-else') return suggestIntents(asked!, [...turnedDown, ...intents]);
+    // Back to idle, like a stop: staying awake would pick wherever the gaze rests on the panel as the next target.
+    if (key === CLOSE_KEY) return stop();
     intent = intents[Number(key.replace('intent-', ''))];
     activity = '';
     phase = 'running';
@@ -397,17 +401,19 @@ export function createSession({
   }
 
   function shown(): OverlayState {
-    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, ...(phrase === undefined ? {} : { phrase }) };
-    if (phase === 'choosing') return { phase, wakeProgress, intents, highlight, cells };
+    if (phase === 'typing') return { phase, wakeProgress, text, group, highlight, suggestions, phrases, stepMs };
+    if (phase === 'choosing') {
+      const stepProgress = (Math.max(now - scanStart, 0) % stepMs) / stepMs;
+      return { phase, wakeProgress, intents, highlight, cells, side: side(), stepProgress };
+    }
     if (phase === 'running') return { phase, wakeProgress, intent, activity };
-    if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight! };
+    if (phase === 'icons') return { phase, wakeProgress, source, highlight: iconHighlight!, stepMs };
     if (phase === 'finished') return { phase, wakeProgress, intent, ok: runOk, summary };
     return { phase, wakeProgress };
   }
 
   function state(): OverlayState {
-    const scanning = phase === 'typing' || phase === 'choosing' || phase === 'icons';
-    const base = { ...shown(), ...(scanning ? { scan: { stepMs, elapsedMs: Math.max(now - scanStart, 0) % stepMs } } : {}) };
+    const base = shown();
     // The result of a finished run isn't stopped by looking away, it just goes away.
     if (awaySince === null || now - awaySince < STOP_HINT_DELAY_MS || phase === 'idle' || phase === 'finished') return base;
     return { ...base, stopInMs: Math.max(lookAwayMs - (now - awaySince), 0) };
@@ -447,7 +453,7 @@ export function createSession({
           intents = [...intents, ...added];
           // Something else moves later in the key order, which changes the wrap-round. Start the scan again from
           // where it was, so the same key stays lit and keeps the time it already had.
-          const at = layoutIntents(screen, intents, cells).findIndex((key) => key.id === before);
+          const at = layoutIntents(screen, intents, cells, side()).findIndex((key) => key.id === before);
           scanStart = input.t - at * stepMs - spent;
           scan(input.t);
         }

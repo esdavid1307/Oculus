@@ -5,21 +5,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMainNeuralLayer } from './neural';
 
 const screen = { width: 1600, height: 1000 };
+let dir: string;
+
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+// Fast presses that would teach Scan Pace a much shorter step.
+function pressFast(scanStepSet: boolean) {
+  dir = mkdtempSync(join(tmpdir(), 'neural-'));
+  const neural = createMainNeuralLayer({ file: join(dir, 'neural-layer.json'), screen, scanStepMs: 2000, enabled: true, scanStepSet, log: () => {} });
+  for (let i = 0; i < 40; i++) neural.learn({ kind: 'select', offsetMs: 300, stepMs: neural.scanPace(), undoes: false });
+  return neural.scanPace();
+}
+
+describe('Scan Pace in the main process', () => {
+  it('learns a faster step from the default one', () => {
+    expect(pressFast(false)).toBeLessThan(2000);
+  });
+
+  it('leaves a scan step set in config.json alone', () => {
+    expect(pressFast(true)).toBe(2000);
+  });
+});
 
 describe('createMainNeuralLayer', () => {
-  let dir: string;
   let file: string;
-  const create = () => createMainNeuralLayer({ file, screen, scanStepMs: 2000, enabled: true, log: () => {} });
+  const create = () => createMainNeuralLayer({ file, screen, scanStepMs: 2000, enabled: true, scanStepSet: false, log: () => {} });
 
   beforeEach(() => {
     vi.useFakeTimers();
     dir = mkdtempSync(join(tmpdir(), 'neural-'));
     file = join(dir, 'neural-layer.json');
   });
-  afterEach(() => {
-    vi.useRealTimers();
-    rmSync(dir, { recursive: true, force: true });
-  });
+  afterEach(() => vi.useRealTimers());
 
   it('still has the raw gaze of a hold when the run it led to ends minutes later', async () => {
     const layer = create();

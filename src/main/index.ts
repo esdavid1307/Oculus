@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, systemPreferences } from 'electron';
 import { mouseRegion } from '../shared/gaze';
 import type { Rect } from '../shared/geometry';
+import { fallbackLook } from '../shared/intent-look';
 import { createIntentHistory, historyContext, parseIntentRanker, readIntentHistory } from '../shared/intent-history';
 import { readLargeView } from '../shared/large-view';
 import { createPredictor, readWordModel, type BaseWords } from '../shared/predict';
-import { createSession, parseTimings, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
+import { createSession, type AgentAction, type Icon, type SessionInput, type TextBox } from '../shared/session';
 import { execute } from './agent/executor';
 import { applyDockSize, restoreDock } from './dock-size';
 import { createCapture } from './agent/capture';
@@ -15,7 +16,7 @@ import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import type { IntentOutcome } from './agent/run-intent';
 import { createMainNeuralLayer } from './neural';
 import { readAgentConfig } from './agent/config';
-import { suggestIntents } from './agent/intents';
+import { suggestIntents, type SuggestedIntent } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
 
 // Holds ANTHROPIC_API_KEY and the OCULUS_AGENT_* settings. Loaded before anything reads process.env.
@@ -26,6 +27,8 @@ try {
 }
 
 const TICK_MS = 100;
+// Same default as the session timings, used when config.json leaves the scan step unset.
+const DEFAULT_SCAN_STEP_MS = 2000;
 const MOUSE_SAMPLE_MS = 33;
 const MOUSE_REGION_RADIUS = 60;
 // shortcut: polls for icons and windows moving, listen for Accessibility changes if the delay shows up in use.
@@ -43,7 +46,7 @@ const DEV_AGENT_CHECK_SHORTCUT = 'CommandOrControl+Shift+A';
 const DEV_LOOK_AWAY_SHORTCUT = 'CommandOrControl+Shift+L';
 // Time for the Centre Box to be drawn before the first screenshot.
 const OVERLAY_DRAW_MS = 1000;
-// Time for the Dock to come back up after it restarts with a new icon size.
+// Time for the Dock to finish resizing to a new icon size.
 const DOCK_RESTART_MS = 1500;
 // Both sources can't feed one session: mouse events off the target would keep restarting the hold.
 // OCULUS_GAZE=test is for the e2e tests: gaze and Select Blinks come from the page, as with the camera, but no camera
@@ -314,7 +317,7 @@ function createWordPrediction(enabled: boolean) {
   return {
     enabled,
     suggest: (text: string) => (enabled ? predictor.suggest(text) : []),
-    suggestPhrase: (text: string) => (enabled ? predictor.suggestPhrase(text) : undefined),
+    suggestPhrases: (text: string) => (enabled ? predictor.suggestPhrases(text) : []),
     learn(text: string) {
       if (!enabled) return;
       predictor.learn(text);
@@ -430,7 +433,7 @@ async function runAgentCheckOnce(overlay: BrowserWindow, trigger: 'env' | 'short
 
 // The e2e tests' stand-ins for Claude and the run agent: OCULUS_FAKE_INTENTS is a JSON list of Suggested Intents, and
 // a run takes OCULUS_FAKE_RUN_MS and succeeds unless the Stop Gesture ends it first.
-function fakeIntents(signal: AbortSignal): Promise<string[]> {
+function fakeIntents(signal: AbortSignal): Promise<SuggestedIntent[]> {
   let intents: string[] = [];
   try {
     intents = JSON.parse(process.env.OCULUS_FAKE_INTENTS ?? '[]');
@@ -438,7 +441,7 @@ function fakeIntents(signal: AbortSignal): Promise<string[]> {
     console.warn('OCULUS_FAKE_INTENTS is not a JSON list');
   }
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(intents), Number(process.env.OCULUS_FAKE_INTENTS_MS) || 300);
+    const timer = setTimeout(() => resolve(intents.map((text) => ({ text, look: fallbackLook(text) }))), Number(process.env.OCULUS_FAKE_INTENTS_MS) || 300);
     signal.addEventListener('abort', () => (clearTimeout(timer), resolve([])), { once: true });
   });
 }
@@ -465,8 +468,7 @@ function createOverlay() {
     focusable: false,
     enableLargerThanScreen: true,
     // The tracker must keep running while the user is in another app.
-    // Sandboxed: the overlay shows text from pages Claude read, and the preload needs only contextBridge and ipcRenderer.
-    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false, sandbox: true },
+    webPreferences: { preload: join(__dirname, '../preload/index.js'), backgroundThrottling: false },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -495,7 +497,7 @@ function createOverlay() {
   const largeView = readLargeView(settings);
   // The renderer has no file access, so it gets the settings once the page has loaded.
   overlay.webContents.once('did-finish-load', () => overlay.webContents.send('large-view', largeView));
-  // A bigger Dock moves its icons, so they are read again once it has restarted.
+  // A bigger Dock moves its icons, so they are read again once it has resized.
   const dockChanged = !testMode && applyDockSize(app.getPath('userData'), largeView.enabled, largeView.dockIconSize);
   if (dockChanged) setTimeout(refreshIcons, DOCK_RESTART_MS);
   refreshIcons();
@@ -509,12 +511,15 @@ function createOverlay() {
   // The context of the latest suggest-intents request, read when it starts since the front app can change during a run.
   // A run is always chosen from the latest picker, so it learns into this context.
   let askedContext: Promise<string> = Promise.resolve('');
+  const step = (settings as { scanStepMs?: unknown } | undefined)?.scanStepMs;
+  const scanStepSet = typeof step === 'number' && step > 0;
   // On unless config.json says "neuralLayer": false. See docs/neural-layer.md.
   const neural = (neuralLayer = createMainNeuralLayer({
     file: join(app.getPath('userData'), 'neural-layer.json'),
     screen: bounds,
-    scanStepMs: parseTimings(settings).scanStepMs,
+    scanStepMs: scanStepSet ? step : DEFAULT_SCAN_STEP_MS,
     enabled: (settings as { neuralLayer?: unknown } | undefined)?.neuralLayer !== false,
+    scanStepSet,
   }));
   const perform = (action: AgentAction) => {
     if (action.type === 'type-text') {
@@ -550,7 +555,11 @@ function createOverlay() {
       const controller = (pendingIntents = new AbortController());
       const ask = testMode ? fakeIntents(controller.signal) : suggestIntents(action.region, action.turnedDown, readAgentConfig(process.env, 'shortcut')!, capture, console.log, controller.signal);
       void ask
-        .then((intents) => advance({ type: 'intents', t: Date.now(), request: action.request, intents }))
+        .then((intents) => {
+          // Looks first, so the tiles have their label and icon the moment the session adds them.
+          overlay.webContents.send('intent-looks', Object.fromEntries(intents.map(({ text, look }) => [text, look])));
+          advance({ type: 'intents', t: Date.now(), request: action.request, intents: intents.map(({ text }) => text) });
+        })
         .finally(() => {
           if (pendingIntents === controller) pendingIntents = null;
           rmSync(saveDir, { recursive: true, force: true });
@@ -600,11 +609,11 @@ function createOverlay() {
     // The Dock moves when it shows, so it is read again for the scan.
     else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
     else if (action.type === 'release-dock') releaseDock();
+    else if (action.type === 'learn') neural.learn(action.signal);
     else if (action.type === 'close-menu') {
       if (openMenu !== null) runMenuScript(CLOSE_MENU, openMenu, 'Could not close the menu:');
       openMenu = null;
-    } else if (action.type === 'learn') neural.learn(action.signal);
-    else if (action.source === 'menubar')
+    } else if (action.source === 'menubar')
       openMenuBarItem(action.name, bounds, (opened) => advance({ type: 'menu-opened', t: Date.now(), icons: opened }));
     else if (action.source === 'menu') {
       openMenu = null;
@@ -616,7 +625,7 @@ function createOverlay() {
     timings: settings,
     act: perform,
     suggest: words.suggest,
-    suggestPhrase: words.suggestPhrase,
+    suggestPhrases: words.suggestPhrases,
     dock: () => icons.dock,
     desktop: () => icons.desktop,
     menubar: () => icons.menubar,

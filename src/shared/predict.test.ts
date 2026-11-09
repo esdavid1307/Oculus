@@ -126,7 +126,7 @@ describe('saved word model', () => {
   });
 });
 
-describe('Suggested Phrase', () => {
+describe('Suggested Phrases', () => {
   const sent = (...texts: string[]) => {
     const predictor = createPredictor(base);
     texts.forEach((text, i) => predictor.learn(text, i * 1000));
@@ -135,49 +135,55 @@ describe('Suggested Phrase', () => {
 
   it('offers a submitted text once 2 letters match its start', () => {
     const predictor = sent('please call the nurse');
-    expect(predictor.suggestPhrase('')).toBeUndefined();
-    expect(predictor.suggestPhrase('p')).toBeUndefined();
-    expect(predictor.suggestPhrase('pl')).toBe('please call the nurse');
-    expect(predictor.suggestPhrase('please c')).toBe('please call the nurse');
+    expect(predictor.suggestPhrases('')).toEqual([]);
+    expect(predictor.suggestPhrases('p')).toEqual([]);
+    expect(predictor.suggestPhrases('pl')).toEqual(['please call the nurse']);
+    expect(predictor.suggestPhrases('please c')).toEqual(['please call the nurse']);
   });
 
   it('matches case-insensitively', () => {
     const predictor = sent('Please call the nurse');
-    expect(predictor.suggestPhrase('PL')).toBe('Please call the nurse');
+    expect(predictor.suggestPhrases('PL')).toEqual(['Please call the nurse']);
   });
 
   it('offers nothing for text that does not match, or is already the whole phrase', () => {
     const predictor = sent('please call the nurse');
-    expect(predictor.suggestPhrase('pr')).toBeUndefined();
-    expect(predictor.suggestPhrase('please call the nurse')).toBeUndefined();
+    expect(predictor.suggestPhrases('pr')).toEqual([]);
+    expect(predictor.suggestPhrases('please call the nurse')).toEqual([]);
   });
 
-  it('offers at most one phrase, the one sent more often', () => {
-    const predictor = sent('i need water', 'i need a doctor', 'i need a doctor');
-    expect(predictor.suggestPhrase('i n')).toBe('i need a doctor');
+  it('offers every matching phrase, more frequent first', () => {
+    const predictor = sent('i need water', 'i need a doctor', 'i need a doctor', 'i need help', 'i need help', 'i need help');
+    expect(predictor.suggestPhrases('i n')).toEqual(['i need help', 'i need a doctor', 'i need water']);
+  });
+
+  it('caps the list at the requested limit', () => {
+    const predictor = sent('i need water', 'i need a doctor', 'i need help', 'i need a lawyer');
+    expect(predictor.suggestPhrases('i n', 2)).toHaveLength(2);
+    expect(predictor.suggestPhrases('i n', 3)).toHaveLength(3);
   });
 
   it('prefers a recent phrase over an equally frequent old one', () => {
     const predictor = createPredictor(base);
     predictor.learn('i need water', 0);
     predictor.learn('i need a doctor', 30 * DAY);
-    expect(predictor.suggestPhrase('i n', 30 * DAY)).toBe('i need a doctor');
+    expect(predictor.suggestPhrases('i n', 2, 30 * DAY)[0]).toBe('i need a doctor');
   });
 
   it('never learns text with a space-free run of 16 or more characters', () => {
     const predictor = sent('my code is abcdefghijklmnop', 'hunter2hunter2hunter2');
-    expect(predictor.suggestPhrase('my')).toBeUndefined();
-    expect(predictor.suggestPhrase('hu')).toBeUndefined();
+    expect(predictor.suggestPhrases('my')).toEqual([]);
+    expect(predictor.suggestPhrases('hu')).toEqual([]);
     expect(Object.keys(predictor.model().words)).toEqual([]);
-    expect(sent('abcdefghijklmno long').suggestPhrase('ab')).toBe('abcdefghijklmno long');
+    expect(sent('abcdefghijklmno long').suggestPhrases('ab')).toEqual(['abcdefghijklmno long']);
   });
 
   it('still loads a model file saved before phrases existed', () => {
     const { phrases: _phrases, ...old } = JSON.parse(JSON.stringify(createPredictor(base).model()));
     const predictor = createPredictor(base, readWordModel(old));
-    expect(predictor.suggestPhrase('pl')).toBeUndefined();
+    expect(predictor.suggestPhrases('pl')).toEqual([]);
     predictor.learn('please call the nurse');
-    expect(predictor.suggestPhrase('pl')).toBe('please call the nurse');
+    expect(predictor.suggestPhrases('pl')).toEqual(['please call the nurse']);
   });
 
   it('survives a round trip through JSON and drops malformed phrases', () => {
@@ -185,7 +191,7 @@ describe('Suggested Phrase', () => {
     const saved = JSON.parse(JSON.stringify(predictor.model()));
     saved.phrases.broken = { text: 5 };
     const restored = createPredictor(base, readWordModel(saved));
-    expect(restored.suggestPhrase('pl')).toBe('please call the nurse');
+    expect(restored.suggestPhrases('pl')).toEqual(['please call the nurse']);
     expect(Object.keys(restored.model().phrases!)).toEqual(['please call the nurse']);
   });
 });

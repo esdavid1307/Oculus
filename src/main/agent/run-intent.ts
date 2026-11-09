@@ -48,7 +48,8 @@ export type IntentOutcome = {
   // One short sentence for the overlay, at most SUMMARY_MAX_CHARS.
   summary: string;
   ms: number;
-  // Where the agent first clicked, in screen points, for a run that went well. What the user meant by "this".
+  // Where the agent first clicked, in screen points, even in a run that failed. Only a run that went well uses it, as
+  // what the user meant by "this".
   firstClick?: { x: number; y: number };
 };
 

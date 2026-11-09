@@ -95,11 +95,11 @@ async function play() {
   push({ phase: 'thinking', wakeProgress: 1 });
   await sleep(2200);
 
-  push({ phase: 'choosing', wakeProgress: 1, intents: past, highlight: 'intent-0', cells: 6 });
-  push({ phase: 'choosing', wakeProgress: 1, intents, highlight: 'intent-0', cells: 6 });
+  push({ phase: 'choosing', wakeProgress: 1, intents: past, highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
+  push({ phase: 'choosing', wakeProgress: 1, intents, highlight: 'intent-0', cells: 6, side: 'right', stepProgress: 0 });
   await sleep(950);
   for (const highlight of ['intent-1', 'intent-2', 'intent-3', 'something-else', 'intent-0']) {
-    push({ phase: 'choosing', wakeProgress: 1, intents, highlight, cells: 6 });
+    push({ phase: 'choosing', wakeProgress: 1, intents, highlight, cells: 6, side: 'right', stepProgress: 0 });
     await sleep(850);
   }
 
@@ -109,17 +109,18 @@ async function play() {
     text: 'I woul',
     group: null,
     suggestions: ['water', 'help', 'rest'],
-    phrase: 'I would like some water please',
+    phrases: ['I would like some water please'],
+    stepMs: 1000,
   };
-  push({ ...typing, highlight: 'phrase' });
+  push({ ...typing, highlight: 'phrase:I would like some water please' });
   await sleep(1100);
   push({ ...typing, highlight: 'word:water' });
   await sleep(900);
   push({ ...typing, highlight: 'abcde' });
   await sleep(900);
-  push({ phase: 'typing', wakeProgress: 1, text: 'I woul', group: 'abcde', highlight: 'c', suggestions: [] });
+  push({ phase: 'typing', wakeProgress: 1, text: 'I woul', group: 'abcde', highlight: 'c', suggestions: [], phrases: [], stepMs: 1000 });
   await sleep(1000);
-  push({ phase: 'typing', wakeProgress: 1, text: 'I would like some water', group: null, highlight: 'done', suggestions: [] });
+  push({ phase: 'typing', wakeProgress: 1, text: 'I would like some water', group: null, highlight: 'done', suggestions: [], phrases: [], stepMs: 1000 });
   await sleep(1400);
 
   push({ phase: 'running', wakeProgress: 1, intent: 'Open this video', activity: 'Clicking' });
@@ -127,9 +128,9 @@ async function play() {
   push({ phase: 'finished', wakeProgress: 1, intent: 'Open this video', ok: true, summary: 'Opened the video you were looking at.' });
   await sleep(2400);
 
-  push({ phase: 'icons', wakeProgress: 1, source: 'dock', highlight: { name: 'Safari', label: 'Safari', rect: tile('Safari') } });
+  push({ phase: 'icons', wakeProgress: 1, source: 'dock', highlight: { name: 'Safari', label: 'Safari', rect: tile('Safari') }, stepMs: 1400 });
   await sleep(1400);
-  push({ phase: 'icons', wakeProgress: 1, source: 'dock', highlight: { name: 'Notes', label: 'Notes', rect: tile('Notes') } });
+  push({ phase: 'icons', wakeProgress: 1, source: 'dock', highlight: { name: 'Notes', label: 'Notes', rect: tile('Notes') }, stepMs: 1400 });
   await sleep(1400);
 
   hideDot();

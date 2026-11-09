@@ -21,7 +21,8 @@ test('holding on a target shows Thinking, then the Suggested Intents and Somethi
   await oculus.expectPhase('thinking');
   await expect(oculus.page.locator('#status')).toContainText('Thinking');
   await oculus.expectPhase('choosing');
-  for (const [i, intent] of FAKE_INTENTS.entries()) await expect(oculus.key(`intent-${i}`)).toContainText(intent);
+  // The tile shows a short label; the full intent is its aria-label, and is what runs.
+  for (const [i, intent] of FAKE_INTENTS.entries()) await expect(oculus.key(`intent-${i}`)).toHaveAttribute('aria-label', intent);
   await expect(oculus.key('something-else')).toBeVisible();
 });
 
@@ -44,12 +45,14 @@ test('the scan steps through the choices', async ({ oculus }) => {
   await expect(oculus.key('intent-0')).not.toHaveClass(/highlighted/);
 });
 
-test('the step bar fills over the scan step from config.json, not a guess', async ({ oculus }) => {
+test('the ring around the lit choice fills, and starts again on the next one', async ({ oculus }) => {
   await oculus.openIntents();
-  const duration = await oculus.key('intent-0').evaluate((key) =>
-    key.getAnimations({ subtree: true }).find((animation) => (animation.effect as KeyframeEffect | null)?.pseudoElement === '::after')?.effect?.getTiming().duration,
-  );
-  expect(duration).toBe(TIMINGS.scanStepMs);
+  const step = () => oculus.page.locator('.key.highlighted').evaluate((key: HTMLElement) => Number(key.style.getPropertyValue('--step')));
+  await expect(oculus.key('intent-0')).toHaveClass(/highlighted/);
+  await expect.poll(step, { intervals: [50] }).toBeGreaterThan(0.3);
+  expect(await step()).toBeLessThan(1);
+  await expect(oculus.key('intent-1')).toHaveClass(/highlighted/, { timeout: TIMINGS.scanStepMs * 2 });
+  expect(await step()).toBeLessThan(0.5);
 });
 
 test('Something else asks Claude again', async ({ oculus }) => {
