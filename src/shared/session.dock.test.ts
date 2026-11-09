@@ -62,11 +62,11 @@ function thinking(options: Partial<Parameters<typeof createSession>[0]> = {}) {
 const ids = (state: ReturnType<ReturnType<typeof createSession>>) => (state.phase === 'choosing' ? layoutIntents(screen, state).map(({ id }) => id) : []);
 
 describe('the Dock Fixed Intent', () => {
-  it('comes after Type in every app, and before Cmd in Chrome', () => {
+  it('comes after Type in every app, and after Search and before Chrome in Chrome', () => {
     const outside = thinking().session(claude(5000, ['Pause']));
     expect(outside).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock'] });
     expect(ids(outside)).toEqual([CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'intent-0', 'something-else']);
-    expect(thinking({ inChrome: () => true }).session(claude(5000, ['Pause']))).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'cmd'] });
+    expect(thinking({ inChrome: () => true }).session(claude(5000, ['Pause']))).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'search', 'dock', 'chrome'] });
   });
 });
 

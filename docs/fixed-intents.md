@@ -6,7 +6,7 @@ Close, Quit (#93), Minimize (#64), Type (#66) and Dock (#65) show in every picke
 
 1. Up to 2 Intents from Intent History.
 2. A suggested "Skip the ad", if Claude offers one. It goes ahead of the Fixed Intents and takes the highlight, which starts its step again.
-3. Close (shown as Cancel, since Claude often offers to close the window), Quit, Minimize, Type and Dock, then Cmd when Chrome is in front, which opens a scan of Search, Next Tab, New Tab, Close Tab and Close (#67, #68).
+3. Close (shown as Cancel, since Claude often offers to close the window), Quit, Minimize, Type and Dock. With Chrome in front, Search goes after Type and a Chrome tile (a globe) after Dock, which opens a scan of Next Tab, New Tab, Close Tab and Close (#67, #68, #96). The picker holds 12 tiles at most, so with 2 past Intents in Chrome only 2 of Claude's fit.
 4. Claude's other Suggested Intents, joining after them. The highlight doesn't move when they do, and "Finding more…" shows in the first empty cell until they arrive.
 5. Something else, always last. It opens the picker again at once with the Fixed Intents, while Claude thinks of different ones.
 
@@ -26,7 +26,7 @@ Cells are kept for everything that can still come, so tiles never move once show
 - **Quit** is not a key press. One osascript checks the app named is still the process in front, then tells it to quit by its bundle id, the way the Dock's Quit does, ignoring the reply. So the app's own "Save changes?" or "Quit while downloading?" prompt stays up for the user, and Chrome's "Hold ⌘Q to quit" warning, which only watches the keyboard, never comes up. If another app is in front by then, nothing is quit and `[fixed-intent] skipped: …` is logged.
 - **Minimize** is Cmd+M, the Minimize command of the app in front, pressed through the same CGEvent path as the agent's. With no window it does nothing. The overlay never takes focus, so it doesn't get it.
 
-The Chrome Commands are pressed through System Events, and only while Chrome is still in front:
+Search and the Chrome Commands are pressed through System Events, and only while Chrome is still in front:
 
 - **Search** is Cmd+L, which selects the address bar, and **New Tab** is Cmd+T, which opens a tab with the focus in its address bar. Both then open the Gaze Keyboard, and Done types the text and presses Return, whatever field the focus reads as, since Chrome doesn't tell Accessibility which field it is.
   A target hold on the address bar opens the Gaze Keyboard on it as a Text Box, and Done searches the same way: the page read says the page doesn't have the focus (#95), so Done goes by the Text Box. Opened with Type, on no Text Box, an unfocused page never gets Return.

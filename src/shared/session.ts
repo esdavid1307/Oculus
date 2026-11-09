@@ -97,9 +97,9 @@ export type AgentAction =
   // The Stop Gesture during a run: the agent must stop acting at once.
   | { type: 'stop-run'; request: number }
   // A Fixed Intent was chosen. It never goes through Claude, so it teaches neither Gaze Correction nor Intent History.
-  // Close asks nothing of the outside world, Cmd only opens the Chrome Commands, and Dock asks for show-dock, as a Dock
+  // Close asks nothing of the outside world, Chrome only opens the Chrome Commands, and Dock asks for show-dock, as a Dock
   // hold does. Quit names the app the tile showed, so main quits nothing else.
-  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'cmd' | 'dock' | 'quit'> }
+  | { type: 'fixed-intent'; name: Exclude<FixedIntent, 'close' | 'chrome' | 'dock' | 'quit'> }
   | { type: 'fixed-intent'; name: 'quit'; app: string }
   | { type: 'open-icon'; source: IconSource; name: string }
   | { type: 'show-dock' }
@@ -120,10 +120,11 @@ const MAX_INTENTS = 3;
 // How long the Dock Fixed Intent waits for main to show the Dock and read it again before scanning it as last read.
 const DOCK_WAIT_MS = 2000;
 // In every picker, in this order, so the user learns where each one is in the scan. Quit only when there is an app in
-// front to quit.
-const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock'];
-// What Cmd opens, in scan order, with Close to leave.
-const CHROME_COMMANDS: FixedIntent[] = ['search', 'next-tab', 'new-tab', 'close-tab', CLOSE_KEY];
+// front to quit, and Search and Chrome only when Chrome is in front.
+const FIXED_INTENTS: FixedIntent[] = [CLOSE_KEY, 'quit', 'minimize', 'type', 'search', 'dock', 'chrome'];
+const CHROME_ONLY: FixedIntent[] = ['search', 'chrome'];
+// What Chrome opens, in scan order, with Close to leave.
+const CHROME_COMMANDS: FixedIntent[] = ['next-tab', 'new-tab', 'close-tab', CLOSE_KEY];
 
 // The sources an icon hold can stick to.
 type HeldSource = 'dock' | 'desktop' | 'menubar' | 'chrome';
@@ -239,7 +240,7 @@ export function createSession({
   orderIcons?: (source: IconSource, names: string[]) => number[];
   // The Neural Layer's Scan Pace: the step to use from the next restart of a scan. scanStepMs when left out.
   scanPace?: () => number;
-  // Whether Google Chrome is in front, read when a picker opens, which then offers Cmd for the Chrome Commands.
+  // Whether Google Chrome is in front, read when a picker opens, which then offers Search and Chrome.
   inChrome?: () => boolean;
   // The name of the process in front, empty when unknown, read when a picker opens for the Quit tile.
   frontApp?: () => string;
@@ -455,8 +456,11 @@ export function createSession({
     app = frontApp();
     // Finder can't be quit for good: macOS starts it again at once.
     const quittable = app !== '' && app !== 'Finder';
-    fixed = [...FIXED_INTENTS.filter((name) => name !== 'quit' || quittable), ...(inChrome() ? ['cmd' as const] : [])];
+    const chrome = inChrome();
+    fixed = FIXED_INTENTS.filter((name) => (name !== 'quit' || quittable) && (chrome || !CHROME_ONLY.includes(name)));
     inChromeCommands = false;
+    // shortcut: in Chrome with 2 past Intents this is 13, past the 12-tile cap, so Claude's third Intent is dropped;
+    // show 1 past Intent in Chrome or raise the cap if that third one is missed.
     cells = recent + fixed.length + MAX_INTENTS + 1;
     restartScan(t);
     scan(t);
@@ -487,7 +491,7 @@ export function createSession({
     if (phase !== 'icons') stop();
   }
 
-  // Cmd opens a scan of the Chrome Commands alone, like a menu bar item opens its menu.
+  // Chrome opens a scan of the Chrome Commands alone, like a menu bar item opens its menu.
   function openChromeCommands(t: number) {
     inChromeCommands = true;
     suggesting = false;
@@ -547,7 +551,7 @@ export function createSession({
       textBoxGaze = null;
       return openKeyboard(t, true);
     }
-    if (key === 'cmd') return openChromeCommands(t);
+    if (key === 'chrome') return openChromeCommands(t);
     if (key === 'dock') return chooseDock(t);
     if (key === 'quit') {
       act({ type: 'fixed-intent', name: 'quit', app });
