@@ -73,6 +73,12 @@ That's about 5 scan steps fewer per icon, about 10 s at the default 2 s step. Th
 
 **Cost.** Correcting a Gaze Region takes about 1.4 µs. Retraining Gaze Correction after a label takes at most about 80 ms, since it keeps the newest 120 labels. Ranking and pacing take well under 1 ms.
 
+**Live, in the app on the demo laptop** (dev mouse input with `OCULUS_MOUSE_SHIFT="-100,60"`, so every look reads 117 px off):
+
+- **Gaze Correction:** after 6 Start Gestures it switched itself on, and the held-out error fell from 117 px to 14 px.
+- **Scan Pace:** 16 quick Select Blinks took the step from 2000 to 1715 ms, eased in a little at a time.
+- **Icon Order:** opening Finder from an Icon Scan of the Dock was saved to `neural-layer.json`.
+
 ## Watching it learn
 
 `OCULUS_MOUSE_SHIFT="-100,60" npm run dev` makes the dev mouse input read off like a badly calibrated webcam. The terminal logs `[neural]` lines:
