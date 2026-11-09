@@ -557,7 +557,8 @@ export function createSession({
         cells = MAX_INTENTS + 1;
         restartScan(input.t);
         scan(input.t);
-      } else if (phase === 'choosing' && input.request === request) {
+      } else if (phase === 'choosing' && input.request === request && !inChromeCommands) {
+        // Not in the Chrome Commands scan: it holds only the commands, and Claude's answer is for the picker the user left.
         // Claude's Suggested Intents join the end of what the user is already scanning. Nothing moves.
         const shown = new Set(intents.map((text) => text.toLowerCase()));
         const added = input.intents.filter((text) => !shown.has(text.toLowerCase()) && shown.add(text.toLowerCase())).slice(0, MAX_INTENTS);

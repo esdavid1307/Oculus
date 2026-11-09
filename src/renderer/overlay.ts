@@ -218,11 +218,18 @@ const INTENT_ICON_NODES: Record<IntentIcon, IconNode> = {
 const intentLooks = new Map<string, IntentLook>();
 window.overlay.onIntentLooks((looks) => Object.entries(looks).forEach(([text, look]) => intentLooks.set(text, look)));
 
-// The cell straight after the Fixed Intents on a picker with no Intents, if it's left empty there.
+// The cell straight after the Fixed Intents on a picker with no Intents. layoutIntents keeps cells - 1 empty cells
+// there for Intents still to come, so there is none when cells is 1, as in the Chrome Commands scan. With cells of 2
+// or more, one placeholder Intent doesn't change the grid, so its cell is the empty one. Cached, since the state
+// arrives many times a second and the grid only changes with these.
+let emptyCellFor: { key: string; rect: Rect | undefined } | undefined;
 function firstEmptyCell(cells: number, side: IntentsSide, fixedIntents: string[]): Rect | undefined {
-  const keys = layoutIntents(screenSize, [], cells, side, fixedIntents, 0);
-  if (keys.findIndex((key) => key.id === 'something-else') <= fixedIntents.length) return undefined;
-  return layoutIntents(screenSize, [''], cells, side, fixedIntents, 0).find((key) => key.id === 'intent-0')?.rect;
+  const key = `${cells} ${side} ${fixedIntents.join(' ')}`;
+  if (emptyCellFor?.key !== key) {
+    const rect = cells > 1 ? layoutIntents(screenSize, [''], cells, side, fixedIntents, 0).find(({ id }) => id === 'intent-0')?.rect : undefined;
+    emptyCellFor = { key, rect };
+  }
+  return emptyCellFor.rect;
 }
 
 // Fixed Intents have their own look, since Claude never names them.

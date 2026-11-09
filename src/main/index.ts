@@ -370,7 +370,7 @@ function createHistory(ranker: unknown) {
 // Presses the key combos for the Chrome Commands Fixed Intents: next-tab is ^Tab (keyCode 48 with control down) and
 // close-tab is ⌘W (keyCode 13 with command down). Sent through System Events like the Gaze Keyboard typing, so it needs
 // Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
-const CHROME_COMMAND_SCRIPTS: Record<string, string> = {
+const CHROME_COMMAND_SCRIPTS: Partial<Record<FixedIntent, string>> = {
   'next-tab': `Application('System Events').keyCode(48, { using: 'control down' })`,
   'close-tab': `Application('System Events').keyCode(13, { using: 'command down' })`,
 };
@@ -501,6 +501,9 @@ function createOverlay() {
   const runFixedIntent = (name: FixedIntent) => {
     const script = CHROME_COMMAND_SCRIPTS[name];
     if (!script) return console.warn(`[fixed-intent] no script for ${name}`);
+    // The keys go to whatever app is in front. The user may have spent several scan steps in the Chrome Commands, and
+    // Chrome may have lost the front (its last tab closed, a notification clicked), so ⌘W must not close another app.
+    if (!chromeFront()) return console.warn(`[fixed-intent] ${name} skipped: Google Chrome is no longer in front`);
     execFile('osascript', ['-l', 'JavaScript', '-e', script], (error) => {
       if (error) console.error(`Could not run the ${name} Fixed Intent:`, error.message);
     });

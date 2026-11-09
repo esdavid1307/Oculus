@@ -109,9 +109,6 @@ export function layoutIntents({ width, height }: Screen, intents: string[], cell
   // then Claude's, then Something else in the last of the cells, then Close.
   const totalCells = cells + fixedIntents.length;
   const slots = Math.min(Math.max(totalCells, intents.length + fixedIntents.length + 1), MAX_INTENT_TILES - 1);
-  const past = intents.slice(0, recent);
-  // Claude's Intents fill what's left before Something else: slots - 1 cells, less the past and Fixed ones.
-  const later = intents.slice(recent, recent + Math.max(slots - 1 - past.length - fixedIntents.length, 0));
   const columns = slots + 1 > 2 * INTENT_MAX_ROWS ? 3 : 2;
   const rows = Math.ceil((slots + 1) / columns);
   const panelWidth = Math.floor(columns === 2 ? width / 3 : width * WIDE_PANEL);
@@ -126,14 +123,15 @@ export function layoutIntents({ width, height }: Screen, intents: string[], cell
     width: tileWidth,
     height: tileHeight,
   });
-  // Indices into `intents` are preserved as `intent-${i}` so a later `intents` input can be matched back.
-  const pastKeys = past.map((label, i) => ({ id: `intent-${i}`, label, rect: cell(i) }));
-  const fixedKeys = fixedIntents.map((name, i) => ({ id: FIXED_KEY + name, label: FIXED_LABELS[name] ?? name, rect: cell(past.length + i) }));
-  const laterKeys = later.map((label, i) => ({ id: `intent-${recent + i}`, label, rect: cell(past.length + fixedIntents.length + i) }));
+  // In scan order, cut together to the slots - 1 cells before Something else, so no tile can land on it or on Close.
+  // Indices into `intents` are kept as `intent-${i}`, so a later `intents` input can be matched back.
+  const ordered = [
+    ...intents.slice(0, recent).map((label, i) => ({ id: `intent-${i}`, label })),
+    ...fixedIntents.map((name) => ({ id: FIXED_KEY + name, label: FIXED_LABELS[name] ?? name })),
+    ...intents.slice(recent).map((label, i) => ({ id: `intent-${recent + i}`, label })),
+  ].slice(0, slots - 1);
   return [
-    ...pastKeys,
-    ...fixedKeys,
-    ...laterKeys,
+    ...ordered.map((key, i) => ({ ...key, rect: cell(i) })),
     { id: 'something-else', label: 'Something else', rect: cell(slots - 1) },
     { id: CLOSE_KEY, label: 'Close', rect: cell(slots) },
   ];

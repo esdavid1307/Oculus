@@ -121,6 +121,17 @@ describe('the Chrome Commands scan', () => {
     }
   });
 
+  it("keeps Claude's late answer out of it, when Cmd was chosen from the past Intents before Claude answered", () => {
+    const { session, fromPicker } = thinking(true);
+    session(pastIntents(4500, ['Pause', 'Mute']));
+    // Cmd is the third tile, lit from 8.5 s.
+    expect(session(tick(8600))).toMatchObject({ highlight: `${FIXED_KEY}cmd` });
+    session(select(8700));
+    const state = session(claude(9000, ['Like', 'Share', 'Save']));
+    expect(state).toMatchObject({ intents: [], fixedIntents: ['next-tab', 'close-tab'] });
+    expect(runsOrAsks(fromPicker())).toEqual([]);
+  });
+
   it('shows Cmd again, not the Chrome Commands, on the next picker', () => {
     const { session } = inCommands();
     session(select(5200));
@@ -151,6 +162,14 @@ describe('layoutIntents with Fixed Intents', () => {
   it("keeps all of Claude's Intents after the past ones and the Fixed ones", () => {
     const keys = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6, 'right', ['cmd'], 2);
     expect(keys.filter(({ id }) => id.startsWith('intent-')).map(({ label }) => label)).toEqual(['Pause', 'Mute', 'Like', 'Share', 'Save']);
+  });
+
+  it('never lets past or Fixed tiles spill onto Something else or Close, however many there are', () => {
+    const fixed = ['close', 'home', 'minimize', 'dock', 'type', 'cmd', 'search', 'new-tab', 'next-tab', 'close-tab'];
+    const keys = layoutIntents(screen, ['Pause', 'Mute', 'Like', 'Share', 'Save'], 6, 'right', fixed, 2);
+    expect(keys.slice(-2).map(({ id }) => id)).toEqual(['something-else', CLOSE_KEY]);
+    const rects = keys.map(({ rect }) => `${rect.x},${rect.y}`);
+    expect(new Set(rects).size).toBe(rects.length);
   });
 
   it('lays out the Chrome Commands scan with no empty tiles', () => {
