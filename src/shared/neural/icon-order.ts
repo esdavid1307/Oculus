@@ -59,18 +59,22 @@ export function createIconOrder(model: IconOrderModel = emptyIconOrder()) {
   }
 
   return {
-    // The names in the order to scan them. Ties keep screen order.
-    order(source: string, names: string[], now = Date.now()): string[] {
+    // The indices into `names`, in the order to scan them. Ties keep screen order (the input order). Working in indices
+    // instead of names lets a Dock with two icons sharing a name still be ordered: their ranker scores tie and the
+    // input-order tie-break keeps them adjacent in screen order.
+    order(source: string, names: string[], now = Date.now()): number[] {
       const rows = features(source, names, now);
       return names
-        .map((name, i) => ({ name, i, score: rankScore(model.ranker, rows[i]).value }))
+        .map((_, i) => ({ i, score: rankScore(model.ranker, rows[i]).value }))
         .sort((a, b) => b.score - a.score || a.i - b.i)
-        .map(({ name }) => name);
+        .map(({ i }) => i);
     },
-    // names are the icons that were scanned, in screen order, and chosen is the one opened.
-    learn(source: string, names: string[], chosen: string, now = Date.now()) {
-      const index = names.indexOf(chosen);
-      if (index >= 0) trainRanker(model.ranker, features(source, names, now), index, TRAINING);
+    // names are the icons that were scanned, in screen order, and chosenIndex is the position in names of the one
+    // opened. Index not name, so a Dock with two icons sharing a name trains on the one the user actually picked.
+    learn(source: string, names: string[], chosenIndex: number, now = Date.now()) {
+      if (chosenIndex < 0 || chosenIndex >= names.length) return;
+      trainRanker(model.ranker, features(source, names, now), chosenIndex, TRAINING);
+      const chosen = names[chosenIndex];
       const uses = (model.uses[source] ??= {});
       const use = uses[chosen];
       uses[chosen] = use ? { count: use.count + 1, last: now, heat: heatAt(use, now) + 1 } : { count: 1, last: now, heat: 1 };

@@ -14,8 +14,9 @@ export type LearningSignal =
   // A Select Blink during a scan. offsetMs is how long the chosen key had been highlighted, and undoes is true for a
   // press that takes the one before back, which then landed late.
   | { kind: 'select'; offsetMs: number; stepMs: number; undoes: boolean }
-  // An icon opened from an Icon Scan. scanned is every icon of that scan, in screen order.
-  | { kind: 'icon-opened'; source: string; scanned: string[]; chosen: string }
+  // An icon opened from an Icon Scan. scanned is every icon of that scan, in screen order, and chosenIndex is the
+  // position in scanned of the one opened. Index not name: two icons with the same name are told apart by position.
+  | { kind: 'icon-opened'; source: string; scanned: string[]; chosenIndex: number }
   // The user looked at target over this time and the choice was confirmed. The outside world fills in where the
   // uncorrected gaze was, since the session only sees corrected gaze.
   | { kind: 'gaze'; from: number; to: number; target: Position; weight: number };
@@ -37,12 +38,12 @@ export function createNeuralLayer({ screen, scanStepMs, model = emptyNeuralLayer
 
   return {
     correct: (region: GazeRegion) => gaze.correct(region),
-    orderIcons: (source: string, names: string[], now?: number) => icons.order(source, names, now),
+    orderIcons: (source: string, names: string[], now?: number): number[] => icons.order(source, names, now),
     scanStepMs: () => pace.stepMs(),
     // rawGaze is where the uncorrected gaze was over a gaze signal's time, or null if it wasn't tracked then.
     learn(signal: LearningSignal, rawGaze: (from: number, to: number) => Position | null = () => null, now = Date.now()) {
       if (signal.kind === 'select') pace.select(signal.offsetMs, signal.stepMs, signal.undoes);
-      else if (signal.kind === 'icon-opened') icons.learn(signal.source, signal.scanned, signal.chosen, now);
+      else if (signal.kind === 'icon-opened') icons.learn(signal.source, signal.scanned, signal.chosenIndex, now);
       else {
         const at = rawGaze(signal.from, signal.to);
         if (at) gaze.learn({ gaze: at, target: signal.target, weight: signal.weight } satisfies GazeExample);

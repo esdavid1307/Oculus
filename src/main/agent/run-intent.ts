@@ -197,8 +197,22 @@ export async function runIntent(run: IntentRun, config: AgentConfig, deps: RunIn
             })
           : await (deps.backends?.api ?? runAgentCheck)(options, { messages: deps.messages(), capture, execute, log, sleep, now, signal });
       outcome = readOutcome(result);
-      const click = result.actions.find(({ ok, action }) => ok && action?.type === 'click' && action.at)?.action;
-      if (click?.type === 'click' && click.at) outcome = { ...outcome, firstClick: click.at };
+      // Pick the click nearest the Gaze Region (in screen coords) rather than the first click: runs often begin with a
+      // focus click, a cookie-consent dismissal or a dialog close that isn't what the user meant, so the first click
+      // would anchor the Gaze Correction label to the wrong spot.
+      const originX = run.frame.x + run.region.x;
+      const originY = run.frame.y + run.region.y;
+      let bestDistance = Infinity;
+      let bestClick: { x: number; y: number } | undefined;
+      for (const { ok, action } of result.actions) {
+        if (!ok || action?.type !== 'click' || !action.at) continue;
+        const distance = Math.hypot(action.at.x - originX, action.at.y - originY);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestClick = action.at;
+        }
+      }
+      if (bestClick) outcome = { ...outcome, firstClick: bestClick };
       // "Done" is the agent's own word, so it stands only if the screen agrees.
       if (outcome.ok && typedNowhere) outcome = { ok: false, stopped: false, summary: TYPED_NOWHERE };
       else if (outcome.ok && first && unchanged(first, await deps.capture())) outcome = { ok: false, stopped: false, summary: NOTHING_CHANGED };
