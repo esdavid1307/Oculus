@@ -392,10 +392,13 @@ window.overlay.onLargeView((settings) => {
 });
 
 // textContent only: icon names come from other apps.
-function showIcon({ highlight, stepMs }: Extract<OverlayState, { phase: 'icons' }>) {
+function showIcon({ highlight, source, stepMs }: Extract<OverlayState, { phase: 'icons' }>) {
   iconMagnifier.hidden = largeView === undefined;
   if (largeView === undefined) return place(iconHighlight, highlight.rect);
-  const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale);
+  // Menu bar items, menu commands and Chrome elements fit the highlighted bounds; Dock and Desktop icons are grown
+  // to the minimum size so a tiny icon is still easy to see.
+  const mode = source === 'menubar' || source === 'menu' ? 'fit' : 'grow';
+  const { frame, panel } = magnify(highlight.rect, screenSize, largeView.uiScale, mode);
   place(iconHighlight, frame);
   place(iconMagnifier, panel);
   const label = highlight.label ?? highlight.name;

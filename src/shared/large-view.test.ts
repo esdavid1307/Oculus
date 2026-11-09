@@ -103,6 +103,61 @@ describe('magnify', () => {
   });
 });
 
+describe('magnify with mode: "fit"', () => {
+  it('wraps a menu bar item with padding instead of growing it to the minimum size', () => {
+    const item = { x: 800, y: 0, width: 40, height: 22 };
+    const { frame } = magnify(item, screen, 1.25, 'fit');
+    // Each side is padded symmetrically; the top is clamped at the screen edge so the padding appears below.
+    expect(frame.width).toBe(40 + 12);
+    expect(frame.height).toBe(22 + 12);
+    expect(frame.y).toBe(0);
+    // Smaller than the minimum-size frame grown by MIN_TARGET.
+    expect(frame.width).toBeLessThan(MIN_TARGET);
+  });
+
+  it('centres the fitted frame on an item away from the edges', () => {
+    const item = { x: 780, y: 480, width: 40, height: 40 };
+    const { frame } = magnify(item, screen, 1.25, 'fit');
+    expect(frame.width).toBe(40 + 12);
+    expect(frame.height).toBe(40 + 12);
+    expect(frame.x + frame.width / 2).toBe(800);
+    expect(frame.y + frame.height / 2).toBe(500);
+  });
+
+  it('covers the whole item at every tested scale and never pulls the item off-screen', () => {
+    for (const scale of [1, 1.25, 2])
+      for (const [name, icon] of Object.entries(icons)) {
+        const { frame, panel } = magnify(icon, screen, scale, 'fit');
+        // Item is inside the frame.
+        expect(frame.x, name).toBeLessThanOrEqual(icon.x);
+        expect(frame.y, name).toBeLessThanOrEqual(icon.y);
+        expect(frame.x + frame.width, name).toBeGreaterThanOrEqual(icon.x + icon.width);
+        expect(frame.y + frame.height, name).toBeGreaterThanOrEqual(icon.y + icon.height);
+        // Frame and panel both inside the screen.
+        expect(inside(frame), name).toBe(true);
+        expect(inside(panel), name).toBe(true);
+        // Panel never covers the item or the frame.
+        expect(overlaps(panel, icon), name).toBe(false);
+        expect(overlaps(panel, frame), name).toBe(false);
+      }
+  });
+
+  it('does not enforce the minimum-size floor that grow mode does', () => {
+    const tiny = { x: 100, y: 22, width: 22, height: 22 };
+    const grown = magnify(tiny, screen, 1.25, 'grow').frame;
+    const fitted = magnify(tiny, screen, 1.25, 'fit').frame;
+    // Grow pushes both dimensions up to MIN_TARGET * uiScale. Fit stays close to the item.
+    expect(grown.width).toBeGreaterThanOrEqual(MIN_TARGET);
+    expect(fitted.width).toBeLessThan(MIN_TARGET);
+    expect(fitted.height).toBeLessThan(MIN_TARGET);
+  });
+
+  it('defaults to "grow" mode when none is passed, so Dock and Desktop callers keep the minimum-size frame', () => {
+    const item = { x: 800, y: 0, width: 40, height: 22 };
+    expect(magnify(item, screen, 1.25)).toEqual(magnify(item, screen, 1.25, 'grow'));
+  });
+});
+
 describe('planDock', () => {
   it('grows the Dock and saves the original when nothing is saved', () => {
     expect(planDock(true, undefined)).toEqual({ type: 'grow', saveOriginal: true });

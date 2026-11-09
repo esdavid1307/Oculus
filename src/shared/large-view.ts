@@ -11,6 +11,9 @@ const DOCK_ICON_RANGE = [48, 128] as const;
 
 // The smallest highlight frame, before scaling. Menu bar items are only about 22 high.
 export const MIN_TARGET = 96;
+// Padding around a fitted highlight frame, on each side, in screen pixels. Menu bar items, menu commands and Chrome
+// elements use this instead of being grown to MIN_TARGET, so the box stays close to what the user is looking at.
+export const FIT_PADDING = 6;
 
 const clamp = (value: number, [min, max]: readonly [number, number]) => Math.min(Math.max(value, min), max);
 
@@ -31,13 +34,17 @@ export function readLargeView(settings: unknown): LargeView {
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 const centre = (r: Rect) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
 
-// frame is the icon's highlight grown to a size that is easy to see. panel is where its name is shown large, on the
-// side of the screen away from the icon, so it never covers it. Icons sit on the edges: the Dock at the bottom or a
-// side, the menu bar at the top, Desktop icons at the right.
-export function magnify(icon: Rect, { width, height }: Screen, uiScale: number): { frame: Rect; panel: Rect } {
-  const min = Math.min(MIN_TARGET * uiScale, width, height);
-  const frameWidth = Math.min(Math.max(icon.width, min), width);
-  const frameHeight = Math.min(Math.max(icon.height, min), height);
+// frame is the icon's highlight: 'grow' enlarges it to at least MIN_TARGET so a small Dock or Desktop icon is easy to
+// see; 'fit' wraps the icon with FIT_PADDING on each side, for a menu bar item, a menu command or a Chrome element
+// where the item's own bounds already tell the user what is highlighted. panel is where its name is shown large, on
+// the side of the screen away from the icon, so it never covers it. Icons sit on the edges: the Dock at the bottom
+// or a side, the menu bar at the top, Desktop icons at the right.
+export function magnify(icon: Rect, { width, height }: Screen, uiScale: number, mode: 'grow' | 'fit' = 'grow'): { frame: Rect; panel: Rect } {
+  const grow = Math.min(MIN_TARGET * uiScale, width, height);
+  const minWidth = mode === 'fit' ? Math.min(icon.width + 2 * FIT_PADDING, width) : grow;
+  const minHeight = mode === 'fit' ? Math.min(icon.height + 2 * FIT_PADDING, height) : grow;
+  const frameWidth = Math.min(Math.max(icon.width, minWidth), width);
+  const frameHeight = Math.min(Math.max(icon.height, minHeight), height);
   const c = centre(icon);
   const frame = {
     x: Math.min(Math.max(c.x - frameWidth / 2, 0), width - frameWidth),

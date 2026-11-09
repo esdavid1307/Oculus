@@ -93,7 +93,7 @@ The mode, on by default, that makes what Oculus does not draw itself big enough 
 _Avoid_: Zoom, accessibility mode
 
 **Icon Magnifier**:
-The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small icon is also grown to a minimum size.
+The large panel shown during an Icon Scan with the name of the highlighted icon, on the side of the screen away from it. The highlight frame around a small Dock or Desktop icon is grown to a minimum size; the frame around a menu bar item, a menu command or a Chrome element fits the item's bounds plus a small padding, so the user can see exactly which one is highlighted.
 _Avoid_: Tooltip, zoom
 
 **Suggested Phrase**:
