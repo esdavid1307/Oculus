@@ -4,8 +4,9 @@ import type { GazeRegion } from './gaze';
 import type { Rect } from './geometry';
 import type { Icon, TextBox } from './session';
 
-// One element as the helper reports it: its AX role, a name a person can read, and its frame in screen points.
-export type RawElement = { role: string; name: string; x: number; y: number; width: number; height: number };
+// One element as the helper reports it: its AX role and subrole, a name a person can read, and its frame in screen
+// points. A helper built before the subrole was added leaves it out.
+export type RawElement = { role: string; subrole?: string; name: string; x: number; y: number; width: number; height: number };
 
 // Six steps of 2 seconds: one round of the scan stays under 12 seconds.
 export const MAX_CHROME_ELEMENTS = 6;
@@ -37,9 +38,11 @@ const inside = (a: RawElement, b: RawElement) => a.x >= b.x && a.y >= b.y && a.x
 export function chromeTextBoxes(found: RawElement[], display: Rect): TextBox[] {
   return found
     .filter((e) => usable(e) && TEXT_ROLES.has(e.role) && e.width >= MIN_SIDE && e.height >= MIN_SIDE)
-    .map(({ role, name, x, y, width, height }) => ({
+    .map(({ role, subrole, name, x, y, width, height }) => ({
       name: `${role}@${Math.round(x)},${Math.round(y)}:${cut(name)}`,
       rect: { x: x - display.x, y: y - display.y, width, height },
+      role,
+      subrole: typeof subrole === 'string' ? subrole : '',
     }));
 }
 

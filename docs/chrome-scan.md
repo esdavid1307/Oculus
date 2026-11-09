@@ -14,6 +14,15 @@ It's off by default. Turn it on with `"chromeScan": true` in `~/Library/Applicat
 
 Text boxes (the address bar, a search box) are left to the Gaze Keyboard: a 1 second look at one still opens the keyboard on it (#13), even when Chrome elements are around it. The helper's lookup also finds Chrome's web text boxes, which the System Events read (`READ_TEXT_BOXES`) can't see, or only after more than 5 seconds once Chrome's tree is on, so with `chromeScan` on they are added to the text boxes the Gaze Keyboard opens on.
 
+## Done in Chrome: Return and learning
+
+On Done, main reads the focused field (`READ_FOCUSED_FIELD` in `src/main/focused-field.ts`) to press Return only in a single-line field and to never learn text from a password field. Chrome never gives its focused element to Accessibility, even with its tree on: `AXFocusedUIElement` answers `kAXErrorNoValue`. So for Chrome (#72) the field is found two other ways:
+
+1. **The page.** With Chrome in front and nothing focused for Accessibility, main asks the front tab which element has focus, through Chrome's scripting, and maps it to the role Chrome's tree would show. A password input is secure. A text, email, URL, number or search input, a `searchbox`, and a `combobox` (Google's search box, which is a `<textarea>`) are single-line. A `<textarea>` and a rich editor (`contenteditable`) are multi-line, unless the page says `aria-multiline="false"`. A field whose `enterkeyhint` is `send`, `search` or `go` submits even when it is multi-line, since the page says Return sends there. It looks inside same-origin frames and shadow roots, but not cross-origin frames. This needs **View > Developer > Allow JavaScript from Apple Events** turned on in Chrome. It is off by default, and while it is off the log says so once.
+2. **The Text Box.** When the keyboard was opened on a Text Box, the session sends its role and subrole from the lookup with the text. When the field can't be read, that decides Return. It needs no Chrome setting. It never decides learning, because the lookup came earlier and the page may have changed the field since: with nothing read at Done, the text isn't learned.
+
+With neither (the setting off, and the keyboard opened by Type), Done types without Return and learns nothing, as before. A chat box with no `enterkeyhint` (most of them) reads as multi-line, so it types without sending.
+
 While Chrome is the app in front, with `chromeScan` on or off, the menu bar's Icon Scan only starts while the gaze centre is on the menu bar or past the top edge, not anywhere within a radius of it. So a tab, the address bar and a search box just under the toolbar keep their 1 second hold. In other apps the menu bar still counts within a radius.
 
 Choosing an element confirms nothing yet, so only Scan Pace learns from that Select Blink. If the Intent then runs well, Gaze Correction learns from the 3 second hold, as it does for any run, and never for "Skip the ad". Chrome elements change with every page, so Icon Order learns nothing from them.
@@ -60,7 +69,7 @@ On real YouTube search results (2026-11-09, logged out, a throwaway profile) it 
 ## Limits
 
 - **Tabs aren't found.** Chrome 157 doesn't expose its tabs this way. Looking at the tab strip falls back to the 1 second target hold.
-- **Two Chrome processes** (another `--user-data-dir`): Chrome's scripting can't tell them apart, so per-site Intent History uses the app alone while two run.
+- **Two Chrome processes** (another `--user-data-dir`): Chrome's scripting can't tell them apart, so per-site Intent History uses the app alone while two run, and Done doesn't ask the page for its focused field.
 - **The helper is dev-only.** It is built from the repo with `swiftc`, like the hands script is read from the repo. A packaged app would need it built and shipped.
 - **Chrome builds its Accessibility tree** for every page once the helper has watched it, as with VoiceOver on. No slowdown was seen on the mock page, but heavy pages (YouTube, Google Docs) weren't measured.
 - **Primary display and the Chrome window in front only**, like the rest of the Intent flow.

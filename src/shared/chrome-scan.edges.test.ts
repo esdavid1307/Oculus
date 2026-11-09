@@ -74,6 +74,13 @@ describe('chromeElements with real lookups', () => {
   // Measured: the helper returns YouTube's search box as an AXComboBox, which READ_TEXT_BOXES can't see in time (#13).
   it('gives the web text boxes it found to the Gaze Keyboard, in overlay coordinates, and nothing else', () => {
     const found = [raw('AXComboBox', 'Search', 640, 136, 559, 36), raw('AXButton', 'Search', 1199, 136, 64, 36), raw('AXTextField', 'Tiny', 0, 0, 4, 4)];
-    expect(chromeTextBoxes(found, { ...display, x: 100, y: 0 })).toEqual([{ name: 'AXComboBox@640,136:Search', rect: { x: 540, y: 136, width: 559, height: 36 } }]);
+    expect(chromeTextBoxes(found, { ...display, x: 100, y: 0 })).toEqual([
+      { name: 'AXComboBox@640,136:Search', rect: { x: 540, y: 136, width: 559, height: 36 }, role: 'AXComboBox', subrole: '' },
+    ]);
+  });
+
+  it('keeps the subrole, so Done knows a password box from a search box when Chrome hides the focus', () => {
+    const found = [{ ...raw('AXTextField', 'Password', 0, 200, 300, 40), subrole: 'AXSecureTextField' }];
+    expect(chromeTextBoxes(found, display)).toMatchObject([{ role: 'AXTextField', subrole: 'AXSecureTextField' }]);
   });
 });

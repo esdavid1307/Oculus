@@ -14,7 +14,7 @@ import { createCapture } from './agent/capture';
 import { runAgentCheckInElectron, runIntentInElectron } from './agent/check';
 import { createMainNeuralLayer } from './neural';
 import { createChromeScan } from './chrome-scan';
-import { isSecure, parseFocusedField, pressesReturn, READ_FOCUSED_FIELD, type FocusedField } from './focused-field';
+import { CHROME_JAVASCRIPT_OFF, isSecure, parseFocusedField, pressesReturn, READ_FOCUSED_FIELD, type FocusedField } from './focused-field';
 import { readAgentConfig } from './agent/config';
 import { suggestIntents } from './agent/intents';
 import spokenEnglish from './words/spoken-english.json';
@@ -251,7 +251,9 @@ const READ_TEXT_BOXES = `function run() {
             try { name = el.description() || ''; } catch (e) {}
             if (!name) try { name = el.title() || ''; } catch (e) {}
             if (!name) try { name = el.help() || ''; } catch (e) {}
-            results.push({ name: name || role, role: role, x: pos[0], y: pos[1], width: size[0], height: size[1] });
+            var subrole = '';
+            try { subrole = el.subrole() || ''; } catch (e) {}
+            results.push({ name: name || role, role: role, subrole: subrole, x: pos[0], y: pos[1], width: size[0], height: size[1] });
           }
         } catch (e) {}
       }
@@ -264,7 +266,7 @@ const READ_TEXT_BOXES = `function run() {
   } catch (e) { return '[]'; }
 }`;
 
-type RawTextBox = { name: string; role: string; x: number; y: number; width: number; height: number };
+type RawTextBox = { name: string; role: string; subrole: string; x: number; y: number; width: number; height: number };
 
 // Read can be slow on big web pages, so it gets more time than the icon read.
 const READ_TEXT_BOXES_TIMEOUT_MS = 4000;
@@ -284,7 +286,14 @@ function readTextBoxes(origin: Rect, done: (boxes: TextBox[]) => void) {
       return done([]);
     }
     // The index keeps the name unique when a page has several boxes of the same role or description.
-    done(raw.map((box, i) => ({ name: `${box.role}#${i}:${box.name}`, rect: { x: box.x - origin.x, y: box.y - origin.y, width: box.width, height: box.height } })));
+    done(
+      raw.map((box, i) => ({
+        name: `${box.role}#${i}:${box.name}`,
+        rect: { x: box.x - origin.x, y: box.y - origin.y, width: box.width, height: box.height },
+        role: box.role,
+        subrole: box.subrole,
+      })),
+    );
   });
 }
 
@@ -431,9 +440,14 @@ function typeText(text: string, submit = false) {
 // The box the text is about to go into, which decides whether it is learned and whether Done submits it.
 // Typing waits on this, so a hung osascript is cut off and, like any other failure, reads as no field: the text is
 // still typed, only not learned or submitted.
+let toldChromeJavaScriptOff = false;
 function readFocusedField(done: (field: FocusedField) => void) {
   execFile('osascript', ['-l', 'JavaScript', '-e', READ_FOCUSED_FIELD], { timeout: 2000 }, (error, stdout) => {
     if (error) console.warn('Could not read the focused field, so not learning or submitting:', error.message);
+    if (!error && stdout.trim() === CHROME_JAVASCRIPT_OFF && !toldChromeJavaScriptOff) {
+      toldChromeJavaScriptOff = true;
+      console.warn('Chrome hides which field has focus. To let Done submit and learn there, turn on View > Developer > Allow JavaScript from Apple Events in Chrome.');
+    }
     done(error ? null : parseFocusedField(stdout));
   });
 }
@@ -547,9 +561,12 @@ function createOverlay() {
     if (action.type === 'type-text') {
       // Only Done reaches this, so text the user stopped or threw away never teaches the predictor.
       // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
+      // When the field can't be read, the Text Box the keyboard was opened on still tells whether Return is safe. Only
+      // the field read now decides learning: the box was read earlier, and the page may have changed it since.
       readFocusedField((field) => {
-        const submit = pressesReturn(field, action.submit);
-        console.log(`[type-text] field=${field ? `${field.role}/${field.subrole}` : 'unknown'} submit=${submit}`);
+        const known = field ?? action.box ?? null;
+        const submit = pressesReturn(known, action.submit);
+        console.log(`[type-text] field=${known ? `${known.role}/${known.subrole}` : 'unknown'}${field ? '' : known ? ' (Text Box)' : ''} submit=${submit}`);
         typeText(action.text, submit);
         if (!words.enabled || isSecure(field)) return;
         // A failed save must not stop the text being typed, so it only warns.
