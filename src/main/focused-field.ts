@@ -117,9 +117,10 @@ export function pressesReturn(field: FocusedField, submit = false): boolean {
 // What Done does with the text, from what the read found and the Text Box the keyboard was opened on (if any). Learning
 // goes only by the field read now: the box was read earlier, and the page may have changed it since. Return goes by the
 // field read now too, and by the box only when Chrome refused the page read, since it is then the only clue. When the
-// page says no field has focus, or the read failed, Return is never pressed: it could land on a button.
-export function onDone(read: FieldRead, box: FieldKind | undefined, submit: boolean): { submit: boolean; learn: boolean } {
+// page says no field has focus, or the read failed, Return is never pressed: it could land on a button. inMessages, while
+// Messages is in front, always sends: its compose box takes many lines, so the field alone would never press Return.
+export function onDone(read: FieldRead, box: FieldKind | undefined, submit: boolean, inMessages = false): { submit: boolean; learn: boolean } {
   const field = read.kind === 'field' ? read.field : null;
   const known = field ?? (read.kind === 'javascript-off' ? (box ?? null) : null);
-  return { submit: pressesReturn(known, submit), learn: !isSecure(field) };
+  return { submit: pressesReturn(known, submit || inMessages), learn: !isSecure(field) };
 }

@@ -513,6 +513,8 @@ function createOverlay() {
   // Whether Google Chrome is in front, from the menu bar read every ICON_READ_MS: its first item is the front app's
   // menu. Used for the Chrome menu bar rule and for the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
   const chromeFront = () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true;
+  // The same read, for Done always sending in Messages.
+  const messagesFront = () => icons.menubar[0]?.name.startsWith('["Messages",') === true;
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
@@ -571,8 +573,8 @@ function createOverlay() {
       // See onDone for when the Text Box the keyboard was opened on stands in for a field that can't be read.
       readFocusedField((read) => {
         // Search and New Tab force Return only while Chrome is in front: if main skipped their key press, the text is in
-        // another app, where Return could send it.
-        const { submit, learn } = onDone(read, action.box, action.submit === true && chromeFront());
+        // another app, where Return could send it. Messages always sends, checked now for the same reason.
+        const { submit, learn } = onDone(read, action.box, action.submit === true && chromeFront(), messagesFront());
         const field = read.kind === 'field' ? `${read.field.role}/${read.field.subrole}` : read.kind;
         console.log(`[type-text] field=${field}${read.kind === 'javascript-off' && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
         typeText(action.text, submit);
