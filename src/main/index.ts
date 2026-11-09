@@ -378,11 +378,14 @@ function createHistory(ranker: unknown) {
   };
 }
 
-// Presses the key combos for the Chrome Commands Fixed Intents: next-tab is ^Tab (keyCode 48 with control down) and
-// close-tab is ⌘W (keyCode 13 with command down). Sent through System Events like the Gaze Keyboard typing, so it needs
-// Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
-const CHROME_COMMAND_SCRIPTS: Record<'next-tab' | 'close-tab', string> = {
+// Presses the key combos for the Chrome Commands Fixed Intents: search is ⌘L (keyCode 37), next-tab is ^Tab (keyCode 48
+// with control down), new-tab is ⌘T (keyCode 17) and close-tab is ⌘W (keyCode 13). Search and New Tab leave the focus in
+// the address bar for the Gaze Keyboard the session opens. Sent through System Events like the Gaze Keyboard typing, so
+// it needs Accessibility; a denied permission surfaces as an error in the log, not an overlay message.
+const CHROME_COMMAND_SCRIPTS: Record<'search' | 'next-tab' | 'new-tab' | 'close-tab', string> = {
+  search: `Application('System Events').keyCode(37, { using: 'command down' })`,
   'next-tab': `Application('System Events').keyCode(48, { using: 'control down' })`,
+  'new-tab': `Application('System Events').keyCode(17, { using: 'command down' })`,
   'close-tab': `Application('System Events').keyCode(13, { using: 'command down' })`,
 };
 
@@ -427,7 +430,9 @@ function typeText(text: string, submit = false) {
   const script = [
     'on run argv',
     'tell application "System Events" to keystroke (item 1 of argv)',
-    ...(submit ? ['tell application "System Events" to key code 36'] : []),
+    // Forward Delete (117) first drops an inline completion, like Chrome's address bar adds, so Return takes what was
+    // typed. With the caret at the end and nothing selected it does nothing.
+    ...(submit ? ['tell application "System Events" to key code 117', 'tell application "System Events" to key code 36'] : []),
     'end run',
   ];
   execFile('osascript', [...script.flatMap((line) => ['-e', line]), text], (error) => {
@@ -565,7 +570,9 @@ function createOverlay() {
       // The field is checked before typing, so typing that moves focus (auto-advancing code boxes) can't fool it.
       // See onDone for when the Text Box the keyboard was opened on stands in for a field that can't be read.
       readFocusedField((read) => {
-        const { submit, learn } = onDone(read, action.box, action.submit === true);
+        // Search and New Tab force Return only while Chrome is in front: if main skipped their key press, the text is in
+        // another app, where Return could send it.
+        const { submit, learn } = onDone(read, action.box, action.submit === true && chromeFront());
         const field = read.kind === 'field' ? `${read.field.role}/${read.field.subrole}` : read.kind;
         console.log(`[type-text] field=${field}${read.kind === 'javascript-off' && action.box ? ` (Text Box ${action.box.role})` : ''} submit=${submit}`);
         typeText(action.text, submit);
@@ -637,7 +644,7 @@ function createOverlay() {
       console.log(`[fixed-intent] ${action.name}`);
       // Type needs nothing from here: the session opens the Gaze Keyboard, and the text goes to whatever has focus.
       if (action.name === 'type') return;
-      if (action.name === 'next-tab' || action.name === 'close-tab') return runFixedIntent(action.name);
+      if (action.name !== 'home' && action.name !== 'minimize') return runFixedIntent(action.name);
       void execute({ type: 'key', keys: FIXED_INTENT_KEYS[action.name], repeat: 1 }).catch((error: Error) =>
         console.error(`Could not run the Fixed Intent ${action.name}:`, error.message),
       );
@@ -657,9 +664,15 @@ function createOverlay() {
         console.error('Could not focus the text box:', error.message),
       );
     }
-    // The Dock moves when it shows, so it is read again for the scan.
     else if (action.type === 'snapshot-gaze') neural.snapshotHold(action.held.from, action.held.to);
-    else if (action.type === 'show-dock') showDock(bounds, refreshIcons);
+    else if (action.type === 'show-dock')
+      // The Dock moves when it shows, so it is read again, and the session told, for a scan that started before it had.
+      showDock(bounds, () =>
+        readIcons('dock', bounds, (read) => {
+          icons.dock = read;
+          advance({ type: 'dock-shown', t: Date.now(), icons: read });
+        }),
+      );
     else if (action.type === 'release-dock') releaseDock();
     else if (action.type === 'learn') neural.learn(action.signal);
     else if (action.type === 'close-menu') {
