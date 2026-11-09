@@ -459,9 +459,27 @@ function readFocusedField(done: (read: FieldRead) => void) {
   });
 }
 
-// Home is macOS's Show Desktop: Cmd and the Mission Control key, which is F3 on Apple keyboards. The F3 keycode itself
-// doesn't do it, and F11, the Keyboard Shortcuts setting, can be turned off. Cmd+M with no window does nothing.
-const FIXED_INTENT_KEYS: Record<'home' | 'minimize', string> = { home: 'cmd+mission_control', minimize: 'cmd+m' };
+// Quits the app in front through scripting, not ⌘Q, so its "Save changes?" prompts still show and Chrome's "Hold ⌘Q to
+// quit" doesn't apply. The front app is checked in the same script, so one that came to the front since the picker
+// opened is never quit. Responses are ignored, since a save prompt keeps the quit waiting on the user.
+const QUIT_FRONT_APP = `on run {appName}
+  tell application "System Events"
+    set frontProcess to first process whose frontmost is true
+    if name of frontProcess is not appName then return "skipped: " & (name of frontProcess as text) & " is in front, not " & appName
+    set bundleId to bundle identifier of frontProcess
+  end tell
+  ignoring application responses
+    tell application id bundleId to quit
+  end ignoring
+  return "quit " & appName
+end run`;
+
+function quitFrontApp(name: string) {
+  execFile('osascript', ['-e', QUIT_FRONT_APP, name], (error, stdout) => {
+    if (error) return console.error(`Could not quit ${name}:`, error.message);
+    console.log(`[fixed-intent] ${stdout.trim()}`);
+  });
+}
 
 // Runs never overlap: two would fight over the same cursor.
 let running = false;
@@ -510,9 +528,15 @@ function createOverlay() {
   // Walking the front window's AX tree is costly, so text boxes are only read from the Start Gesture until the session
   // goes back to idle, not all the time. The 3 s Start Gesture gives the first read time to land before a target hold.
   let wantTextBoxes = false;
-  // Whether Google Chrome is in front, from the menu bar read every ICON_READ_MS: its first item is the front app's
-  // menu. Used for the Chrome menu bar rule and for the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
-  const chromeFront = () => icons.menubar[0]?.name.startsWith('["Google Chrome",') === true;
+  // The app in front, from the menu bar read every ICON_READ_MS: its first item is the front app's menu, named by its
+  // path [process, bar, item]. An app with no menu bar leaves Control Center first, so the front app is unknown then.
+  // Used for the Quit tile, the Chrome menu bar rule and the Chrome Commands Fixed Intent (Cmd), with no extra osascript.
+  const frontApp = () => {
+    const first = icons.menubar[0];
+    const process = first ? (JSON.parse(first.name) as string[])[0] : '';
+    return process === 'ControlCenter' ? '' : process;
+  };
+  const chromeFront = () => frontApp() === 'Google Chrome';
   const refreshTextBoxes = () => readTextBoxes(bounds, (read) => (textBoxes = wantTextBoxes ? read : []));
   const refreshIcons = () => {
     readIcons('dock', bounds, (read) => (icons.dock = read));
@@ -644,8 +668,10 @@ function createOverlay() {
       console.log(`[fixed-intent] ${action.name}`);
       // Type needs nothing from here: the session opens the Gaze Keyboard, and the text goes to whatever has focus.
       if (action.name === 'type') return;
-      if (action.name !== 'home' && action.name !== 'minimize') return runFixedIntent(action.name);
-      void execute({ type: 'key', keys: FIXED_INTENT_KEYS[action.name], repeat: 1 }).catch((error: Error) =>
+      if (action.name === 'quit') return quitFrontApp(action.app);
+      if (action.name !== 'minimize') return runFixedIntent(action.name);
+      // Cmd+M with no window does nothing.
+      void execute({ type: 'key', keys: 'cmd+m', repeat: 1 }).catch((error: Error) =>
         console.error(`Could not run the Fixed Intent ${action.name}:`, error.message),
       );
     } else if (action.type === 'stop-run') {
@@ -703,6 +729,7 @@ function createOverlay() {
     orderIcons: neural.orderIcons,
     scanPace: neural.scanPace,
     inChrome: chromeFront,
+    frontApp,
   });
   const advance = (input: SessionInput) => {
     const state = session(input);

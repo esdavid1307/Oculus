@@ -2,7 +2,10 @@
 import { describe, expect, it } from 'vitest';
 import type { GazeEvent } from './gaze';
 import { CLOSE_KEY, layoutIntents } from './keyboard';
-import { createSession, type AgentAction, type Icon } from './session';
+import { createSession as createBareSession, type AgentAction, type Icon } from './session';
+
+// Quit only shows with an app in front to quit, so these tests put one there to keep it in its place in the scan.
+const createSession = (options: Parameters<typeof createBareSession>[0]) => createBareSession({ frontApp: () => 'TextEdit', ...options });
 
 const screen = { width: 1600, height: 1000 };
 const inBox = { x: 800, y: 500, radius: 120 };
@@ -61,9 +64,9 @@ const ids = (state: ReturnType<ReturnType<typeof createSession>>) => (state.phas
 describe('the Dock Fixed Intent', () => {
   it('comes after Type in every app, and before Cmd in Chrome', () => {
     const outside = thinking().session(claude(5000, ['Pause']));
-    expect(outside).toMatchObject({ fixed: [CLOSE_KEY, 'home', 'minimize', 'type', 'dock'] });
-    expect(ids(outside)).toEqual([CLOSE_KEY, 'home', 'minimize', 'type', 'dock', 'intent-0', 'something-else']);
-    expect(thinking({ inChrome: () => true }).session(claude(5000, ['Pause']))).toMatchObject({ fixed: [CLOSE_KEY, 'home', 'minimize', 'type', 'dock', 'cmd'] });
+    expect(outside).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock'] });
+    expect(ids(outside)).toEqual([CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'intent-0', 'something-else']);
+    expect(thinking({ inChrome: () => true }).session(claude(5000, ['Pause']))).toMatchObject({ fixed: [CLOSE_KEY, 'quit', 'minimize', 'type', 'dock', 'cmd'] });
   });
 });
 

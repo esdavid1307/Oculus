@@ -9,7 +9,6 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
-  House,
   Keyboard,
   Maximize2,
   Minimize2,
@@ -19,6 +18,7 @@ import {
   PenLine,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Save,
   Search,
@@ -227,7 +227,8 @@ type TileLook = { label: string; glyph: IconNode };
 const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
   // Not an X: Claude's "Close the window" tiles use that, and this only puts the picker away.
   close: { label: 'Cancel', glyph: Ban },
-  home: { label: 'Home', glyph: House },
+  // Its label, which names the app in front, comes from the key.
+  quit: { label: 'Quit', glyph: Power },
   minimize: { label: 'Minimize', glyph: Minimize2 },
   type: { label: 'Type', glyph: Keyboard },
   dock: { label: 'Dock', glyph: PanelBottom },
@@ -239,6 +240,7 @@ const FIXED_LOOKS: Record<FixedIntent, TileLook> = {
 };
 
 function lookOf({ id, label }: Key): TileLook {
+  if (id === 'quit') return { ...FIXED_LOOKS.quit, label };
   if (id in FIXED_LOOKS) return FIXED_LOOKS[id as FixedIntent];
   const look = id === 'something-else' ? { label: 'More', icon: 'more' as const } : (intentLooks.get(label) ?? fallbackLook(label));
   return { label: look.label, glyph: INTENT_ICON_NODES[look.icon] };
@@ -446,9 +448,9 @@ window.overlay.onState((state) => {
   if (state.phase === 'icons' && entering) iconMagnifier.textContent = '';
   if (state.phase === 'icons') showIcon(state);
   if (state.phase === 'choosing') {
-    const { side, cells, recent, intents, fixed, fixedAt } = state;
+    const { side, cells, recent, intents, fixed, fixedAt, app } = state;
     const keys = layoutIntents(screenSize, state);
-    showKeys(`choosing ${side} ${cells} ${recent} ${fixedAt} ${fixed.join(' ')} ${intents.join('\n')}`, keys, drawTile, recent);
+    showKeys(`choosing ${side} ${cells} ${recent} ${fixedAt} ${fixed.join(' ')} ${app} ${intents.join('\n')}`, keys, drawTile, recent);
     highlightKey(state.highlight);
     showStepProgress(state.stepProgress);
     // In the first empty cell, where Claude's first Intent would be. Why there were none is in the log.
